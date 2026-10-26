@@ -76,6 +76,12 @@ onMounted(updateFades);
 
 <template>
   <nav class="tabs glass">
+    <!-- 左栏收缩后的展开入口：仅收缩态显示，点一下整个左栏回来 -->
+    <el-tooltip content="展开侧栏" placement="bottom" v-if="app.sideCollapsed">
+      <button class="tab tab-expand" @click="app.toggleSideCollapsed()">
+        <i class="ph ph-caret-double-right"></i>
+      </button>
+    </el-tooltip>
     <div ref="scrollEl" class="tabs-scroll" @scroll.passive="updateFades" @wheel="onWheel">
       <button
         v-for="p in app.pagesOf"
@@ -225,6 +231,13 @@ onMounted(updateFades);
 }
 .tab.active .tab-dot {
   box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* 左栏收缩后的展开入口：贴条最左，不随 tab 条滚动 */
+.tab-expand {
+  flex-shrink: 0;
+  margin: 6px 0 6px 10px;
+  padding-left: 12px;
 }
 
 /* 反代模块的操作目标（本机 / 远程实例）：常驻在配置入口左边，不随 tab 条滚动 */
