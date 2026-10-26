@@ -160,15 +160,17 @@ onMounted(() => {
     </el-dropdown>
     <!-- 网关服务开关 + 端口号：常驻在配置入口左边，不随 tab 条横向滚动 -->
     <div class="gw-ctl">
-      <span class="gw-label">网关</span>
-      <span class="gw-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">:{{ app.config.proxy.port }}</span>
+      <span class="gw-label">网关端口</span>
+      <span class="gw-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">{{ app.config.proxy.port }}</span>
       <div
-        class="switch"
+        class="switch gw-switch"
         :class="{ on: gwRunning, busy: gwBusy }"
         role="switch"
         :aria-checked="gwRunning"
         @click="toggleGw()"
-      ></div>
+      >
+        <span class="gw-switch-text">{{ gwRunning ? "服务开" : "服务关" }}</span>
+      </div>
     </div>
     <!-- 右侧常驻入口：普通态进配置页，配置态「完成」回到来时页面；不随 tab 条横向滚动 -->
     <button v-if="app.activePage === 'config'" class="tab tab-config active" @click="app.closeModuleConfig()">
@@ -314,6 +316,32 @@ onMounted(() => {
   font-size: 11px;
   color: var(--text-3);
   cursor: default;
+}
+/* 加宽的带文案开关：关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左
+   （scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px） */
+.gw-switch {
+  width: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 5px;
+  box-sizing: border-box;
+}
+.gw-switch.on {
+  justify-content: flex-start;
+}
+.gw-switch.on::after {
+  transform: translateX(44px);
+}
+.gw-switch-text {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  user-select: none;
+  line-height: 1;
+}
+.gw-switch.on .gw-switch-text {
+  color: #06130b;
 }
 .gw-ctl .switch {
   flex-shrink: 0;
