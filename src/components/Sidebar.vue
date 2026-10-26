@@ -434,7 +434,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   line-height: 1;
 }
 .mc-gw-switch.on .mc-gw-switch-text {
-  color: #e07f44;
+  color: #06130b; /* 开态：亮绿底上深色字对比最高（橙色在绿底对比不足） */
 }
 .mc-gw-switch.busy {
   opacity: 0.5;
