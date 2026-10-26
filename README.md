@@ -410,7 +410,7 @@ src/                 渲染层（Vue 3）
 
 **沐晖**（GitHub: [@HUIdada1](https://github.com/HUIdada1)）
 
-## License
+## 许可证
 
 本项目采用 **[MIT License](./LICENSE) + 附加使用条款** 的**复合授权**，**不是纯粹的 MIT 项目**：
 

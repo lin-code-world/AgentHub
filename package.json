@@ -49,8 +49,7 @@
       "buildResources": "build"
     },
     "electronLanguages": [
-      "zh-CN",
-      "en-US"
+      "zh-CN"
     ],
     "files": [
       "dist/**/*",
