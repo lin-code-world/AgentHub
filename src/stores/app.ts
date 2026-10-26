@@ -33,9 +33,6 @@ function mergeConfigDeep<T>(base: T, patch: unknown): T {
 // 浏览器 mock / 后端加载失败时的兜底默认值；后端权威默认值见 electron/backend/config.cjs
 const defaultConfig: AppConfig = {
   theme: "dark",
-  // 动效默认开启（装饰层默认体验）；粒子尘场 / 光池追随默认关闭（背景层最吃性能的两项），
-  // 个性化鼠标样式默认开启（轻量；保持老用户升级后液滴光标不断档）
-  update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
   schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）
   proxy: {
@@ -109,10 +106,6 @@ export const useAppStore = defineStore("app", {
     // ===== 全局设置弹窗（左下角设置按钮）：通用 / WebDAV 同步 / 数据与备份 =====
     settingsOpen: false,
     settingsTab: "general" as SettingsTab,
-    /** 更新通知 / 托盘「发现新版本」跳转信号：自增计数，通用页据此滚动并高亮更新卡片 */
-    configFocusUpdate: 0,
-    /** 是否有更新待处理（available/downloaded）：侧栏设置齿轮与更新按钮红点的数据源 */
-    updateAvailable: false,
     /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
     pageBeforeConfig: "",
   }),
@@ -235,15 +228,6 @@ export const useAppStore = defineStore("app", {
     setPage(id: string) {
       this.settingsOpen = false;
       this.activePage = id;
-    },
-    /** 拉一次更新状态维护红点（启动兜底；此后由 App.vue 的 update:event 回流实时增减） */
-    async refreshUpdateStatus() {
-      try {
-        const st = await api.getUpdateStatus();
-        this.updateAvailable = st.status === "available" || st.status === "downloaded";
-      } catch {
-        /* 取不到就保旧值（浏览器预览走 mock） */
-      }
     },
   },
 });

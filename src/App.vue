@@ -29,7 +29,6 @@ import ProxyCcSwitchView from "./views/proxy/ProxyCcSwitchView.vue";
 import ProxyLogView from "./views/proxy/ProxyLogView.vue";
 import ProxyNetworkView from "./views/proxy/ProxyNetworkView.vue";
 import * as api from "./api/ipc";
-import type { UpdateEvent } from "./types";
 
 const app = useAppStore();
 
@@ -37,24 +36,14 @@ let dispose: (() => void)[] = [];
 
 onMounted(() => {
   app.load();
-  app.refreshUpdateStatus(); // 启动拉一次更新状态，维护设置齿轮红点
-  // 更新事件全局唯一监听：focus-update 打开设置弹窗 · 通用并自增信号（滚动高亮由
-  // ConfigGeneralSection 据 configFocusUpdate 执行）；state 回流顺带维护红点（浏览器预览无桥接返回 undefined）
-  const offFocusUpdate = api.onUpdateEvent((e) => {
-    const ev = e as UpdateEvent;
-    if (ev.event === "focus-update") {
-      app.openSettings("general");
-      app.configFocusUpdate++;
-      return;
-    }
-    // main 侧托盘等直写配置后的广播：重拉内存快照，防设置页旧快照把新值冲掉
-    if ((ev as { event?: string }).event === "config-changed") {
+  // 更新事件全局唯一监听：main 侧托盘等直写配置后的广播（config-changed）→
+  // 重拉内存快照，防设置页旧快照把新值冲掉
+  const offConfigChanged = api.onUpdateEvent((e) => {
+    if ((e as { event?: string }).event === "config-changed") {
       app.refreshConfig();
-      return;
     }
-    app.updateAvailable = ev.status === "available" || ev.status === "downloaded";
   });
-  if (offFocusUpdate) dispose.push(offFocusUpdate);
+  if (offConfigChanged) dispose.push(offConfigChanged);
 });
 onUnmounted(() => {
   dispose.forEach((fn) => fn());

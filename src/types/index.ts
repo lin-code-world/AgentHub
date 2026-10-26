@@ -28,21 +28,18 @@ export interface ModuleDef {
 
 // ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
 
-export type SettingsTab = "general" | "webdav" | "timing" | "feedback";
+export type SettingsTab = "general" | "webdav" | "timing";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
-  { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 更新" },
+  { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 应用行为" },
   { key: "webdav", name: "WebDAV 同步", icon: "ph-cloud", desc: "统一服务器 · 号池同步" },
   { key: "timing", name: "同步时间", icon: "ph-clock-countdown", desc: "号池自动同步 / 刷新周期" },
-  { key: "feedback", name: "反馈与需求", icon: "ph-chat-circle-dots", desc: "问题反馈 · 功能建议" },
 ];
 
-// ===== 应用配置：框架（主题 / 动效）+ 更新 =====
+// ===== 应用配置：框架（主题 / 行为）=====
 
 export interface AppConfig {
   theme: Theme;
-  /** 软件更新：channel 更新通道；autoCheck 定时自动检查开关；notifiedVersion 由主进程维护（前端只读回传） */
-  update: UpdateConfig;
   schedule: {
     minimizeToTray: boolean;
     /** 全局快捷键：唤起/收起主窗口（默认 Alt+`，两键）。必须是「功能键+字符键」组合；
@@ -56,12 +53,6 @@ export interface AppConfig {
   };
   /** 反代网关设置（框架整体设置的一部分；端口改动需重启监听，其余热生效） */
   proxy: ProxyConfig;
-}
-
-export interface UpdateConfig {
-  channel: string;
-  autoCheck: boolean;
-  notifiedVersion: string;
 }
 
 /** 反代网关设置（与 electron/backend/config.cjs defaultConfig().proxy 保持一致） */
@@ -760,27 +751,6 @@ export interface ProxyCheckinRow {
   /** zcode 领取奖励：已领取过时的下次可领窗口（毫秒时间戳） */
   nextAt?: number;
   message?: string;
-}
-
-/** 更新状态快照（主进程 electron/backend/updater.cjs 维护，经 invoke 拉取 + app:event 事件推送） */
-export interface UpdateStatus {
-  /** idle 未检查 | checking 检查中 | up-to-date 已是最新 | available 有新版本
-   *  downloading 下载中 | downloaded 已下载待安装 | error 出错 */
-  status: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "downloaded" | "error";
-  /** 便携版：无安装目录可覆盖，不支持自动更新，仅提示手动下载 */
-  isPortable: boolean;
-  currentVersion: string;
-  latestVersion: string;
-  /** 下载进度百分比（0~100） */
-  percent: number;
-  /** 更新说明（已由主进程从 GitHub 渲染后的 HTML 还原为纯文本） */
-  notes: string;
-  message: string;
-}
-
-/** 主进程推送的更新事件：event="state" 时其余字段为完整状态；event="focus-update" 为通知/托盘点击的跳转信号 */
-export interface UpdateEvent extends UpdateStatus {
-  event: "state" | "focus-update";
 }
 
 /** 四大模块 → 子页面映射（内置顺序即默认导航顺序，可在「设置 · 通用」中调整）

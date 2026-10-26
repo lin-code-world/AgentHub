@@ -9,12 +9,11 @@
  * ============================================================
  */
 // 浏览器 mock：dev:web 纯前端预览用；配置落 localStorage，语义与主进程 config.cjs 对齐
-// mock：浏览器预览与打包产物之外的开发态兜底；未覆盖的命令返回 null 让页面降级
-import type { AppConfig, UpdateStatus } from "../types";
+// 未覆盖的命令返回 null 让页面降级
+import type { AppConfig } from "../types";
 import { MODULES } from "../types";
 
 const KEY = "agenthub-config";
-const PREVIEW_NOTE = "（浏览器预览 mock 数据，桌面端才真实生效）";
 const NOW = Date.now();
 const ago = (minutes: number) => new Date(NOW - minutes * 60000).toISOString();
 /** 本地时区的今天（YYYY-MM-DD）：与后端 store.dayStr 同口径，签到记录的跨天判定用 */
@@ -27,7 +26,6 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
-    update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: true },
     proxy: {
       port: 9527,
@@ -73,22 +71,6 @@ function read(): AppConfig {
   } catch {
     return def;
   }
-}
-
-/** 预览用更新状态：模拟「检测到新版本」，让设置页更新卡片各分支可被查看 */
-function previewStatus(state: UpdateStatus["status"]): UpdateStatus {
-  return {
-    status: state,
-    isPortable: false,
-    currentVersion: "0.1.0",
-    latestVersion: state === "available" || state === "downloading" || state === "downloaded" ? "0.2.0" : "",
-    percent: state === "downloading" ? 42 : state === "downloaded" ? 100 : 0,
-    notes:
-      state === "available" || state === "downloaded"
-        ? `新增 反代网关 请求明细页\n· 技能库支持按来源筛选\n· 修复用量同步偶发重复入库\n${PREVIEW_NOTE}`
-        : "",
-    message: PREVIEW_NOTE,
-  };
 }
 
 // ===== 反代网关样例数据（浏览器预览；桌面端数据来自主进程 SQLite） =====
@@ -471,21 +453,6 @@ export const mock = {
         return;
       case "browse_dir":
         return { ok: true, canceled: true, path: null };
-
-      // ===== 更新 =====
-      case "get_update_status":
-        return previewStatus("idle");
-      case "check_update":
-        return previewStatus("available");
-      case "download_update":
-        return previewStatus("downloaded");
-      case "install_update":
-        return previewStatus("idle");
-      case "open_release_page":
-      case "open_repo_page":
-        return;
-      case "get_is_portable":
-        return false;
 
       // ===== 反代网关（预览数据，语义对齐 backend/proxy） =====
       case "proxy_status":

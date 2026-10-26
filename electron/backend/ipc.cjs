@@ -15,7 +15,6 @@
 const path = require("node:path");
 const { app, shell, dialog, BrowserWindow } = require("electron");
 const config = require("./config.cjs");
-const updater = require("./updater.cjs");
 const webdav = require("./webdav.cjs");
 const proxy = require("./proxy/index.cjs");
 const proxyRemote = require("./proxy/remote.cjs");
@@ -124,31 +123,14 @@ function register(ctx) {
   ipcMain.handle("open_data_dir", async () => {
     await shell.openPath(config.dataDir());
   });
+  // 便携版判断：开机自启提示用（便携副本是临时解压路径，注册自启无意义）
+  ipcMain.handle("get_is_portable", () => config.isPortable());
   ipcMain.handle("browse_dir", handle(async () => {
     const r = await dialog.showOpenDialog(BrowserWindow.getAllWindows()[0], { properties: ["openDirectory"] });
     return { ok: true, canceled: r.canceled, path: r.canceled ? null : r.filePaths[0] };
   }));
 
-  // ===== 软件更新 =====
-  ipcMain.handle("get_is_portable", () => updater.isPortable());
-  ipcMain.handle("get_update_status", () => updater.getStatus());
-  ipcMain.handle("check_update", () => updater.check(true));
-  ipcMain.handle("download_update", () => updater.download());
-  ipcMain.handle("install_update", () => updater.triggerInstall());
-  ipcMain.handle("open_release_page", () => updater.openReleases());
-  ipcMain.handle("open_repo_page", () => updater.openRepo());
-  // 设置页「反馈与需求」的入口：用系统默认浏览器打开 issue 表单（应用内 webview 打不开
-  // GitHub 的登录态，也没法提交表单）。只放行本项目仓库的 https 链接 —— 渲染层即使被
-  // 注入也打不开任意地址，白名单比「只校验 http(s)」更难被滥用。
-  ipcMain.handle("open_external_url", handle(async ({ url } = {}) => {
-    const target = String(url || "");
-    const allow = /^https:\/\/github\.com\/HUIdada1\/AgentHub(\/|$|\?)/i.test(target);
-    if (!allow) return { ok: false, message: "只允许打开本项目仓库的链接" };
-    await shell.openExternal(target);
-    return { ok: true };
-  }));
-
-  // ===== 统一 WebDAV（设置 · 数据存储）：共享服务器 + 三模块根目录 =====
+  // ===== 统一 WebDAV（设置 · 数据存储）：共享服务器 + 号池根目录 =====
   ipcMain.handle("webdav_shared_get", handle(() => config.maskedSharedWebdav()));
   ipcMain.handle("webdav_shared_save", handle(({ config: form }) => {
     const before = config.loadSharedWebdav().endpoint;

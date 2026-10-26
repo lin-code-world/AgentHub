@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "chokidar": "^3.6.0",
-    "electron-updater": "^6.8.9",
     "express": "^4.21.2",
     "undici": "^8.12.3"
   },
@@ -47,14 +46,6 @@
       "output": "release",
       "buildResources": "build"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "HUIdada1",
-        "repo": "AgentHub",
-        "releaseType": "release"
-      }
-    ],
     "electronLanguages": [
       "zh-CN",
       "en-US"

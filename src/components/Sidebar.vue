@@ -34,10 +34,6 @@ function refreshStatsForEnabled() {
   refreshProxyMeta();
   refreshChannels();
 }
-/** 侧栏 GitHub 入口：交由主进程 shell.openExternal 用默认浏览器打开仓库 */
-function openRepo() {
-  api.openRepoPage().catch(() => {});
-}
 onMounted(async () => {
   refreshStatsForEnabled();
   try {
@@ -217,7 +213,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         </template>
       </div>
 
-      <!-- 左下角全局操作：版本 / 署名 / GitHub / 亮暗 / 设置 -->
+      <!-- 左下角全局操作：版本 / 署名 / 亮暗 / 设置 -->
       <div class="side-foot">
         <div class="foot-meta">
           <div class="foot-ver">{{ version }}</div>
@@ -225,25 +221,16 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
             <div class="foot-author"><i class="ph ph-user"></i><b>沐晖</b></div>
           </el-tooltip>
         </div>
-        <el-tooltip content="Star 支持" placement="top">
-          <button class="btn btn-ghost" @click="openRepo()">
-            <i class="ph ph-github-logo"></i>
-          </button>
-        </el-tooltip>
         <el-tooltip content="切换亮暗主题" placement="top">
           <button class="btn btn-ghost" @click="app.toggleTheme()">
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
           </button>
         </el-tooltip>
-        <!-- 红点用 .dot-host 承载定位，避免按钮溢出裁剪 -->
-        <span class="dot-host">
-          <el-tooltip content="设置" placement="top">
-            <button class="btn btn-ghost settings-btn" @click="app.openSettings('general')">
-              <i class="ph ph-gear-six"></i>
-            </button>
-          </el-tooltip>
-          <span v-if="app.updateAvailable" class="dot-ping"></span>
-        </span>
+        <el-tooltip content="设置" placement="top">
+          <button class="btn btn-ghost settings-btn" @click="app.openSettings('general')">
+            <i class="ph ph-gear-six"></i>
+          </button>
+        </el-tooltip>
       </div>
     </div>
 

@@ -11,7 +11,7 @@
 // IPC 封装：Electron 环境下通过 preload 桥接调用主进程；浏览器环境（npm run dev:web 预览 UI）
 // 回退到本地 mock。命令清单与 electron/preload.cjs 白名单、backend/ipc.cjs 一一对应
 import type {
-  AppConfig, UpdateStatus,
+  AppConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
@@ -22,7 +22,7 @@ import type {
 } from "../types";
 
 export type {
-  AppConfig, UpdateStatus, UpdateEvent,
+  AppConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
@@ -137,20 +137,9 @@ export const getDataDir = () => call<string>("get_data_dir");
 export const openDataDir = () => call<void>("open_data_dir");
 // 等用户操作原生目录选择框，时长不可控，关掉看门狗
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
-
-// ===== 软件更新 =====
 export const getIsPortable = () => call<boolean>("get_is_portable");
-export const getUpdateStatus = () => call<UpdateStatus>("get_update_status");
-export const checkUpdate = () => call<UpdateStatus>("check_update");
-export const downloadUpdate = () => call<UpdateStatus>("download_update");
-export const installUpdate = () => call<UpdateStatus>("install_update");
-export const openReleasePage = () => call<void>("open_release_page");
-export const openRepoPage = () => call<void>("open_repo_page");
-/** 用系统默认浏览器打开本项目仓库的链接（设置 · 反馈与需求；主进程侧有域名白名单） */
-export const openExternalUrl = (url: string) =>
-  call<{ ok: boolean; message?: string }>("open_external_url", { url });
 
-/** 订阅主进程广播（更新状态 / WebDAV 进度 / focus-update 跳转信号），返回退订函数。
+/** 订阅主进程广播（网关状态 / 号池同步进度 / 配置变更），返回退订函数。
  *  Web 托管形态走 SSE（信封同形）；纯静态预览（mock）没有事件源 */
 export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | undefined {
   if (window.agenthub?.onUpdateEvent) return window.agenthub.onUpdateEvent((payload) => cb(payload));

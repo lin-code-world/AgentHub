@@ -106,12 +106,11 @@ function configPath() {
 function defaultConfig() {
   return {
     theme: "dark",
-    // 动效字段（fx/fxParticles/fxPools/fxCursor）已随动画系统移除；
+    // 动效（fx*）与软件更新（update）字段已随对应功能移除；
     // 旧配置里的残留字段由 loadConfig 剔除，无需迁移
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     // 设备身份段：deviceId/deviceName 是号池同步（poolsync）的本机设备标识来源，
     // 首次使用时惰性生成；endpoint 等旧同步字段仅为老配置迁移保留，不再有同步引擎读取
     webdav: {
@@ -457,11 +456,12 @@ function loadConfig() {
   // 旧配置的 moduleOrder/modules（板块排序与开关）已废弃：直接剔除，不再读写
   delete merged.moduleOrder;
   delete merged.modules;
-  // 旧配置的动效字段（fx/fxParticles/fxPools/fxCursor）已随动画系统移除：直接剔除
+  // 旧配置的动效字段（fx/fxParticles/fxPools/fxCursor）与软件更新字段（update）已随对应功能移除：直接剔除
   delete merged.fx;
   delete merged.fxParticles;
   delete merged.fxPools;
   delete merged.fxCursor;
+  delete merged.update;
   merged.webdav.password = decryptSecret(merged.webdav.password);
   merged.webdavShared = normalizeShared(merged.webdavShared);
   merged.webdavShared.password = decryptSecret(merged.webdavShared.password);
@@ -558,23 +558,6 @@ function saveConfigFromUI(cfg) {
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
   return saveConfig(next);
 }
-function getUpdateNotified() {
-  try {
-    return loadConfig().update.notifiedVersion || "";
-  } catch {
-    return "";
-  }
-}
-
-function setUpdateNotified(version) {
-  try {
-    const cfg = loadConfig();
-    cfg.update.notifiedVersion = version || "";
-    saveConfig(cfg);
-  } catch {
-    // 写不进去就算了，只是通知去重失效
-  }
-}
 
 // 开机自启即时生效；便携版注册的是临时解压路径，开发模式不必注册
 function applyAutoStart(cfg) {
@@ -587,7 +570,7 @@ function applyAutoStart(cfg) {
 
 module.exports = {
   dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
-  getUpdateNotified, setUpdateNotified, isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
+  isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   loadSharedWebdav, saveSharedWebdav, clearSharedWebdav, maskedSharedWebdav, moduleWebdav, sharedEncryptionPassphrase, PASSWORD_MASK,
   normalizeHm, normalizeJitter,
   saveConfigFromUI, OUT_OF_BAND_PROXY_FIELDS,

@@ -76,7 +76,6 @@ process.on("exit", (code) => {
 app.on("child-process-gone", (_e, d) => __crashLog("child-process-gone", __describe(d)));
 app.on("render-process-gone", (_e, _wc, d) => __crashLog("render-process-gone", __describe(d)));
 app.on("gpu-process-gone", (_e, d) => __crashLog("gpu-process-gone", __describe(d)));
-app.on("before-quit", () => { let p = "n/a"; try { p = String(updater.pendingInstall()); } catch { /* updater 尚未就绪 */ } __crashLog("before-quit", `pendingInstall=${p}`); });
 app.on("quit", (_e, code) => __crashLog("quit", `exitCode=${code}`));
 // 渲染进程无响应取证：界面「卡死/未响应」不崩溃、不退出，此前零痕迹（2026-10-05 卡死排查实证——
 // crashpad 25 个 dump 全来自 node 子进程，渲染进程冻结无一字留痕）。unresponsive/responsive 成对
@@ -117,7 +116,6 @@ stallTimer.unref?.();
 
 const config = require("./backend/config.cjs");
 const ipc = require("./backend/ipc.cjs");
-const updater = require("./backend/updater.cjs");
 // 反代网关模块：本地 OpenAI 兼容服务（默认 127.0.0.1:9527），托盘常驻期间持续提供 API
 const proxy = require("./backend/proxy/index.cjs");
 // 全局快捷键：唤起/释放界面。冲突时弹气泡并持续重试（见 backend/shortcut.cjs）
@@ -392,14 +390,9 @@ function onShortcutToggle() {
 
 // ===== 托盘 =====
 
-/** 托盘菜单（动态构建：更新提示等） */
+/** 托盘菜单（动态构建） */
 function buildTrayMenu() {
   const items = [];
-  const st = updater.getStatus();
-  if (st.status === "available" || st.status === "downloaded") {
-    items.push({ label: `发现新版本 v${st.latestVersion} →`, click: () => { showWindow(); focusSettingsUpdate(); } });
-    items.push({ type: "separator" });
-  }
   // 轻量模式：关窗缩到托盘的用户，托盘是唯一入口，所以开关必须放这里
   // （设置 · 通用里也有同一个开关，两处写的是同一份配置）
   const lightOn = !!(cfg.schedule && cfg.schedule.lightweightMode);
@@ -425,15 +418,6 @@ function buildTrayMenu() {
     { label: "退出", click: () => { quitting = true; app.quit(); } },
   );
   return Menu.buildFromTemplate(items);
-}
-
-/** 新版本提示点击 → 打开配置中心 · 通用并定位到「软件更新」卡片 */
-function focusSettingsUpdate() {
-  try {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("app:event", { event: "focus-update" });
-    }
-  } catch { /* 无窗口就算了 */ }
 }
 
 function refreshTrayMenu() {
@@ -542,7 +526,6 @@ if (!gotLock) {
     proxy.boot().catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
     createWindow();
     createTray();
-    updater.init({ onShowWindow: showWindow, onTrayRefresh: refreshTrayMenu });
     // 全局快捷键（默认 Alt+`，两键）：冲突则弹气泡并持续重试，解除后自动恢复。
     // 设置页改键后经 ipc.onConfigSaved 钩子重新注册，无需重启。
     ipc.onConfigSaved(() => {
@@ -569,22 +552,13 @@ if (!gotLock) {
     if (!mainWindow) app.exit(1);
   });
 
-  app.on("before-quit", (e) => {
+  app.on("before-quit", () => {
     // 统一收尾：原先两条分支各自重复一遍 stop 调用，新增模块时极易漏改一处
     const cleanup = () => {
-      // 全局快捷键必须显式注销：更新重启是"拦下退出再重启"，
-      // 不注销会让旧键在重启窗口期内处于悬空占用状态
+      // 全局快捷键必须显式注销：不注销会让旧键在重启窗口期内处于悬空占用状态
       try { if (shortcutRegistrar) shortcutRegistrar.stop(); else shortcut.unregisterAll(globalShortcut); } catch { /* 忽略 */ }
       proxy.shutdown();
     };
-    // 下载完的更新：拦下这次退出，静默装完自动重启
-    if (updater.pendingInstall()) {
-      e.preventDefault();
-      quitting = true;
-      cleanup();
-      updater.triggerInstall();
-      return;
-    }
     quitting = true;
     cleanup();
   });

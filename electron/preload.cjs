@@ -20,17 +20,8 @@ const ALLOWED_COMMANDS = new Set([
   "get_app_version",
   "get_data_dir",
   "open_data_dir",
-  "browse_dir",
-  // ===== 软件更新 =====
   "get_is_portable",
-  "get_update_status",
-  "check_update",
-  "download_update",
-  "install_update",
-  "open_release_page",
-  "open_repo_page",
-  // 设置 · 反馈与需求：系统浏览器打开本仓库的 issue 表单
-  "open_external_url",
+  "browse_dir",
   // ===== 反代网关 =====
   "proxy_status",
   "proxy_start",
