@@ -218,7 +218,7 @@ onUnmounted(() => {
                 <button class="btn-outline" :disabled="sharedTesting" @click="testShared">{{ sharedTesting ? "测试中…" : "测试连接" }}</button>
                 <button class="btn btn-cta" :disabled="sharedSaving" @click="saveShared">{{ sharedSaving ? "保存中" : "保存设置" }}</button>
                 <button v-if="shared.endpoint || shared.username" class="btn-outline danger" @click="clearShared">清除配置</button>
-                <span v-if="sharedTestResult" class="hint" :style="{ color: sharedTestResult.ok ? 'var(--ok)' : 'var(--err)' }">{{ sharedTestResult.message }}</span>
+                <span v-if="sharedTestResult" class="hint" :style="{ color: sharedTestResult.ok ? 'var(--accent)' : 'var(--danger)' }">{{ sharedTestResult.message }}</span>
                 <span v-else-if="sharedSaveMsg" class="hint">{{ sharedSaveMsg }}</span>
               </div>
             </div>
@@ -249,7 +249,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 反代网关号池 -->
-        <div class="switch-row" style="align-items: flex-start">
+        <div class="switch-row">
           <div class="s-left">
             <div class="s-title">反代网关 · 号池同步</div>
             <div class="s-desc">把号池账号（含登录凭据）打成加密压缩包上传到网盘，其他电脑拉取后按账号自动去重合并；本机移除账号会同步移除他机 · 根目录 {{ shared.roots.proxy || "/agenthub-proxy" }}</div>
@@ -260,13 +260,13 @@ onUnmounted(() => {
               压缩包用上面的 WebDAV 密码加密（AES-256-GCM），各设备密码须一致
             </div>
             <div class="s-desc" style="margin-top: 2px" v-if="poolsync">
-              <span :style="{ color: poolsync.configured ? 'var(--ok)' : 'var(--warn)' }">{{ poolsync.configured ? "已就绪" : "未配置" }}</span>
+              <span :style="{ color: poolsync.configured ? 'var(--accent)' : 'var(--warn)' }">{{ poolsync.configured ? "已就绪" : "未配置" }}</span>
               <template v-if="poolsync.lastSyncAt"> · 上次同步 {{ fmtAgoMs(poolsync.lastSyncAt) }}</template>
               <template v-if="poolsync.lastSummary">（{{ poolsync.lastSummary }}）</template>
             </div>
-            <div class="s-desc" v-if="poolsync?.lastError" :style="{ color: 'var(--err)' }">上次失败：{{ poolsync.lastError }}</div>
+            <div class="s-desc" v-if="poolsync?.lastError" :style="{ color: 'var(--danger)' }">上次失败：{{ poolsync.lastError }}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0">
+          <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0; margin-left: 24px">
             <span v-if="poolsyncMsg" class="hint">{{ poolsyncMsg }}</span>
             <button v-if="poolsync && !poolsync.configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
             <button v-else class="btn-outline" :disabled="poolsyncRunning || !poolsync" @click="runPoolsync">{{ poolsyncRunning ? "同步中…" : "立即同步" }}</button>
@@ -276,3 +276,94 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 本页是表单式排版（其它设置页走 .set-row 左文右控），用到的类 global.css 没有定义——
+   此前标签/输入框/小标题全是默认块流，互相挤在一起。这里补齐本页专属排版 */
+.sg-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sg-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.form-field {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.form-field.full {
+  grid-column: 1 / -1;
+}
+.form-field label {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.form-field .f-input {
+  width: 100%;
+}
+/* 存储类型切换：两枚并排按钮，选中态走 accent */
+.tabs {
+  display: inline-flex;
+  gap: 8px;
+}
+.tab {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.tab:hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+.tab.active {
+  border-color: var(--accent-line);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+/* 顶部提示条 */
+.sk-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.sk-note .ph {
+  font-size: 16px;
+  color: var(--text-3);
+}
+.sk-note.warn .ph {
+  color: var(--warn);
+}
+.hint {
+  font-size: 12px;
+  line-height: 1.6;
+}
+</style>

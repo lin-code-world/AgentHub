@@ -84,8 +84,8 @@ function gotoProxyPool() {
         <div class="s-title">定时自动签到</div>
         <div class="s-desc">已改为按渠道设置（签到 / 领加油包 / 领 Credits 的形态各不相同）：到号池页各渠道工具栏的「自动签到 / 自动领加油包 / 自动领 Credits」里设每天的时间与抖动</div>
       </div>
-      <div class="tg-ctl">
-        <button class="btn btn-sm" @click="gotoProxyPool">去号池页设置</button>
+      <div class="tg-ctl" style="margin-left: 24px">
+        <button class="btn-outline" @click="gotoProxyPool">去号池页设置</button>
       </div>
     </div>
   </div>
