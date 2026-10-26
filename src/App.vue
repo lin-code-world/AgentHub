@@ -16,22 +16,11 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import { animate, stagger } from "motion-v";
 import { usePreferredReducedMotion } from "@vueuse/core";
 import { useAppStore } from "./stores/app";
-import { useSyncStore } from "./stores/sync";
-import { useUsageStore } from "./stores/usage";
 import { setCursorFX } from "./motion/cursor";
 import Sidebar from "./components/Sidebar.vue";
 import PageTabs from "./components/PageTabs.vue";
 import SettingsDialog from "./components/config/SettingsDialog.vue";
-import ConfigUsageSection from "./components/config/ConfigUsageSection.vue";
 import ConfigProxySection from "./components/config/ConfigProxySection.vue";
-// 用量统计模块（原「用量记录同步」）：数据源顶栏 + 五个页面 + 同步进度弹窗
-import SyncTopBar from "./components/sync/SyncTopBar.vue";
-import SyncDialog from "./components/sync/SyncDialog.vue";
-import SyncOverviewView from "./views/sync/OverviewView.vue";
-import SyncDetailView from "./views/sync/DetailView.vue";
-import SyncCostsView from "./views/sync/CostsView.vue";
-import SyncBillingRulesView from "./views/sync/BillingRulesView.vue";
-import SyncLogView from "./views/sync/LogView.vue";
 import ProxyHomeView from "./views/proxy/ProxyHomeView.vue";
 import ProxyKeysView from "./views/proxy/ProxyKeysView.vue";
 import ProxyProvidersView from "./views/proxy/ProxyProvidersView.vue";
@@ -61,12 +50,10 @@ import * as api from "./api/ipc";
 import type { UpdateEvent } from "./types";
 
 const app = useAppStore();
-const usage = useSyncStore();
 const memory = useMemoryStore();
 
 /** 记忆中枢默认页签：ui.defaultTab（只在首次进入该模块时生效，之后记住用户点过的页） */
 let memoryDefaultApplied = false;
-const usageData = useUsageStore();
 
 /** 系统级减弱动效偏好（VueUse 托管媒体查询，动效层统一听它） */
 const reducedMotion = usePreferredReducedMotion();
@@ -183,10 +170,10 @@ function bindBackdrop() {
     wake();
   };
   if (follow) window.addEventListener("mousemove", onMove, { passive: true });
-  // capture：.page / .sync-page 这些内部滚动容器的 scroll 不冒泡，必须在捕获阶段拿
+  // capture：.page 这些内部滚动容器的 scroll 不冒泡，必须在捕获阶段拿
   const onScroll = (e: Event) => {
     const scroller = e.target as HTMLElement;
-    if (scroller?.classList?.contains("page") || scroller?.classList?.contains("sync-page")) {
+    if (scroller?.classList?.contains("page")) {
       scrollRaw = scroller.scrollTop;
       wake();
     }
@@ -240,7 +227,7 @@ function bindBackdrop() {
 /** 滚动渐入 + 卡片错落：页面内容块第一次进入视口时，由 motion-v 做一次
    「上浮 + 淡入 + 轻微过冲回弹」，同批露出的兄弟按 55ms 错峰，层次就出来了。
    全程只播一次（IO 触发即断开），之后悬停/布局动画完全不受影响。
-   目标选择器覆盖两套体系：框架 .page-body / 用量同步 .sync-scope */
+   目标选择器覆盖框架 .page-body 体系 */
 function bindReveal() {
   const io = new IntersectionObserver(
     (entries) => {
@@ -263,7 +250,6 @@ function bindReveal() {
     ".kpis > *",
     ".grid-2 > *",
     ".top-kpis-grid > .kpi",
-    ".sync-scope .card",
   ].join(", ");
 
   const seen = new WeakSet<Element>();
@@ -413,7 +399,7 @@ function bindParticles() {
   let scrollSmooth = 0;
   const onScroll = (e: Event) => {
     const scroller = e.target as HTMLElement;
-    if (scroller?.classList?.contains("page") || scroller?.classList?.contains("sync-page")) {
+    if (scroller?.classList?.contains("page")) {
       scrollRaw = scroller.scrollTop;
     }
   };
@@ -535,8 +521,6 @@ function unmountFx() {
 
 onMounted(() => {
   app.load();
-  usage.load(); // 用量同步：配置/数据源清单/同步进度轮询（与原应用一致）
-  usageData.startDayWatcher(); // 跨天换日守护：过 0 点自动把「今日/本月」口径的数据换到新一天
   app.refreshUpdateStatus(); // 启动拉一次更新状态，维护设置齿轮红点
   // 更新事件全局唯一监听：focus-update 打开设置弹窗 · 通用并自增信号（滚动高亮由
   // ConfigGeneralSection 据 configFocusUpdate 执行）；state 回流顺带维护红点（浏览器预览无桥接返回 undefined）
@@ -545,11 +529,6 @@ onMounted(() => {
     if (ev.event === "focus-update") {
       app.openSettings("general");
       app.configFocusUpdate++;
-      return;
-    }
-    if (ev.event === "usage-local-synced") {
-      // 后台半小时本地统计完成：静默重拉总览数据（在途请求/失败都已在 store 内兜底）
-      usageData.refreshQuietly();
       return;
     }
     // 记忆中枢事件分流：store.onEvent 维护新记忆高亮/索引进度/统计重拉
@@ -656,15 +635,7 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
     <Sidebar />
     <PageTabs />
     <main class="main glass">
-      <!-- 用量统计模块的数据源顶栏（原应用 AppBar）：仅「用量统计 · 总览」页显示；样式作用域在组件根上 -->
-      <SyncTopBar v-if="on('sync', 'overview')" />
       <div class="pages">
-        <!-- 用量统计五页：.sync-page 的样式作用域要求自身同时带 .sync-scope（见 styles/sync.css） -->
-        <SyncOverviewView v-if="seen('sync', 'overview')" v-show="on('sync', 'overview')" class="sync-scope" :class="{ 'page-anim': on('sync', 'overview') }" />
-        <SyncDetailView v-if="seen('sync', 'detail')" v-show="on('sync', 'detail')" class="sync-scope" :class="{ 'page-anim': on('sync', 'detail') }" />
-        <SyncCostsView v-if="seen('sync', 'costs')" v-show="on('sync', 'costs')" class="sync-scope" :class="{ 'page-anim': on('sync', 'costs') }" />
-        <SyncBillingRulesView v-if="seen('sync', 'billing')" v-show="on('sync', 'billing')" class="sync-scope" :class="{ 'page-anim': on('sync', 'billing') }" />
-        <SyncLogView v-if="seen('sync', 'log')" v-show="on('sync', 'log')" class="sync-scope" :class="{ 'page-anim': on('sync', 'log') }" />
         <ProxyHomeView v-if="seen('proxy', 'home')" v-show="on('proxy', 'home')" :class="{ 'page-anim': on('proxy', 'home') }" />
         <ProxyKeysView v-if="seen('proxy', 'keys')" v-show="on('proxy', 'keys')" :class="{ 'page-anim': on('proxy', 'keys') }" />
         <ProxyProvidersView v-if="seen('proxy', 'providers')" v-show="on('proxy', 'providers')" :class="{ 'page-anim': on('proxy', 'providers') }" />
@@ -689,9 +660,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
         <MemorySyncView v-if="seen('memory', 'sync')" v-show="on('memory', 'sync')" class="page" :class="{ 'page-anim': on('memory', 'sync') }" />
         <!-- 各模块的配置页：右上「配置」按钮切换到这里的页面（page + cfg-body 组合出页壳与留白）；
              配置页内部的二级子板块 tab 由各 section 自己渲染 -->
-        <div v-if="seen('sync', 'config')" v-show="on('sync', 'config')" class="page cfg-body" :class="{ 'page-anim': on('sync', 'config') }">
-          <ConfigUsageSection />
-        </div>
         <div v-if="seen('proxy', 'config')" v-show="on('proxy', 'config')" class="page cfg-body" :class="{ 'page-anim': on('proxy', 'config') }">
           <ConfigProxySection />
         </div>
@@ -701,7 +669,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
       </div>
     </main>
     <!-- 常驻挂载：显隐交给 el-dialog 自己管，进场动画才不会在 v-if 挂载时被跳过 -->
-    <SyncDialog />
     <SettingsDialog />
     <MemoryDetailDrawer
       :show="memory.detailDrawerOpen"

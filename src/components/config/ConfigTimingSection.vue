@@ -8,21 +8,19 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 同步时间：各板块「自动同步 / 自动刷新 / 本地感知」的周期统一在这里管，
-     四个页签（用量统计 / 记忆中枢 / 技能仓库 / 反代网关）各自切换对应的时间设置。
-     三个配置源各自走自己的保存链路——框架（技能仓库+反代网关）app.save()、
-     用量统计 syncApp.save()、记忆中枢 mem.save()；改动即改即存，状态反馈集中在顶部 -->
+<!-- 设置 · 同步时间：各板块「自动同步 / 自动刷新」的周期统一在这里管，
+     两个页签（记忆中枢 / 反代网关）各自切换对应的时间设置。
+     两个配置源各自走自己的保存链路——框架 app.save()、记忆中枢 mem.save()；
+     改动即改即存，状态反馈集中在顶部 -->
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useAppStore } from "../../stores/app";
-import { useSyncStore } from "../../stores/sync";
 import { useMemoryStore } from "../../stores/memory";
 
 const app = useAppStore();
-const syncApp = useSyncStore();
 const mem = useMemoryStore();
 
-const tab = ref<"usage" | "memory" | "proxy">("usage");
+const tab = ref<"memory" | "proxy">("memory");
 
 const ready = ref(false);
 const saveState = ref("");
@@ -34,15 +32,9 @@ function feedback(text: string) {
   stateTimer = window.setTimeout(() => (saveState.value = ""), 2600);
 }
 
-/** 框架配置（技能仓库调度 / 本地感知 / 反代网关周期）改动即存 */
+/** 框架配置（反代网关周期）改动即存 */
 async function saveFramework() {
   const r = await app.save();
-  feedback(r && r.ok === false ? `保存失败：${r.message}` : "已保存");
-}
-
-/** 用量统计调度改动即存 */
-async function saveUsage() {
-  const r = await syncApp.save();
   feedback(r && r.ok === false ? `保存失败：${r.message}` : "已保存");
 }
 
@@ -69,9 +61,9 @@ function gotoProxyPool() {
 }
 
 onMounted(async () => {
-  // 两个模块配置是懒加载：没加载过就先拉，否则会用默认值盖掉磁盘真实配置
-  // （load() 不做幂等守卫，重复调用会重启进度轮询，所以这里自己挡一道）
-  await Promise.all([syncApp.loaded ? Promise.resolve() : syncApp.load(), mem.loadAll()]);
+  // 模块配置是懒加载：没加载过就先拉，否则会用默认值盖掉磁盘真实配置
+  // （loadAll 不做幂等守卫，重复调用会重启进度轮询，所以这里自己挡一道）
+  await mem.loadAll();
   ready.value = true;
 });
 </script>
@@ -84,44 +76,11 @@ onMounted(async () => {
     </div>
 
     <div class="cfg-subtabs">
-      <button class="cfg-subtab" :class="{ active: tab === 'usage' }" @click="tab = 'usage'"><i class="ph ph-chart-bar"></i>用量统计</button>
       <button class="cfg-subtab" :class="{ active: tab === 'memory' }" @click="tab = 'memory'"><i class="ph ph-brain"></i>记忆中枢</button>
       <button class="cfg-subtab" :class="{ active: tab === 'proxy' }" @click="tab = 'proxy'"><i class="ph ph-plugs-connected"></i>反代网关</button>
     </div>
 
-    <template v-if="tab === 'usage'">
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">每小时同步（WebDAV）</div>
-          <div class="s-desc">开启后按选定周期自动上传本机用量并拉取他机</div>
-        </div>
-        <div class="tg-ctl">
-          <el-select v-if="syncApp.config.schedule.hourly" v-model="syncApp.config.schedule.hourlyInterval" class="f-el-select" popper-class="glass-popper" style="width: 110px" @change="saveUsage">
-            <el-option v-for="n in [1, 2, 3, 6, 12]" :key="n" :value="n" :label="`${n} 小时`" />
-          </el-select>
-          <div class="switch" :class="{ on: syncApp.config.schedule.hourly }" role="switch" :aria-checked="syncApp.config.schedule.hourly" @click="syncApp.config.schedule.hourly = !syncApp.config.schedule.hourly; saveUsage()"></div>
-        </div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">每天固定时间</div>
-          <div class="s-desc">每天到点同步一次（错过自动补跑）</div>
-        </div>
-        <div class="tg-ctl">
-          <input v-if="syncApp.config.schedule.daily" type="time" class="f-input" style="width: 110px" v-model="syncApp.config.schedule.dailyTime" @change="saveUsage" />
-          <div class="switch" :class="{ on: syncApp.config.schedule.daily }" role="switch" :aria-checked="syncApp.config.schedule.daily" @click="syncApp.config.schedule.daily = !syncApp.config.schedule.daily; saveUsage()"></div>
-        </div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">同步成功也弹系统通知</div>
-          <div class="s-desc">失败始终会提醒；开启后成功也通知一次</div>
-        </div>
-        <div class="switch" :class="{ on: syncApp.config.schedule.notifyOnSuccess }" role="switch" :aria-checked="syncApp.config.schedule.notifyOnSuccess" @click="syncApp.config.schedule.notifyOnSuccess = !syncApp.config.schedule.notifyOnSuccess; saveUsage()"></div>
-      </div>
-    </template>
-
-    <template v-else-if="tab === 'memory'">
+    <template v-if="tab === 'memory'">
       <div class="switch-row">
         <div class="s-left">
           <div class="s-title">自动同步（WebDAV）</div>

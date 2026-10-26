@@ -10,7 +10,7 @@
  */
 // 全局类型与常量：四大模块 / 子页面 / 应用配置 / 反代网关数据结构
 // MODULES 是左栏导航的唯一事实源，App.vue 据此装配各模块视图组件
-export type ModuleKey = "sync" | "proxy" | "memory";
+export type ModuleKey = "proxy" | "memory";
 export type Theme = "dark" | "light";
 
 export interface PageDef {
@@ -28,13 +28,12 @@ export interface ModuleDef {
 
 // ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
 
-export type SettingsTab = "general" | "webdav" | "data" | "timing" | "feedback";
+export type SettingsTab = "general" | "webdav" | "timing" | "feedback";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
   { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 模块顺序 · 更新" },
   { key: "webdav", name: "WebDAV 同步", icon: "ph-cloud", desc: "统一服务器 · 号池同步" },
   { key: "timing", name: "同步时间", icon: "ph-clock-countdown", desc: "各板块自动同步 / 刷新周期" },
-  { key: "data", name: "数据与备份", icon: "ph-database", desc: "备份压缩包 · 缓存目录" },
   { key: "feedback", name: "反馈与需求", icon: "ph-chat-circle-dots", desc: "问题反馈 · 功能建议" },
 ];
 
@@ -811,17 +810,6 @@ export interface UpdateEvent extends UpdateStatus {
  *  skills 的 skill-detail 为技能详情页：从技能库点卡片进入，不在横条菜单中展示；
  *  各模块的「配置」是隐藏页面（id=config，不走横条菜单），由横条右侧「配置」按钮切换 */
 export const MODULES: ModuleDef[] = [
-  {
-    key: "sync",
-    name: "用量统计",
-    pages: [
-      { id: "overview", name: "总览" },
-      { id: "detail", name: "用量明细" },
-      { id: "costs", name: "费用" },
-      { id: "billing", name: "计费规则" },
-      { id: "log", name: "同步日志" },
-    ],
-  },
   {
     key: "proxy",
     name: "反代网关",

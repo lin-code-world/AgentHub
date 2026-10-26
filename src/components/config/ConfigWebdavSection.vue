@@ -14,10 +14,8 @@ import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import * as api from "../../api/ipc";
 import { onUpdateEvent } from "../../api/ipc";
 import { useAppStore } from "../../stores/app";
-import { useSyncStore } from "../../stores/sync";
 
 const app = useAppStore();
-const syncApp = useSyncStore();
 
 // 每次激活都重拉共享配置（服务器配置在本页改，改完主进程即时生效）
 const active = computed(() => app.settingsOpen && app.settingsTab === "webdav");
@@ -28,7 +26,6 @@ async function loadPage() {
   loadShared();
   refreshPoolsync();
   refreshMemSync();
-  syncApp.refreshProgress().catch(() => {});
 }
 
 // ===== 统一 WebDAV 服务器（webdavShared）：技能仓库 / 用量统计 / 反代网关 / 记忆中枢共用 =====
@@ -40,7 +37,7 @@ const shared = ref<api.SharedWebdavConfig>({
   password: "",
   encryptionPassphrase: "",
   s3: { bucket: "", region: "", pathStyle: false },
-  roots: { usage: "/dosage-sync", proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
+  roots: { proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
 });
 const sharedTestResult = ref<{ ok: boolean; message: string } | null>(null);
 const sharedSaveMsg = ref("");
@@ -76,9 +73,8 @@ async function saveShared() {
     const r = await api.webdavSharedSave(shared.value);
     sharedSaveMsg.value = r?.ok ? "已保存，各模块的同步即刻生效" : r?.message || "保存失败";
     if (r?.ok) {
-      // 回读掩码态（密码不回显明文）；用量模块内存配置的服务器字段也要刷新
+      // 回读掩码态（密码不回显明文）
       await loadShared();
-      await syncApp.reloadConfig().catch(() => {});
       refreshPoolsync();
     }
   } catch (e) {
@@ -96,7 +92,6 @@ async function clearShared() {
     sharedSaveMsg.value = r?.ok ? "已清除" : r?.message || "清除失败";
     if (r?.ok) {
       await loadShared();
-      await syncApp.reloadConfig().catch(() => {});
       refreshPoolsync();
     }
   } catch (e) {
@@ -107,35 +102,6 @@ async function loadShared() {
   try {
     shared.value = await api.webdavSharedGet();
   } catch { /* 浏览器预览走 mock */ }
-}
-
-// ---- 用量统计模块附带项（跟随共享服务器；预设与电脑名仍存用量模块自己配置里） ----
-const syncCfg = syncApp.config;
-// 存储预设（仅备忘记忆）：跟随用量模块配置里的 webdav.preset 字段
-const usagePreset = computed({
-  get: () => syncCfg.webdav.preset,
-  set: (v) => { syncCfg.webdav.preset = v; },
-});
-const usagePresets = [
-  { key: "feiniu", label: "飞牛 fnOS" },
-  { key: "nextcloud", label: "Nextcloud" },
-  { key: "nutstore", label: "坚果云" },
-  { key: "synology", label: "群晖" },
-  { key: "custom", label: "自定义" },
-];
-const usageExtraMsg = ref("");
-async function saveUsageExtra() {
-  usageExtraMsg.value = "";
-  const r = await syncApp.save();
-  usageExtraMsg.value = r?.ok ? "已保存" : r?.message || "保存失败";
-  window.setTimeout(() => (usageExtraMsg.value = ""), 3200);
-}
-
-// ---- 用量统计同步（跟随统一服务器；startSync 先落盘配置再后台跑，进度走标准「同步中」弹窗） ----
-const usageRunning = computed(() => syncApp.syncing || !!syncApp.sync?.running);
-const usageLastSyncAt = computed(() => syncApp.sync?.lastSyncAt ?? 0);
-function runUsageSync() {
-  void syncApp.startSync();
 }
 
 // ---- 反代网关号池同步（压缩包用 WebDAV 密码加密；进度走 app:event 推送） ----
@@ -166,13 +132,6 @@ function fmtAgoMs(ms: number) {
   if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
   return new Date(ms).toLocaleString("zh-CN", { hour12: false });
-}
-
-/** 技能仓库的 lastSyncAt 是 ISO 字符串（WebDavStatus），与毫秒值统一走相对时间格式化 */
-function fmtAgoVal(v: number | string | null | undefined) {
-  if (!v) return "从未同步";
-  const ms = typeof v === "string" ? new Date(v).getTime() : v;
-  return ms ? fmtAgoMs(ms) : "从未同步";
 }
 
 // ---- 记忆中枢同步（整体打包上传/下载；进度事件 event:"memory" type:"sync"） ----
@@ -300,49 +259,22 @@ onUnmounted(() => {
         <div class="setting-group" style="margin-bottom: 0">
           <div class="sg-title" style="margin-bottom: 12px">
             模块根目录
-            <span class="sg-hint">三个模块在同一网盘上的隔离目录 · 改根目录 = 换一个全新数据位置（旧数据不搬）</span>
+            <span class="sg-hint">各模块在同一网盘上的隔离目录 · 改根目录 = 换一个全新数据位置（旧数据不搬）</span>
           </div>
           <div class="form-grid">
-            <div class="form-field"><label>用量统计（存量默认 /dosage-sync）</label><input class="f-input mono" v-model="shared.roots.usage" placeholder="/dosage-sync" /></div>
             <div class="form-field"><label>反代网关号池（默认 /agenthub-proxy）</label><input class="f-input mono" v-model="shared.roots.proxy" placeholder="/agenthub-proxy" /></div>
             <div class="form-field"><label>记忆中枢（默认 /agenthub-memory）</label><input class="f-input mono" v-model="shared.roots.memory" placeholder="/agenthub-memory" /></div>
-            <div class="form-field"><label>存储预设（仅备忘，帮你记服务器是哪家的）</label>
-              <el-select v-model="usagePreset" class="f-el-select" popper-class="glass-popper" style="width: 100%">
-                <el-option v-for="p in usagePresets" :key="p.key" :value="p.key" :label="p.label" />
-              </el-select>
-            </div>
-            <div class="form-field"><label>电脑名（用量统计多设备列表里显示）</label><input class="f-input" v-model="syncCfg.deviceName" placeholder="如：公司笔记本" /></div>
-            <div class="form-field" style="align-self:end">
-              <button class="btn-outline" @click="saveUsageExtra">保存预设与电脑名</button>
-              <span v-if="usageExtraMsg" class="hint" style="margin-left: 10px">{{ usageExtraMsg }}</span>
-            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 快捷同步：四大板块逐一手动触发（共用上方统一服务器与各自根目录；详细进度/报告在各模块同步页） -->
+    <!-- 快捷同步：各板块逐一手动触发（共用上方统一服务器与各自根目录；详细进度/报告在各模块同步页） -->
     <div class="sync-scope">
       <div class="card" style="padding: 4px 18px 10px">
         <div style="display:flex; align-items:baseline; padding: 12px 0 2px">
           <span style="font-size:13px; font-weight:600; color: var(--text)">快捷同步</span>
-          <span style="font-size:11px; color: var(--text-3); margin-left:8px">四大板块共用上方统一服务器 · 可逐个手动触发，详细进度与报告见各模块的「同步」页</span>
-        </div>
-
-        <!-- 用量统计 -->
-        <div class="switch-row" style="align-items: flex-start">
-          <div class="s-left">
-            <div class="s-title">用量同步</div>
-            <div class="s-desc">把本机各工具的用量记录同步到网盘，多设备合并出完整用量统计 · 根目录 {{ shared.roots.usage || "/dosage-sync" }}</div>
-            <div class="s-desc" style="margin-top: 2px">
-              <span :style="{ color: configured ? 'var(--ok)' : 'var(--warn)' }">{{ configured ? "已就绪" : "未配置" }}</span>
-              <template v-if="configured && usageLastSyncAt"> · 上次同步 {{ fmtAgoVal(usageLastSyncAt) }}</template>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0">
-            <button v-if="!configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
-            <button v-else class="btn-outline" :disabled="usageRunning" @click="runUsageSync">{{ usageRunning ? "同步中…" : "立即同步" }}</button>
-          </div>
+          <span style="font-size:11px; color: var(--text-3); margin-left:8px">各板块共用上方统一服务器 · 可逐个手动触发，详细进度与报告见各模块的「同步」页</span>
         </div>
 
         <!-- 反代网关号池 -->

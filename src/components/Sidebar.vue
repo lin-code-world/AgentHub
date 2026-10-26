@@ -17,13 +17,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ElMessageBox } from "element-plus";
 import { useAppStore } from "../stores/app";
 import { useMemoryStore } from "../stores/memory";
-import { useSyncStore } from "../stores/sync";
-import { useUsageStore } from "../stores/usage";
-import * as syncApi from "../api/sync";
-import { formatToken, formatCost, formatInteger, timeAgo } from "../composables/useFormat";
+import { formatInteger, timeAgo } from "../composables/useFormat";
 import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
-import type { DeviceMeta } from "../types/sync";
 import type { ModuleKey } from "../types";
 import * as api from "../api/ipc";
 import { coalesceAsync } from "../utils/timing";
@@ -32,8 +28,6 @@ import logoUrl from "../assets/logo.png";
 
 const app = useAppStore();
 const memStore = useMemoryStore();
-const usageApp = useSyncStore();
-const usage = useUsageStore();
 
 // 事件合流：poolsync/credits、memory 写入/索引等事件密集到达时，
 // 侧栏卡片的刷新被合并成有节制的几次，不再逐事件打 IPC（事件风暴 → IPC 风暴）
@@ -52,7 +46,6 @@ function refreshStatsForEnabled(only?: string) {
   const want = (k: string) => (only ? only === k : true);
   if (want("proxy") && modOn("proxy")) { refreshProxyMeta(); refreshChannels(); }
   if (want("memory") && modOn("memory")) refreshMemoryStats();
-  if (want("usage") && modOn("usage")) ensureUsageSummary();
 }
 /** 侧栏 GitHub 入口：交由主进程 shell.openExternal 用默认浏览器打开仓库 */
 function openRepo() {
@@ -88,15 +81,13 @@ onUnmounted(() => {
   scheduleProxyRefresh.cancel();
   scheduleMemoryRefresh.cancel();
 });
-// 切模块时刷新对应板块的实时统计（号池可能刚被同步 / 用量刚落库）
+// 切模块时刷新对应板块的实时统计（号池可能刚被同步）
 watch(
   () => app.activeModule,
   (m) => {
     if (m === "proxy") {
       refreshChannels();
       refreshProxyMeta();
-    } else if (m === "sync") {
-      ensureUsageSummary(true);
     } else if (m === "memory") {
       refreshMemoryStats();
     }
@@ -161,32 +152,9 @@ function gotoMemory(page: string) {
   app.activePage = page;
 }
 
-// ===== 用量统计 · 今日费用 / tokens（真实；summary 已由总览页加载过则直接复用） =====
-async function ensureUsageSummary(force = false) {
-  if (!force && usage.summary) return;
-  if (usage.loading) return;
-  await usage.loadOverview().catch(() => {});
-}
-const syncTodayCost = computed(() => usage.summary?.todayCost ?? null);
-const syncTodayTokens = computed(() => usage.summary?.todayTokens ?? 0);
-const billingOn = computed(() => !!usageApp.config.billing?.enabled);
-const currency = computed(() => usageApp.config.billing?.displayCurrency || "CNY");
-
 // ===== 模块卡片的运行状态与统计（全部真实数据，无 mock） =====
 const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "warn"; stats: { v: string; label: string; unit?: string }[] }>>(() => {
-  const syncStats: { v: string; label: string; unit?: string }[] = [
-    { v: String(usage.devices.length), label: "机器", unit: "台" },
-  ];
-  if (billingOn.value && syncTodayCost.value !== null) {
-    syncStats.push({ v: formatCost(syncTodayCost.value, 2, currency.value), label: "今日费用" });
-  }
-  syncStats.push({ v: formatToken(syncTodayTokens.value), label: "今日 tokens" });
   return {
-    sync: {
-      state: usage.loadError ? "加载失败" : "已同步",
-      level: usage.loadError ? "warn" : "ok",
-      stats: syncStats,
-    },
     proxy: {
       state: proxyRunning.value ? "网关运行中" : "网关未启动",
       level: proxyRunning.value ? "ok" : "warn",
@@ -242,7 +210,6 @@ const upOpen = ref(false);
 
 // 模块图标（线稿 path，复刻 design.html）
 const MODULE_ICONS: Record<ModuleKey, string> = {
-  sync: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/>',
   proxy: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>',
   // 记忆中枢：脑/记忆背包（同款线稿：外轮廓 + 内部层线）
   memory: '<path d="M12 3a6 6 0 0 0-6 6v9a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V9a6 6 0 0 0-6-6z"/><path d="M9 10h6M9 14h6"/>',
@@ -250,83 +217,12 @@ const MODULE_ICONS: Record<ModuleKey, string> = {
 
 // ===== 下卡片：模块总览概况（标题 / 提示全部接真实统计） =====
 const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(() => ({
-  sync: { title: "设备用量", hint: `${devices.value.length} 台设备` },
   proxy: { title: "渠道额度", hint: visibleChannels.value.length ? `${visibleChannels.value.length} 个渠道` : "渠道" },
   memory: {
     title: "记忆概况",
     hint: memoryOverview.value ? `${memoryOverview.value.total} 条记忆` : "记忆中枢",
   },
 }));
-
-// 用量统计 · 设备用量（真实数据：usage store 的设备列表，原「用量记录同步」侧栏同款）
-const devices = computed(() => usage.devices);
-const allTotalTokens = computed(() => usage.devices.reduce((s, d) => s + (d.totalTokens || 0), 0));
-
-function onSelectDevice(deviceId: string | null) {
-  // 点设备行跳到总览页并按设备过滤（与原应用一致）；行内左滑是删除手势，不触发跳转
-  if (app.activeModule !== "sync" || app.activePage !== "overview" || app.settingsOpen) {
-    app.activeModule = "sync";
-    app.activePage = "overview";
-    app.settingsOpen = false;
-  }
-  usage.selectDevice(deviceId);
-}
-
-// ===== 设备行左滑删除（桌面端按横向拖拽实现：向左拖出删除区，松手停在展开态）=====
-const swipedId = ref(""); // 当前展开删除区的设备 id
-let swipe = { id: "", startX: 0, dx: 0, active: false };
-
-function onDevicePointerDown(d: DeviceMeta, e: PointerEvent) {
-  if (d.isLocal) return; // 本机设备不可删
-  swipe = { id: d.deviceId, startX: e.clientX, dx: 0, active: true };
-  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-}
-function onDevicePointerMove(d: DeviceMeta, e: PointerEvent) {
-  if (!swipe.active || swipe.id !== d.deviceId) return;
-  swipe.dx = Math.max(-72, Math.min(0, e.clientX - swipe.startX));
-  const el = e.currentTarget as HTMLElement;
-  el.style.transform = `translateX(${swipe.dx}px)`;
-}
-function onDevicePointerUp(d: DeviceMeta, e: PointerEvent) {
-  if (!swipe.active || swipe.id !== d.deviceId) return;
-  swipe.active = false;
-  const el = e.currentTarget as HTMLElement;
-  // 拖过阈值（-36px）停在展开态，否则弹回
-  if (swipe.dx < -36) {
-    swipedId.value = d.deviceId;
-    el.style.transform = "translateX(-56px)";
-  } else {
-    if (swipedId.value === d.deviceId) swipedId.value = "";
-    el.style.transform = "";
-  }
-  swipe.dx = 0;
-}
-function closeSwipe(d: DeviceMeta, e: MouseEvent) {
-  e.stopPropagation();
-  if (swipedId.value === d.deviceId) swipedId.value = "";
-}
-
-/** 删除退役设备：确认弹窗 → 后端先删 WebDAV 远端数据再清本地（与原应用一致） */
-async function removeDevice(d: DeviceMeta) {
-  swipedId.value = "";
-  try {
-    await ElMessageBox.confirm(
-      `将同时删除 WebDAV 上「${d.deviceName}」的数据与本地记录，不可恢复。`,
-      `删除退役设备「${d.deviceName}」？`,
-      { confirmButtonText: "确认删除", cancelButtonText: "取消", type: "warning" }
-    );
-  } catch {
-    return; // 取消
-  }
-  const r = await syncApi.deleteDevice(d.deviceId);
-  if (!r || !r.ok) {
-    await ElMessageBox.alert(r?.message || "删除设备失败", "删除失败", { type: "error" });
-    return;
-  }
-  if (usage.selectedDeviceId === d.deviceId) usage.selectedDeviceId = null;
-  await usage.refreshDevices();
-  await usage.loadOverview();
-}
 </script>
 
 <template>
@@ -393,48 +289,8 @@ async function removeDevice(d: DeviceMeta) {
         <span class="ov-hint">{{ OVERVIEW[app.activeModule].hint }}</span>
       </div>
       <div class="ov-body">
-        <!-- 用量统计：设备用量（真实数据；非本机设备左滑出删除，确认后连 WebDAV 远端一起删） -->
-        <template v-if="app.activeModule === 'sync'">
-          <el-tooltip content="点击查看所有电脑数据汇总" placement="right">
-            <div class="ov-row ov-pick" :class="{ selected: usage.selectedDeviceId === null }" @click="onSelectDevice(null)">
-              <span class="ov-dot"></span>
-              <div class="grow">
-                <div class="ov-name">全部电脑<span class="ov-tag">汇总</span></div>
-                <div class="ov-meta">{{ devices.length }} 台设备合计</div>
-              </div>
-              <b class="ov-num">{{ formatToken(allTotalTokens) }}</b>
-            </div>
-          </el-tooltip>
-          <el-tooltip
-            v-for="d in devices"
-            :key="d.deviceId"
-            :content="d.isLocal ? '本机设备' : '点击只看该设备；向左滑可删除'"
-            placement="right"
-          >
-            <div
-              class="ov-row ov-pick ov-device"
-              :class="{ selected: usage.selectedDeviceId === d.deviceId, swiped: swipedId === d.deviceId }"
-              @click="onSelectDevice(d.deviceId)"
-              @pointerdown="onDevicePointerDown(d, $event)"
-              @pointermove="onDevicePointerMove(d, $event)"
-              @pointerup="onDevicePointerUp(d, $event)"
-              @pointercancel="onDevicePointerUp(d, $event)"
-            >
-              <span class="ov-dot" :class="{ off: !d.online }"></span>
-              <div class="grow">
-                <div class="ov-name">{{ d.deviceName }}<span v-if="d.isLocal" class="ov-tag">本机</span></div>
-                <div class="ov-meta">{{ timeAgo(d.lastSyncAt) }}</div>
-              </div>
-              <b class="ov-num">{{ formatToken(d.totalTokens) }}</b>
-              <el-tooltip v-if="!d.isLocal" content="删除该退役设备（同时删除 WebDAV 上的数据）" placement="top">
-                <button class="ov-del" @click.stop="removeDevice(d)">删除</button>
-              </el-tooltip>
-            </div>
-          </el-tooltip>
-        </template>
-
         <!-- 记忆中枢：概况（条数/今日/待处理/最近项目/已连通 Agent/索引一致率；每行可点跳对应页面） -->
-        <template v-else-if="app.activeModule === 'memory'">
+        <template v-if="app.activeModule === 'memory'">
           <template v-if="memoryOverview">
             <el-tooltip content="点击查看记忆浏览" placement="right">
               <div class="ov-row ov-pick" @click="gotoMemory('browse')">

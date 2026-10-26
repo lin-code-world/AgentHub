@@ -18,7 +18,6 @@ import { SETTINGS_TABS } from "../../types";
 import ConfigGeneralSection from "./ConfigGeneralSection.vue";
 import ConfigWebdavSection from "./ConfigWebdavSection.vue";
 import ConfigTimingSection from "./ConfigTimingSection.vue";
-import ConfigDataSection from "./ConfigDataSection.vue";
 import ConfigFeedbackSection from "./ConfigFeedbackSection.vue";
 
 const app = useAppStore();
@@ -39,7 +38,7 @@ watch(
     <template #header>
       <div>
         <div class="sd-title">设置</div>
-        <div class="sd-sub">通用 · WebDAV 同步 · 同步时间 · 数据与备份 · 反馈与需求（各模块配置在对应板块右上「配置」）</div>
+        <div class="sd-sub">通用 · WebDAV 同步 · 同步时间 · 反馈与需求（各模块配置在对应板块右上「配置」）</div>
       </div>
     </template>
     <div class="sd-layout">
@@ -62,7 +61,6 @@ watch(
         <div v-if="visited.general" v-show="app.settingsTab === 'general'"><ConfigGeneralSection /></div>
         <div v-if="visited.webdav" v-show="app.settingsTab === 'webdav'"><ConfigWebdavSection /></div>
         <div v-if="visited.timing" v-show="app.settingsTab === 'timing'"><ConfigTimingSection /></div>
-        <div v-if="visited.data" v-show="app.settingsTab === 'data'"><ConfigDataSection /></div>
         <div v-if="visited.feedback" v-show="app.settingsTab === 'feedback'"><ConfigFeedbackSection /></div>
       </div>
     </div>

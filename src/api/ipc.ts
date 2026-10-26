@@ -177,7 +177,7 @@ export interface SharedWebdavConfig {
   /** 号池压缩包加密口令（掩码态；空 = 沿用 password） */
   encryptionPassphrase: string;
   s3: { bucket: string; region: string; pathStyle: boolean };
-  roots: { usage: string; proxy: string; memory: string };
+  roots: { proxy: string; memory: string };
 }
 export const webdavSharedGet = () => call<SharedWebdavConfig>("webdav_shared_get");
 export const webdavSharedSave = (cfg: SharedWebdavConfig) =>

@@ -194,9 +194,6 @@ function register(ctx) {
     return webdav.test(cfg);
   }));
 
-  // ===== 用量同步模块（原「用量记录同步」backend/ipc.cjs，冲突命令已加 sync_ 前缀） =====
-  require("./sync-ipc.cjs").registerSync(ctx);
-
   // ===== 反代网关（命令实现见 backend/proxy/index.cjs） =====
   proxy.register(ipcMain);
 

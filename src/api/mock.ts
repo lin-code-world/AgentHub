@@ -27,7 +27,7 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
-    modules: { sync: { enabled: true }, proxy: { enabled: true }, memory: { enabled: true } },
+    modules: { proxy: { enabled: true }, memory: { enabled: true } },
     fx: true,
     fxParticles: false,
     fxPools: false,
@@ -1473,7 +1473,7 @@ export const mock = {
           password: "••••••••",
           encryptionPassphrase: "",
           s3: { bucket: "", region: "", pathStyle: false },
-          roots: { usage: "/dosage-sync", proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
+          roots: { proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
         };
       case "webdav_shared_save":
         return { ok: true, message: "已保存" };

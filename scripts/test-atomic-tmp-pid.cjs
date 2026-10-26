@@ -207,8 +207,6 @@ async function race(mode) {
     const root = path.join(__dirname, "..");
     const expect = [
       ["electron/backend/config.cjs", "设置落盘"],
-      ["electron/backend/sync-config.cjs", "用量同步配置（~/.Dosage_sync，不受多实例隔离）"],
-      ["electron/backend/sync.cjs", "备份压缩包（目录用户可自定义）"],
       ["electron/backend/window-state.cjs", "窗口状态"],
       ["electron/backend/memory/httpapi.cjs", "本地 API 运行信息"],
       ["electron/backend/memory/index.cjs", "报告 md"],
@@ -219,7 +217,6 @@ async function race(mode) {
     // 期望的那一句用字符串拼接出来，不写正则：转义层数一多，判据自己先错
     const baseOf = {
       "electron/backend/config.cjs": "p",
-      "electron/backend/sync-config.cjs": "p", "electron/backend/sync.cjs": "target",
       "electron/backend/window-state.cjs": "p", "electron/backend/memory/httpapi.cjs": "this.runtimeFile",
       "electron/backend/memory/index.cjs": "file", "electron/backend/proxy/ideswitch.cjs": "file",
       "electron/backend/proxy/qoderAuth.cjs": "p.authFile", "electron/backend/proxy/qoderSigner.cjs": "out",

@@ -40,7 +40,7 @@ const defaultConfig: AppConfig = {
   fxPools: false,
   fxCursor: true,
   moduleOrder: MODULES.map((m) => m.key),
-  modules: { sync: { enabled: true }, proxy: { enabled: true }, memory: { enabled: true } },
+  modules: { proxy: { enabled: true }, memory: { enabled: true } },
   update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
   schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）

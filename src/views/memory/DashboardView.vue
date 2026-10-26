@@ -24,7 +24,6 @@ import { useMemoryStore } from "../../stores/memory";
 import * as api from "../../api/ipc";
 import type { MemoryAgentCard, MemoryRow } from "../../types";
 import { formatInteger, timeAgo } from "../../composables/useFormat";
-import EmptyState from "../../components/sync/EmptyState.vue";
 import MemoryTrendChart from "../../components/memory/MemoryTrendChart.vue";
 import LlmUsagePanel from "../../components/memory/LlmUsagePanel.vue";
 import MemHelp from "../../components/memory/MemHelp.vue";
@@ -207,10 +206,9 @@ watch(active, (v) => {
 <template>
   <div class="memory-scope" :class="{ 'is-active': active }">
     <!-- 模块未启用/读取失败时整页只渲染空态（原来在模板末尾，会先闪一屏「-」骨架） -->
-    <EmptyState
+    <el-empty
       v-if="mem.loadError"
-      title="记忆中枢未启用"
-      :desc="mem.loadError"
+      :description="`记忆中枢未启用：${mem.loadError}`"
     />
     <template v-else>
     <div class="mem-head">

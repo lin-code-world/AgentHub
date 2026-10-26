@@ -31,59 +31,6 @@ const ALLOWED_COMMANDS = new Set([
   "open_repo_page",
   // 设置 · 反馈与需求：系统浏览器打开本仓库的 issue 表单
   "open_external_url",
-  // ===== 用量同步（原「用量记录同步」；与框架冲突的 4 个命令加 sync_ 前缀） =====
-  "sync_load_config",
-  "sync_save_config",
-  "test_webdav",
-  // 数据源
-  "list_sources",
-  "detect_source",
-  "health_source",
-  // 汇总查询
-  "get_summary",
-  "get_trend",
-  "get_heatmap",
-  "get_aggregate",
-  "get_dimensions",
-  "get_device_breakdowns",
-  "get_records",
-  // 同步
-  "start_sync",
-  "cancel_sync",
-  "get_sync_progress",
-  "get_sync_logs",
-  "clear_sync_logs",
-  // 本机存储（备份压缩包）
-  "get_backup_info",
-  "browse_backup_file",
-  "restore_backup",
-  // 设备
-  "get_devices",
-  "delete_device",
-  // 导出
-  "export_data",
-  // 计费
-  "get_prices",
-  "get_price_versions",
-  "save_price",
-  "delete_model_prices",
-  "get_unpriced_models",
-  "import_prices_preview",
-  "import_prices_apply",
-  "list_aliases",
-  "add_alias",
-  "remove_alias",
-  "pull_remote_pricing",
-  "get_remote_pricing_status",
-  // 数据目录与缓存（用量模块自己的数据目录，与框架 get_data_dir 区分开）
-  "sync_get_data_dir",
-  "sync_open_data_dir",
-  "get_data_dir_info",
-  "browse_data_dir",
-  "set_data_dir",
-  "reset_data_dir",
-  "reset_local_cache",
-  "set_autostart",
   // ===== 反代网关 =====
   "proxy_status",
   "proxy_start",

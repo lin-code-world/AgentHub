@@ -118,14 +118,9 @@ stallTimer.unref?.();
 const config = require("./backend/config.cjs");
 const ipc = require("./backend/ipc.cjs");
 const updater = require("./backend/updater.cjs");
-// 用量同步模块（原「用量记录同步」）：独立配置与本地库，有专属调度器
-const usageConfig = require("./backend/sync-config.cjs");
-const usagedb = require("./backend/db.cjs");
-const usagesync = require("./backend/sync.cjs");
 // 反代网关模块：本地 OpenAI 兼容服务（默认 127.0.0.1:9527），托盘常驻期间持续提供 API
 const proxy = require("./backend/proxy/index.cjs");
 const memory = require("./backend/memory/index.cjs");
-const usageScheduler = require("./backend/usage-scheduler.cjs");
 // 全局快捷键：唤起/释放界面。冲突时弹气泡并持续重试（见 backend/shortcut.cjs）
 const shortcut = require("./backend/shortcut.cjs");
 // 轻量模式：关窗决策（纯逻辑，可自测）+ 窗口几何持久化（销毁窗口后重建要回到原位）
@@ -396,50 +391,9 @@ function onShortcutToggle() {
   }
 }
 
-// ===== 用量同步：本机用量上传/拉取 =====
-
-function triggerUsageSync() {
-  // 运行中/恢复中不重复触发：原来直接 run 抛错只 console.error，托盘用户毫无反馈
-  const p = usagesync.progress();
-  if (p && (p.running || p.restoring)) {
-    notify("AgentHub", p.restoring ? "正在恢复备份，请稍候" : "用量同步正在进行中");
-    return;
-  }
-  const cfg = usageConfig.loadConfig();
-  usagesync.run(cfg).catch((e) => {
-    console.error("[usage-sync]", e);
-    notify("AgentHub", `用量同步启动失败：${String((e && e.message) || e)}`);
-  });
-}
-
-/** 今日用量摘要（托盘菜单用），无数据时返回 null */
-function usageTodaySummary() {
-  try {
-    const cfg = usageConfig.loadConfig();
-    const s = usagedb.getSummary(cfg.totalMode || "full");
-    // 无记录时返回 null（托盘显示「今日用量 —」）；todayTokens 恒 >= 0，不能用其判断空态
-    return s && s.todayRecordCount > 0 ? s.todayTokens : null;
-  } catch {
-    return null;
-  }
-}
-
-// 托盘今日用量：与渲染进程 formatToken 同口径的中文单位分级（两位小数）
-function formatNum(n) {
-  if (!isFinite(n)) return "0";
-  const abs = Math.abs(n);
-  const units = [[1e10, "百亿"], [1e8, "亿"], [1e7, "千万"], [1e6, "百万"], [1e4, "万"], [1e3, "千"]];
-  for (const [div, unit] of units) {
-    if (abs >= div) {
-      return (n / div).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + unit;
-    }
-  }
-  return Math.round(n).toLocaleString("en-US");
-}
-
 // ===== 托盘 =====
 
-/** 托盘菜单（动态构建：今日用量 + 更新提示 + 暂停/恢复定时同步） */
+/** 托盘菜单（动态构建：更新提示等） */
 function buildTrayMenu() {
   const cfg = config.loadConfig();
   // 板块开关（issue #91）：关闭板块的托盘入口一并隐藏，避免绕过 UI 触发已停用模块
@@ -447,10 +401,7 @@ function buildTrayMenu() {
     const m = (cfg.modules || {})[k];
     return !m || m.enabled !== false;
   };
-  const usageToday = on("sync") ? usageTodaySummary() : null;
   const items = [];
-  if (on("sync")) items.push({ label: usageToday != null ? `今日用量 ${formatNum(usageToday)} token` : "今日用量 —", enabled: false });
-  if (items.length) items.push({ type: "separator" });
   const st = updater.getStatus();
   if (st.status === "available" || st.status === "downloaded") {
     items.push({ label: `发现新版本 v${st.latestVersion} →`, click: () => { showWindow(); focusSettingsUpdate(); } });
@@ -478,12 +429,6 @@ function buildTrayMenu() {
       click: () => { releaseWindowNow("tray-manual"); },
     },
     { type: "separator" },
-    ...(on("sync") ? [{ label: "立即同步用量", click: triggerUsageSync }] : []),
-    ...(on("sync") ? [{
-      label: usageScheduler.isPaused() ? "恢复用量定时同步" : "暂停用量定时同步",
-      click: () => { usageScheduler.setPaused(!usageScheduler.isPaused()); refreshTrayMenu(); },
-    }] : []),
-    { type: "separator" },
     { label: "退出", click: () => { quitting = true; app.quit(); } },
   );
   return Menu.buildFromTemplate(items);
@@ -491,7 +436,7 @@ function buildTrayMenu() {
 
 /**
  * 四大板块启用开关（issue #91）唯一写入口：设置页与「模块顺序」区的开关都走这里。
- * 放在 main 而非 ipc.cjs：运行时启停要调 scheduler/watch/usageScheduler/proxy/memory，
+ * 放在 main 而非 ipc.cjs：运行时启停要调 usageScheduler/proxy/memory，
  * 这些设施的启停本来就归本文件管（before-quit 同款收口）。
  * 落盘走 config.saveConfig 直写；saveConfigFromUI 对 modules 做磁盘优先，
  * 渲染层旧快照的整份保存不会把开关状态写回去。
@@ -510,16 +455,7 @@ function registerModuleToggle() {
       cfg.modules = next;
       config.saveConfig(cfg);
       // 运行时启停：关 = 停后台设施（定时器/监听/服务/库）；开 = 重新拉起（各处均幂等）
-      if (m === "sync") {
-        if (enabled) usageScheduler.start();
-        else {
-          usageScheduler.stop();
-          // 在途同步一并取消（与 proxy 停用时 poolsync.cancel 对称）：否则收尾写库会把
-          // 刚关掉的库惰性重开，违背「停用后后台完全不运行」的语义
-          try { usagesync.cancel(); } catch { /* 无在途任务时无碍 */ }
-          try { usagedb.close(); } catch { /* 关闭失败无碍，重新启用时惰性重开 */ }
-        }
-      } else if (m === "proxy") {
+      if (m === "proxy") {
         // 只做运行时启停，不触碰「记住网关开关」（proxy.restoreOnLaunch）——那是用户的设置，
         // 静默改写会与设置页提示「网关是否自启仍看『记住网关开关』」自相矛盾，且用户无法察觉
         // 设置已被改动。模块停用后重启不拉起网关，由启动短路保证：
@@ -625,31 +561,6 @@ function notify(title, body) {
   n.show();
 }
 
-// 用量同步完成/失败通知：配置读用量模块自己的 schedule
-let lastUsageNotifiedOk = null;
-function notifyUsageSync(okFlag, message) {
-  try {
-    refreshTrayMenu(); // 同步结束后刷新托盘「今日用量」
-    if (!Notification.isSupported()) return;
-    const cfg = usageConfig.loadConfig();
-    if (okFlag) {
-      lastUsageNotifiedOk = true;
-      if (!(cfg.schedule && cfg.schedule.notifyOnSuccess)) return;
-    } else {
-      if (lastUsageNotifiedOk === false) return;
-      lastUsageNotifiedOk = false;
-    }
-    const n = new Notification({
-      title: okFlag ? "用量同步完成" : "用量同步失败",
-      body: message || (okFlag ? "本机用量已上传并拉取最新数据" : "请检查用量同步的 WebDAV 配置"),
-      icon: iconPath("icon.png"),
-    });
-    n.show();
-  } catch {
-    /* 通知失败静默 */
-  }
-}
-
 // ===== 单实例锁 =====
 // 开发旁路：AGENTHUB_ALLOW_MULTI=1 时跳过单实例锁，并隔离 userData，
 // 使 `npm run dev` 能在安装版 AgentHub 仍在运行时并存（否则新实例拿不到锁会干净退出，
@@ -670,18 +581,15 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // 建窗前先应用主题，避免深色配置下标题栏先白后黑闪烁
     const bootCfg = config.loadConfig();
-    // 同步配置留痕（issue #146 猜想 1）：崩溃日志里一眼能看出崩时有没有配 WebDAV、
+    // 同步配置留痕：崩溃日志里一眼能看出崩时有没有配 WebDAV、
     // 各模块是否在跑远端同步；只记有无，不落任何账号密码。
     try {
-      const usageBoot = usageConfig.loadConfig();
-      // 与各引擎的 configured() 同口径：usage/memory 只要求 endpoint；skills/pool 还要账号密码。
+      // 与引擎 configured() 同口径：memory 只要求 endpoint；pool 还要账号密码。
       const hasEndpoint = (w) => !!(w && String(w.endpoint || "").trim());
       const hasAuth = (w) => !!(w && w.endpoint && w.username && w.password);
       __crashLog(
         "sync-config",
-        `usage=${hasEndpoint(usageBoot.webdav) ? "yes" : "no"} skills=${hasAuth(bootCfg.webdav) ? "yes" : "no"} ` +
-          `memory=${hasEndpoint(config.moduleWebdav("memory")) ? "yes" : "no"} pool=${hasAuth(config.moduleWebdav("proxy")) ? "yes" : "no"} ` +
-          `usageMode=${usageBoot.mode || "auto"}`,
+        `memory=${hasEndpoint(config.moduleWebdav("memory")) ? "yes" : "no"} pool=${hasAuth(config.moduleWebdav("proxy")) ? "yes" : "no"}`,
       );
     } catch (e) {
       __crashLog("sync-config-failed", __describe(e));
@@ -693,17 +601,8 @@ if (!gotLock) {
       return !m || m.enabled !== false;
     };
 
-    // 用量同步：初始化本地库（惰性打开），并确保本机设备登记在册（设备列表/本机口径立即可用）
-    if (on("sync")) {
-      usagedb.get();
-      const usageCfg0 = usageConfig.loadConfig();
-      const usageLocalId = usagesync.ensureLocalDeviceId(usageCfg0);
-      usagedb.upsertDevice(usageLocalId, usageCfg0.deviceName || "这台电脑", usagesync.enabledSourceIds(usageCfg0).join(","), usagedb.getLastSyncAt(usageLocalId));
-    }
-
     ipc.register({ ipcMain, app, shell, nativeTheme });
     registerModuleToggle();
-    usagesync.setOnFinish(notifyUsageSync);
     // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）
     // boot() 是 async：rules.init() / store.open() / credits.startScheduler() / startCheckinAuto()
     // 都是裸调用，抛错会变成 rejected promise。原先这里没有任何 catch，
@@ -714,7 +613,6 @@ if (!gotLock) {
     memory.boot().catch((e) => __crashLog("memory-boot-failed", __describe(e)));
     createWindow();
     createTray();
-    if (on("sync")) usageScheduler.start();
     updater.init({ onShowWindow: showWindow, onTrayRefresh: refreshTrayMenu });
     // 全局快捷键（默认 Alt+`，两键）：冲突则弹气泡并持续重试，解除后自动恢复。
     // 设置页改键后经 ipc.onConfigSaved 钩子重新注册，无需重启。
@@ -745,7 +643,6 @@ if (!gotLock) {
   app.on("before-quit", (e) => {
     // 统一收尾：原先两条分支各自重复一遍 stop 调用，新增模块时极易漏改一处
     const cleanup = () => {
-      usageScheduler.stop();
       // 全局快捷键必须显式注销：更新重启是"拦下退出再重启"，
       // 不注销会让旧键在重启窗口期内处于悬空占用状态
       try { if (shortcutRegistrar) shortcutRegistrar.stop(); else shortcut.unregisterAll(globalShortcut); } catch { /* 忽略 */ }

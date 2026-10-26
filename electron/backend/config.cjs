@@ -116,12 +116,11 @@ function defaultConfig() {
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    moduleOrder: ["sync", "proxy", "memory"],
+    moduleOrder: ["proxy", "memory"],
     // ===== 四大板块启用开关（issue #91 轻量模式）：关闭后左上角置灰不可点、后台完全不运行。
     // 唯一写入口是 module_toggle IPC（主进程读改写），设置页表单不拥有它；
     // 记忆中枢旧版 memory.enabled=false 由 loadConfig 迁移到这里，旧字段保留但不再被读取
     modules: {
-      sync: { enabled: true },  // 用量统计（键名与 moduleOrder/前端 ModuleKey 对齐）
       proxy: { enabled: true },
       memory: { enabled: true },
     },
@@ -152,7 +151,6 @@ function defaultConfig() {
         pathStyle: false, // true = path-style（MinIO/R2/OSS 等）；false = 虚拟主机式（AWS）
       },
       roots: {
-        usage: "/dosage-sync",     // 用量统计同步根目录（存量数据位置，勿改默认）
         proxy: "/agenthub-proxy",  // 反代网关号池同步根目录
         memory: "/agenthub-memory", // 记忆中枢同步根目录
       },
@@ -322,22 +320,19 @@ function normalizeShared(s) {
       pathStyle: s3.pathStyle === true,
     },
     roots: {
-      usage: normRoot(roots.usage, def.roots.usage),
       proxy: normRoot(roots.proxy, def.roots.proxy),
       memory: normRoot(roots.memory, def.roots.memory),
     },
   };
 }
 
-// 迁移过程会读用量模块配置，而用量 loadConfig 又会回调本函数取共享值——重入时直接抛错，
-// 让对方 catch 后保留旧值，避免无限递归与迁移中途读到半成品
+// 迁移过程只读框架配置，无重入风险；保留 sharedBusy 哨兵防将来新增迁移源时踩递归
 let sharedBusy = false;
 
 /**
  * 加载统一 WebDAV 配置（明文密码）。
  * 迁移规则（仅首次生效）：webdavShared.endpoint 为空时，从旧位置（框架 config.json 的
- * webdav 段 → 用量模块 ~/.Dosage_sync/config.json 的 webdav 段）搬服务器凭据与各根目录；
- * 随后把用量模块配置里的服务器凭据清空并置 useShared=true（两边 root 保留为各自覆盖值）。
+ * webdav 段）搬服务器凭据，老用户升级后号池同步开箱即用。
  */
 function loadSharedWebdav() {
   if (sharedBusy) throw new Error("webdavShared 正在迁移中");
@@ -355,27 +350,6 @@ function loadSharedWebdav() {
         s.password = String(oldFw.password || "");
         dirty = true;
       }
-      // 旧用量模块配置（~/.Dosage_sync/config.json）
-      try {
-        const sc = require("./sync-config.cjs");
-        const ucfg = sc.loadConfig();
-        const uw = (ucfg && ucfg.webdav) || {};
-        if (!s.endpoint && uw.endpoint && String(uw.endpoint).trim()) {
-          s.endpoint = String(uw.endpoint).trim();
-          s.username = String(uw.username || "");
-          s.password = String(uw.password || "");
-          dirty = true;
-        }
-        if (uw.root && String(uw.root).trim()) s.roots.usage = normalizeShared({ roots: { usage: uw.root } }).roots.usage;
-        // 用量模块改为跟随共享：清掉它自己存的服务器凭据，只留下 useShared 开关与 root 覆盖
-        if (!ucfg.webdav.useShared || uw.endpoint || uw.username || uw.password) {
-          ucfg.webdav.useShared = true;
-          uw.endpoint = "";
-          uw.username = "";
-          uw.password = "";
-          sc.saveConfig(ucfg);
-        }
-      } catch { /* 用量模块目录不可达时跳过，下轮再迁移 */ }
       if (dirty) {
         try {
           // 迁移卫生（issue #95）：凭据已并入 webdavShared，旧段一律清空——
@@ -512,7 +486,7 @@ function loadConfig() {
   // 模块开关归一化（issue #91）：非法/缺失回 true；旧版「记忆中枢已关闭」（memory.enabled=false）
   // 一次性迁移进 modules.memory.enabled，此后 modules.* 是唯一事实源
   merged.modules = merged.modules && typeof merged.modules === "object" ? merged.modules : {};
-  for (const k of ["sync", "proxy", "memory"]) {
+  for (const k of ["proxy", "memory"]) {
     const m = merged.modules[k] && typeof merged.modules[k] === "object" ? merged.modules[k] : {};
     m.enabled = m.enabled !== false;
     merged.modules[k] = m;
