@@ -22,8 +22,11 @@ import { coalesceAsync } from "../utils/timing";
 import { toast } from "../utils/toast";
 import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
 import logoUrl from "../assets/logo.png";
+// 版本号唯一事实源 = 仓库根 package.json 的 version（与设置 · 通用里的展示同源）
+import pkg from "../../package.json";
 
 const app = useAppStore();
+const version = `v${pkg.version}`;
 const gwBusy = ref(false);
 
 /** 网关服务开关（覆盖在反代网关卡右上角）：启停 + 状态经 proxy status 事件回流 */
@@ -98,13 +101,13 @@ async function refreshProxyMeta() {
 }
 
 // ===== 模块卡片的统计（全部真实数据，无 mock）；开关状态由覆盖在卡片右上角的 switch 表达 =====
-const MODULE_META = computed<Record<ModuleKey, { stats: { v: string; label: string; unit?: string }[] }>>(() => {
+const MODULE_META = computed<Record<ModuleKey, { stats: { v: string; label: string }[] }>>(() => {
   return {
     proxy: {
       stats: [
         { v: String(app.config.proxy.port), label: "端口" },
-        { v: String(proxyKeyCount.value), label: "Key", unit: "个" },
-        { v: channels.value.length ? String(channels.value.length) : "-", label: "已启用上游", unit: "个" },
+        { v: String(proxyKeyCount.value), label: "Key" },
+        { v: channels.value.length ? String(channels.value.length) : "-", label: "上游" },
       ],
     },
   };
@@ -155,7 +158,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         <img class="brand-mark" :src="logoUrl" alt="AgentApiGateway" />
         <div class="brand-txt">
           <div class="brand-name">AgentApiGateway</div>
-          <div class="brand-sub">反代网关</div>
+          <div class="brand-sub">反代网关 · {{ version }}</div>
         </div>
       </div>
 
@@ -190,7 +193,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
           </div>
           <div class="mc-stats">
             <div v-for="s in MODULE_META[mod.key].stats" :key="s.label" class="mc-stat">
-              <b>{{ s.v }}<span v-if="s.unit" class="mc-unit">{{ s.unit }}</span></b><span>{{ s.label }}</span>
+              <span>{{ s.label }}</span><b>{{ s.v }}</b>
             </div>
           </div>
         </div>
@@ -294,7 +297,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .brand-sub {
   font-size: 10.5px;
   color: var(--text-3);
-  margin-top: 1px;
+  margin-top: 8px;
 }
 /* 左下角的图标按钮用项目统一按钮（.btn.btn-ghost），这里只管图标字号与呼吸间距 */
 .side-foot .ph {
@@ -316,7 +319,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   border-radius: var(--r-ctl);
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.025);
-  padding: 14px 14px 12px;
+  padding: 16px 16px 14px;
   cursor: pointer;
   position: relative;
   transition: background 0.2s var(--ease), border-color 0.2s, transform 0.15s;
@@ -403,17 +406,16 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .mc-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  justify-content: space-between;
 }
-/* 网关服务开关（文档流内，操作行右侧；scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+/* 网关服务开关（文档流内，操作行右侧；scoped 覆盖全局 40×22 的 .switch：78 宽，滑块行程 58px）
    关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
 .mc-gw-switch {
-  width: 64px;
+  width: 78px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -424,10 +426,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   justify-content: flex-start;
 }
 .mc-gw-switch.on::after {
-  transform: translateX(44px);
+  transform: translateX(58px);
 }
 .mc-gw-switch-text {
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 600;
   color: #e07f44; /* 关态：橙色调，与服务开/关的提示语义呼应 */
   user-select: none;
@@ -440,7 +442,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   opacity: 0.5;
   pointer-events: none;
 }
-/* 单个统计列：数字行 + 标签行纵向排布，行高锁定后各列基线天然对齐 */
+/* 单个统计列：标签行 + 数字行纵向排布，行高锁定后各列基线天然对齐 */
 .mc-stat {
   display: flex;
   flex-direction: column;
@@ -451,7 +453,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   align-items: baseline;
   gap: 2px;
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: 19px;
   font-weight: 600;
   color: var(--text);
   line-height: 1;
@@ -461,17 +463,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .module-card.active .mc-stat b {
   color: var(--accent-strong);
 }
-/* 数字后的弱化单位（台/个/条）：与数字基线对齐（flex baseline），不随字高浮动 */
-.mc-unit {
-  font-size: 9px;
-  font-weight: 500;
-  color: var(--text-3);
-  font-family: var(--font-ui);
-}
 .mc-stat span {
   display: block;
-  margin-top: 3px;
-  font-size: 9.5px;
+  margin-bottom: 5px;
+  font-size: 12px;
   line-height: 1.2;
   color: var(--text-3);
 }
@@ -479,20 +474,20 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .mc-up-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
+  gap: 5px;
+  padding: 4px 11px;
   border-radius: var(--r-pill);
   border: 1px solid var(--accent-line);
   background: transparent;
   color: var(--text-2);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .mc-up-btn .ph {
-  font-size: 10px;
+  font-size: 14px;
 }
 .mc-up-btn:hover {
   color: var(--accent-strong);
