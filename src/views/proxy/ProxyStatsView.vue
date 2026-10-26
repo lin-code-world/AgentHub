@@ -32,7 +32,9 @@ const svcBusy = ref(false);
 async function refreshSvc() {
   try {
     st.value = await api.proxyStatus();
-  } catch { /* 统计区的 err 已有展示，服务状态拉不到就保留旧值 */ }
+  } catch {
+    /* 统计区的 err 已有展示，服务状态拉不到就保留旧值 */
+  }
 }
 
 async function toggleService() {
@@ -65,7 +67,7 @@ const PRESETS = [
 type Preset = (typeof PRESETS)[number]["key"];
 
 const DAY_MS = 86400000;
-const preset = ref<Preset>("7d");
+const preset = ref<Preset>("today");
 const customRange = ref<[string, string] | null>(null);
 // 响应式时间锚：Date.now() 不是响应式依赖，直接在 range computed 里取会让区间冻结在
 // 页面挂载时刻——「今天」档的 to 停在那一刻，之后的新请求 ts > to 永远查不到（点刷新
@@ -141,7 +143,7 @@ const detail = ref<ProxyStatsDetail | null>(null);
 const page = ref(1);
 const pageSize = 15;
 const err = ref("");
-const filters = reactive({key: "", model: "", channel: "", status: ""}); // key 存 Key 的 keyId（明细筛选是下拉精确选择）
+const filters = reactive({ key: "", model: "", channel: "", status: "" }); // key 存 Key 的 keyId（明细筛选是下拉精确选择）
 
 const s = computed(() => ov.value?.summary);
 const successCls = computed(() => ((s.value?.successRate ?? 100) < 99 ? "err" : "acc"));
@@ -250,11 +252,7 @@ async function doCleanup() {
   try {
     const all = cleanScope.value === "all";
     const r = await api.proxyStatsCleanup(undefined, all);
-    ElMessage.success(
-      all
-        ? `已清空全部流水 ${fmtInt(r.deleted)} 条`
-        : `已清理保留期（${app.config.proxy.usageRetentionDays} 天）之前的流水 ${fmtInt(r.deleted)} 条`,
-    );
+    ElMessage.success(all ? `已清空全部流水 ${fmtInt(r.deleted)} 条` : `已清理保留期（${app.config.proxy.usageRetentionDays} 天）之前的流水 ${fmtInt(r.deleted)} 条`);
     cleanOpen.value = false;
     page.value = 1;
     await reload();
@@ -281,10 +279,13 @@ watch([preset, customRange], () => {
   scheduleRefresh();
 });
 // 文本搜索防抖 300ms（每次敲键都打一次 IPC 太浪费）
-watch(() => filters.model, () => {
-  window.clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(applyFilter, 300);
-});
+watch(
+  () => filters.model,
+  () => {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(applyFilter, 300);
+  }
+);
 // 下拉筛选（Key / 渠道 / 状态）都是点选，选中立即刷新
 watch([() => filters.key, () => filters.channel, () => filters.status], applyFilter);
 
@@ -330,28 +331,11 @@ onUnmounted(() => {
             {{ p.label }}
           </button>
         </div>
-        <el-date-picker
-          v-if="preset === 'custom'"
-          :model-value="customRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="~"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          popper-class="glass-popper"
-          class="f-date-range"
-          @update:model-value="pickCustomRange"
-        />
+        <el-date-picker v-if="preset === 'custom'" :model-value="customRange" type="daterange" value-format="YYYY-MM-DD" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="glass-popper" class="f-date-range" @update:model-value="pickCustomRange" />
         <span class="range-hint">{{ rangeLabel }} · {{ ov?.range.granularity === "hour" ? "按小时" : "按天" }}</span>
         <div class="spacer"></div>
         <span class="svc-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">:{{ app.config.proxy.port }}</span>
-        <button
-          class="btn btn-sm svc-toggle"
-          :class="{ 'is-on': st?.running }"
-          :disabled="svcBusy"
-          :title="st?.running ? '点击停止网关服务' : '点击启动网关服务'"
-          @click="toggleService"
-        >
+        <button class="btn btn-sm svc-toggle" :class="{ 'is-on': st?.running }" :disabled="svcBusy" :title="st?.running ? '点击停止网关服务' : '点击启动网关服务'" @click="toggleService">
           <span class="svc-dot" :class="{ off: !st?.running }"></span>
           {{ svcBusy ? "切换中…" : st?.running ? "服务已开启" : "服务已关闭" }}
         </button>
@@ -359,7 +343,9 @@ onUnmounted(() => {
         <button class="btn btn-sm" @click="openClean"><i class="ph ph-broom"></i> 清理</button>
       </div>
 
-      <div v-if="err" class="card err-card"><div class="set-desc err-text">{{ err }}</div></div>
+      <div v-if="err" class="card err-card">
+        <div class="set-desc err-text">{{ err }}</div>
+      </div>
 
       <!-- KPI：区间口径（与下方所有模块同一区间） -->
       <div class="kpis kpis-6">
@@ -391,17 +377,16 @@ onUnmounted(() => {
       <!-- Token 构成 / 请求状态 -->
       <div class="grid-2" style="margin-top: 12px">
         <div class="card anim">
-          <div class="card-title">Token 构成 <span class="right">缓存命中率 {{ cacheHit }}%</span></div>
+          <div class="card-title">
+            Token 构成 <span class="right">缓存命中率 {{ cacheHit }}%</span>
+          </div>
           <StatsDonutChart :data="ov?.tokenMix || []" :palette="['--accent', '--info']" unit="token" center-label="总 Token" />
         </div>
         <div class="card anim">
-          <div class="card-title">请求状态 <span class="right">共 {{ fmtInt(s?.req || 0) }} 次</span></div>
-          <StatsDonutChart
-            :data="ov?.status || []"
-            :palette="['--accent', '--warn', '--danger', '--text-3']"
-            center-label="成功率"
-            :center-value="(s?.successRate ?? 100).toFixed(1) + '%'"
-          />
+          <div class="card-title">
+            请求状态 <span class="right">共 {{ fmtInt(s?.req || 0) }} 次</span>
+          </div>
+          <StatsDonutChart :data="ov?.status || []" :palette="['--accent', '--warn', '--danger', '--text-3']" center-label="成功率" :center-value="(s?.successRate ?? 100).toFixed(1) + '%'" />
         </div>
       </div>
 
@@ -424,7 +409,12 @@ onUnmounted(() => {
               <tr>
                 <th>{{ dimLabel }}</th>
                 <th style="width: 32%">占比（{{ topBy === "tokens" ? "Token" : "请求" }}）</th>
-                <th>请求</th><th>请求 Tok</th><th>响应 Tok</th><th>总 Tok</th><th>成功率</th><th>平均 TTFT</th>
+                <th>请求</th>
+                <th>请求 Tok</th>
+                <th>响应 Tok</th>
+                <th>总 Tok</th>
+                <th>成功率</th>
+                <th>平均 TTFT</th>
               </tr>
               <tr v-for="r in topRows" :key="r.id">
                 <td>{{ r.label }}</td>
@@ -451,7 +441,9 @@ onUnmounted(() => {
 
       <!-- 各 Key 用量：一眼看出哪把 Key 在烧 Token，点「筛选」直接下钻到明细 -->
       <div class="card anim" style="margin-top: 12px">
-        <div class="card-title">各 Key 用量 <span class="right">按总 Token 倒序 · 共 {{ keyRows.length }} 把</span></div>
+        <div class="card-title">
+          各 Key 用量 <span class="right">按总 Token 倒序 · 共 {{ keyRows.length }} 把</span>
+        </div>
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
             <tbody>
@@ -487,17 +479,13 @@ onUnmounted(() => {
 
       <!-- 请求明细：Key 下拉选择 + 模型模糊搜索 + 渠道 / 状态过滤 + 筛选汇总 -->
       <div ref="detailRef" class="card anim" style="margin-top: 12px">
-        <div class="card-title">
-          请求明细
-        </div>
+        <div class="card-title">请求明细</div>
         <div class="detail-filters">
-          <el-select v-model="filters.key" placeholder="全部 Key" clearable class="f-el-select"
-                     popper-class="glass-popper">
-            <el-option value="" label="全部 Key"/>
-            <el-option v-for="k in keyRows" :key="k.keyId" :value="k.keyId" :label="k.name || k.keyId"/>
+          <el-select v-model="filters.key" placeholder="全部 Key" clearable class="f-el-select" popper-class="glass-popper">
+            <el-option value="" label="全部 Key" />
+            <el-option v-for="k in keyRows" :key="k.keyId" :value="k.keyId" :label="k.name || k.keyId" />
           </el-select>
-          <el-input v-model="filters.model" placeholder="搜索模型" clearable class="f-el-input"
-                    popper-class="glass-popper"/>
+          <el-input v-model="filters.model" placeholder="搜索模型" clearable class="f-el-input" popper-class="glass-popper" />
           <el-select v-model="filters.channel" placeholder="全部渠道" clearable class="f-el-select" popper-class="glass-popper">
             <el-option value="" label="全部渠道" />
             <el-option v-for="c in channelOptions" :key="c.id" :value="c.id" :label="c.label" />
@@ -515,7 +503,19 @@ onUnmounted(() => {
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
             <tbody>
-              <tr><th>时间</th><th>模型</th><th>渠道</th><th>KEY</th><th>账号</th><th>状态</th><th>请求 Tok</th><th>缓存命中</th><th>响应 Tok</th><th>TTFT</th><th>耗时</th></tr>
+              <tr>
+                <th>时间</th>
+                <th>模型</th>
+                <th>渠道</th>
+                <th>KEY</th>
+                <th>账号</th>
+                <th>状态</th>
+                <th>请求 Tok</th>
+                <th>缓存命中</th>
+                <th>响应 Tok</th>
+                <th>TTFT</th>
+                <th>耗时</th>
+              </tr>
               <tr v-for="r in detail?.rows || []" :key="r.id">
                 <td class="mono">
                   <el-tooltip :content="fmtDate(r.ts)" placement="top">
@@ -550,7 +550,7 @@ onUnmounted(() => {
         </div>
         <div class="pager">
           <button class="btn btn-sm" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
-          <span class="pager-info">{{ fmtInt(detail?.total || 0) }} 条 · 第 {{ page }}/{{ totalPages }} 页</span>
+          <span class="pager-info">共 {{ fmtInt(detail?.total || 0) }} 条 · 第 {{ page }}/{{ totalPages }} 页</span>
           <button class="btn btn-sm" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
         </div>
       </div>
@@ -565,12 +565,8 @@ onUnmounted(() => {
               <button class="chip" :class="{ active: cleanScope === 'all' }" @click="cleanScope = 'all'">全部流水</button>
             </div>
             <div class="set-desc">
-              <template v-if="cleanScope === 'expired'">
-                将删除保留期（设置页当前为 {{ app.config.proxy.usageRetentionDays }} 天）之前的全部请求流水，此操作不可恢复。
-              </template>
-              <template v-else>
-                将清空<b>整张请求流水表</b>（含当前筛选范围之外的历史记录），此操作不可恢复。
-              </template>
+              <template v-if="cleanScope === 'expired'"> 将删除保留期（设置页当前为 {{ app.config.proxy.usageRetentionDays }} 天）之前的全部请求流水，此操作不可恢复。 </template>
+              <template v-else> 将清空<b>整张请求流水表</b>（含当前筛选范围之外的历史记录），此操作不可恢复。 </template>
             </div>
             <div class="p-actions">
               <button class="btn" @click="cleanOpen = false">取消</button>
