@@ -1,5 +1,5 @@
-<!-- 设置弹窗 · 通用：外观（主题）+ 模块顺序 + 应用行为（自启 / 托盘）+ 软件更新 + 关于（含免责声明）
-     各模块的操作设置在对应模块右上「配置」按钮切换的配置页里；
+<!-- 设置弹窗 · 通用：外观（主题）+ 应用行为（自启 / 托盘）+ 软件更新 + 关于（含免责声明）
+     网关的操作设置在反代网关右上「配置」按钮切换的配置页里；
      更新通知 / 托盘跳转经 app.configFocusUpdate 滚动并高亮更新卡片 -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
@@ -671,18 +671,6 @@ onUnmounted(() => {
 .set-row-head {
   padding-bottom: 2px;
   border-bottom: none;
-}
-/* 模块顺序拖拽排序：抓手光标 + 拖动中的行半透明 */
-.rows .row {
-  cursor: grab;
-}
-.rows .row.dragging {
-  opacity: 0.4;
-}
-.grip {
-  flex-shrink: 0;
-  font-size: 13px;
-  color: var(--text-3);
 }
 /* 通知/托盘跳转进来的落点提示：高亮一圈，1.6 秒后自行退去 */
 .card.flash {

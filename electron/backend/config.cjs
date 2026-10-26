@@ -240,14 +240,6 @@ function mergeConfig(def, cfg) {
   return out;
 }
 
-/** 模块顺序归一化：非法项剔除，缺失模块按默认顺序补尾（现仅 proxy，保留函数容错旧配置） */
-function normalizeModuleOrder(order) {
-  const known = defaultConfig().moduleOrder;
-  const list = (Array.isArray(order) ? order : []).filter((k) => known.includes(k));
-  for (const k of known) if (!list.includes(k)) list.push(k);
-  return list;
-}
-
 // ===== 按渠道自动签到规则（proxy.checkinAutoRules）：号池页每个渠道一套时间/抖动 =====
 
 /** 规则可覆盖的渠道清单（旧全局配置迁移时铺满用；与 proxy/store.cjs 的 CHANNELS 对齐，新增渠道记得补） */

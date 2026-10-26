@@ -31,13 +31,13 @@ export interface ModuleDef {
 export type SettingsTab = "general" | "webdav" | "timing" | "feedback";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
-  { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 模块顺序 · 更新" },
+  { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 更新" },
   { key: "webdav", name: "WebDAV 同步", icon: "ph-cloud", desc: "统一服务器 · 号池同步" },
-  { key: "timing", name: "同步时间", icon: "ph-clock-countdown", desc: "各板块自动同步 / 刷新周期" },
+  { key: "timing", name: "同步时间", icon: "ph-clock-countdown", desc: "号池自动同步 / 刷新周期" },
   { key: "feedback", name: "反馈与需求", icon: "ph-chat-circle-dots", desc: "问题反馈 · 功能建议" },
 ];
 
-// ===== 应用配置：框架（主题 / 模块顺序）+ 更新 =====
+// ===== 应用配置：框架（主题 / 动效）+ 更新 =====
 
 export interface AppConfig {
   theme: Theme;

@@ -135,8 +135,6 @@ export const saveConfig = (cfg: AppConfig) =>
 export const getAppVersion = () => call<string>("get_app_version");
 export const getDataDir = () => call<string>("get_data_dir");
 export const openDataDir = () => call<void>("open_data_dir");
-export const getHubDir = () => call<string>("get_hub_dir");
-export const openHubDir = () => call<void>("open_hub_dir");
 // 等用户操作原生目录选择框，时长不可控，关掉看门狗
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
 
@@ -160,7 +158,7 @@ export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | un
   return undefined;
 }
 
-// ===== 统一 WebDAV（设置 · 数据存储）：一套服务器凭据 + 四模块根目录 =====
+// ===== 统一 WebDAV（设置 · 数据存储）：一套服务器凭据 + 号池根目录 =====
 export interface SharedWebdavConfig {
   /** 存储类型：webdav（默认）| s3（S3 兼容对象存储：OSS/COS/R2/MinIO 等） */
   type: "webdav" | "s3";
@@ -481,7 +479,9 @@ export const proxyVaultStatus = () => call<{ encrypted: boolean; driver: string;
 // ===== 反代网关：生态接入（CC Switch） =====
 export const proxyCcSwitchStatus = () => call<CcSwitchStatus>("proxy_ccswitch_status");
 export const proxyCcSwitchRegister = (opts: { appType: CcSwitchAppType; apiKey: string; model: string; port?: number }) =>
-  call<CcSwitchRegisterResult>("proxy_ccswitch_register", opts as unknown as Record<string, unknown>);// ===== 远程网关（桌面连远程 Docker 版）=====
+  call<CcSwitchRegisterResult>("proxy_ccswitch_register", opts as unknown as Record<string, unknown>);
+
+// ===== 远程网关（桌面连远程 Docker 版）=====
 // 目标 CRUD 与切换永远走本地主进程（call 的 LOCAL_ONLY_CMDS）；业务命令在远程模式下由
 // call() 自动经 remote_invoke 转发，页面无感知
 type RemoteTargetsResult = { activeId: string; targets: import("../types").RemoteTarget[] };

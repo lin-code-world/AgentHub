@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 应用级状态：配置（主题 / 模块顺序）、当前模块与子页面
+// 应用级状态：配置（主题 / 动效）、当前模块与子页面
 import { defineStore } from "pinia";
 import { MODULES } from "../types";
 import { moduleEnabled } from "../api/caps";

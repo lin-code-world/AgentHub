@@ -12,7 +12,7 @@
 // 以及后端→preload→前端四处接线的逐点钉。
 // 跑法：node scripts/test-usage-retention.cjs
 //   （store.cjs 优先用 node:sqlite；老版本 node 没有它时用 ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe scripts/test-usage-retention.cjs）
-// 纯临时沙箱（APPDATA / AGENT_SKILLS_HOME 指到 mkdtemp），不碰真实 stats.db、不联网、不起窗口。
+// 纯临时沙箱（APPDATA 指到 mkdtemp），不碰真实 stats.db、不联网、不起窗口。
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -21,7 +21,6 @@ const path = require("node:path");
 const ROOT = path.join(__dirname, "..");
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-retention-"));
 process.env.APPDATA = path.join(WORK, "appdata");
-process.env.AGENT_SKILLS_HOME = path.join(WORK, "hub");
 fs.mkdirSync(process.env.APPDATA, { recursive: true });
 
 const store = require(path.join(ROOT, "electron", "backend", "proxy", "store.cjs"));
