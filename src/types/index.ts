@@ -109,8 +109,6 @@ export interface ProxyConfig {
   checkinAutoRules: Record<string, ProxyCheckinAutoRule>;
   /** 渠道启闭（「上游启闭」弹窗）：{ [渠道 id]: true|false }，缺省 = 启用；关闭的渠道全部页面动态隐藏 */
   channelEnabled: Record<string, boolean>;
-  /** 生态接入默认模型（注册进 CC Switch 时使用，缺省取 fallbackModel） */
-  ccSwitchModel: string;
 }
 
 /** 按渠道自动签到规则（proxy.checkinAutoRules 的值；号池页「自动签到」弹窗读写） */
@@ -149,44 +147,6 @@ export interface ProxyKeyRow {
   todayTokens: number;
   /** 完整 Key（后端 DPAPI 解密后随列表返回，供随时查看 / 复制；旧版本创建的 Key 无存档则为空） */
   secret?: string;
-}
-
-// ===== 反代网关：生态接入（CC Switch） =====
-/** CC Switch 里的应用入口：claude / codex（Claude Code / Codex CLI）与 claude-desktop（Claude Desktop 3P，独立入口） */
-export type CcSwitchAppType = "claude" | "codex" | "claude-desktop";
-export interface CcSwitchEntry {
-  appType: CcSwitchAppType;
-  registered: boolean;
-  name?: string;
-}
-/** live 配置的实际指向（真实流量路径的地面真相）：gateway=直连 AgentHub 网关；
- *  ccswitch=经 CC Switch 本地代理（需其运行）；other=指向其它地址；unset=未配置服务地址 */
-export interface CcSwitchLiveRoute {
-  url: string;
-  target: "gateway" | "ccswitch" | "other" | "unset";
-}
-export interface CcSwitchStatus {
-  installed: boolean;
-  /** 库在但 providers 表缺失等异常（按未注册展示，注册时会被更准确的报错拦截） */
-  incompatible?: boolean;
-  dbPath?: string;
-  /** proxy_config 两列语义（实测）：enabled=接管开关的持久化意图（CC Switch 退出仍为 1，下次启动自动恢复）；
-   *  claudeDesktop 借 claude 行 proxy_enabled=当前是否接管中（Desktop 映射依赖它常驻）。
-   *  即 enabled=1 而 CC Switch 未运行时，live 已被恢复为直连，此开关不代表流量正经过它 */
-  takeover?: { claude: boolean; codex: boolean; claudeDesktop: boolean };
-  /** 各应用 live 配置当前实际指向（Claude Code 读 ~/.claude/settings.json，Codex 读 ~/.codex/config.toml） */
-  live?: { claude: CcSwitchLiveRoute; codex: CcSwitchLiveRoute };
-  entries?: CcSwitchEntry[];
-}
-export interface CcSwitchRegisterResult {
-  ok?: boolean;
-  action?: "inserted" | "updated";
-  backupPath?: string;
-  dbPath?: string;
-  appType?: CcSwitchAppType;
-  /** 写入 CC Switch 的真实条目名（与列表里显示的一致，如「AgentHub 网关（Claude Code）」） */
-  name?: string;
-  message?: string;
 }
 
 /** 单个积分包/加油包明细：上游按包发放，逐包各有面值/已用/到期。
@@ -500,7 +460,7 @@ export interface ProxyOpLogRow {
   ts: number;
   /** info = 成功/常规；warn = 降级/需人工/4xx；error = 失败/5xx/网络 */
   level: string;
-  /** 操作分类（代理请求 / 签到 / 网关启停 / API Key / 号池账号 / 网关配置 / OAuth 登录 / 模型目录 / 切换账号 / 生态接入 / 号池同步 / 自动签到 / 冷却与风控） */
+  /** 操作分类（代理请求 / 签到 / 网关启停 / API Key / 号池账号 / 网关配置 / OAuth 登录 / 模型目录 / 切换账号 / 号池同步 / 自动签到 / 冷却与风控） */
   op: string;
   message: string;
   channel: string;
@@ -721,7 +681,6 @@ export const MODULES: ModuleDef[] = [
       { id: "keys", name: "API Keys" },
       { id: "models", name: "模型目录" },
       { id: "poolsync", name: "号池同步" },
-      { id: "ccswitch", name: "生态接入" },
       { id: "proxylog", name: "日志" },
     ],
 

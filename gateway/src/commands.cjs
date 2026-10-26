@@ -58,8 +58,6 @@ const DENY = {
   proxy_account_import_file: "容器无法弹出文件选择框——请用「粘贴 JSON 导入」或管理 API 的 /api/accounts/import",
   proxy_scan_import: "容器内没有可导入的本机登录态——请用 WebDAV/S3 号池同步，或粘贴含 token 的凭据 JSON",
   proxy_oauth_begin: "容器内无法完成网页 OAuth（授权回调到不了容器）——请在桌面版登录后经 WebDAV/S3 号池同步灌号，或粘贴含 token 的凭据 JSON",
-  proxy_ccswitch_status: "CC Switch 是本机客户端，容器里不可用",
-  proxy_ccswitch_register: "CC Switch 是本机客户端，容器里不可用",
   proxy_ide_status: "IDE 切号需要本机客户端，容器里不可用",
   proxy_ide_switch: "IDE 切号需要本机客户端，容器里不可用",
   proxy_oplog_export: "容器里不能导出到本机目录——请到桌面版导出，或直接读宿主机数据目录",

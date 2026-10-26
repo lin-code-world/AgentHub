@@ -30,7 +30,6 @@ const util = require("./util.cjs");
 const ideswitch = require("./ideswitch.cjs");
 const poolsync = require("./poolsync.cjs");
 const poolsched = require("./poolsched.cjs");
-const ccswitch = require("./ccswitch.cjs");
 const oplog = require("./oplog.cjs");
 const xlsx = require("./xlsx.cjs"); // xlsx 写入器在本目录（v1.57.0 误写 ../xlsx.cjs，顶层 require 抛错 → 启动即崩）
 const zcodeLocal = require("./zcodeLocal.cjs");
@@ -1295,16 +1294,6 @@ function register(ipcMain) {
   // 由主进程解密——两条都不动号池（不 pickAccount、不写流水、不进冷却），探完好 Key 还是好的
   ipcMain.handle("proxy_provider_test", handle((input) => provider.probe(input)));
   ipcMain.handle("proxy_provider_fetch_models", handle(({ id }) => provider.fetchModels(id)));
-
-  // ===== 生态接入：CC Switch =====
-  ipcMain.handle("proxy_ccswitch_status", handle(() => ccswitch.status()));
-  ipcMain.handle("proxy_ccswitch_register", handle(({ appType, apiKey, model, port }) => {
-    const r = ccswitch.register({ appType, apiKey, model, port });
-    oplog.log(r && r.ok === false ? "error" : "info", "生态接入",
-      r && r.ok ? `CC Switch 已注册（${String(appType || "")}，${r.action === "updated" ? "更新条目" : "新增条目"}）` : r && r.message || "注册失败",
-      { target: String(appType || "") });
-    return r;
-  }));
 
   // ===== 本地 IDE 快捷切换账号 =====
   // zcode 渠道：客户端在跑时首调返回 needConfirm（前端弹确认），用户确认后带 confirmAck 重调

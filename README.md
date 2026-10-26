@@ -150,13 +150,12 @@ curl -s http://127.0.0.1:9528/api/readyz    # 503 = 池里还没账号，正常
 
 | 页面 | 作用 |
 | --- | --- |
-| 总览 | 服务开关、接入地址、今日指标、渠道一览、实时请求流（每一步都有问号说明） |
+| 总览 | 网关服务开关、接入地址与端点复制；用量统计：时间区间可选（今天 / 7 天 / 30 天 / 90 天 / 自定义）、KPI 与趋势（请求数 / Token / 成功率 / 延迟多指标切换，悬停看精确数值）、Token 构成与请求状态环形图、用量占比 TOP（渠道 / 模型 / Key / 账号 × 按请求 / 按 Token，含请求与响应 token 分列）、各 Key 用量、明细（Key / 模型模糊搜索 + 渠道 / 状态筛选）；流水保留期可配（默认 90 天） |
 | 号池 | 按渠道管理账号：状态、余额、套餐到期、策略、添加账号、一键签到、切到 IDE |
 | API Keys | 生成/停用 Key，配置日配额与限速；完整 Key 随时可查看复制 |
 | 模型目录 | 全渠道模型合并视图，逐模型启停、指定渠道、设置倍率与别名；各渠道官方目录可一键从云端拉取 |
-| 用量统计 | 网关自身的请求流水：时间区间可选（今天 / 7 天 / 30 天 / 90 天 / 自定义）、KPI 与趋势（请求数 / Token / 成功率 / 延迟多指标切换，悬停看精确数值）、Token 构成与请求状态环形图、用量占比 TOP（渠道 / 模型 / Key / 账号 × 按请求 / 按 Token，含请求与响应 token 分列）、各 Key 用量、明细（Key / 模型模糊搜索 + 渠道 / 状态筛选）；流水保留期可配（默认 90 天） |
 | 号池同步 | 多台电脑共享号池：账号与凭据打包经 WebDAV 同步，可选只同步某一个渠道 |
-| 生态接入 | 一键把网关注册进 CC Switch，给 Claude Code / Codex / Claude Desktop 用（这三家也能直接填网关地址，见上方三条入站协议面） |
+| 日志 | 请求流水与操作日志，可筛选、导出 Excel |
 
 ### 上手教程
 
@@ -215,24 +214,13 @@ http://127.0.0.1:9527/v1
 
 保存后发一句话测试，回到「总览」看到实时请求流里出现记录，就说明链路通了。
 
-> **给 Claude Code / Codex / Claude Desktop 用？** 网关听得懂它们的原生协议，可以直接把网关地址填进去（见本节开头的三条入站协议面）。想让 CC Switch 在一个地方统管多套 provider 配置，走下面第 5 步「生态接入」。
+> **给 Claude Code / Codex / Claude Desktop 用？** 网关听得懂它们的原生协议，可以直接把网关地址填进去（见本节开头的三条入站协议面）。
 
 #### 第 5 步（可选）：接入 Claude Code / Codex
-
-**方式 A：直连（推荐，不用额外装东西）**
 
 - **Claude Code / Anthropic SDK**：`ANTHROPIC_BASE_URL` 填 `http://127.0.0.1:9527`（不要带 `/v1`），`ANTHROPIC_AUTH_TOKEN` 填第 3 步生成的 Key
 - **Codex CLI**：`~/.codex/config.toml` 里把 provider 的 `base_url` 填 `http://127.0.0.1:9527/v1`、`wire_api = "responses"`（Codex 已移除对 `chat` 的支持，写 `chat` 会直接报错）
 - 模型名从「模型目录」页里挑一个可用的填上即可
-
-**方式 B：经 CC Switch 托管**（想在一个地方统管多套 provider 配置时）
-
-1. 先装好 [CC Switch](https://github.com/farion1231/cc-switch)
-2. 进入「反代网关 · 生态接入」，选择要接入的应用（Claude Code / Codex / Claude Desktop），选定一个 API Key 和默认模型，点注册
-   - 注册前会自动备份 CC Switch 数据库，且只会写入自己那一条固定条目，不动你的其它 provider
-   - Claude 侧只写 `ANTHROPIC_AUTH_TOKEN`。网关的 Messages 面同时认 `x-api-key` 与 `Authorization: Bearer`，但两个头都带且不是同一把 Key 时会被判成配置错误（拒绝而不是猜一把），所以只写一个
-3. 注册完成后，到 CC Switch 里**打开「代理接管」**再启动对应客户端
-4. Codex 的 `wire_api` 语义上必须是 `responses`，CC Switch 会依据条目里的 `apiFormat` 判定需要转换，不用手动改
 
 ### 号池与自动切换
 

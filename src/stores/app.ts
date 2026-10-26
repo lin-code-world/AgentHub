@@ -64,7 +64,6 @@ const defaultConfig: AppConfig = {
     channelCooldownMs: 120000,
     channelCooldownCapMs: 900000,
     channelEnabled: {},
-    ccSwitchModel: "",
   },
 };
 

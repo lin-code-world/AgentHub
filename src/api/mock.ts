@@ -54,7 +54,6 @@ function defaultConfig(): AppConfig {
       channelFailoverMax: 3,
       channelCooldownMs: 120000,
       channelCooldownCapMs: 900000,
-      ccSwitchModel: "",
       channelEnabled: {},
       checkinAutoRules: {},
     },
@@ -440,24 +439,6 @@ export const mock = {
         return { ok: true, port: 9527 };
       case "proxy_keys_list":
         return JSON.parse(JSON.stringify(PROXY_KEYS));
-      case "proxy_ccswitch_status":
-        return {
-          ok: true,
-          installed: true,
-          dbPath: "~/.cc-switch/cc-switch.db",
-          entries: [
-            { appType: "claude", registered: false },
-            { appType: "codex", registered: false },
-          ],
-        };
-      case "proxy_ccswitch_register":
-        return {
-          ok: true,
-          action: "inserted",
-          backupPath: "~/.cc-switch/backups/cc-switch.db.bak_agenthub_demo",
-          dbPath: "~/.cc-switch/cc-switch.db",
-          appType: args?.appType,
-        };
       case "proxy_key_create":
         return { id: "k-new", name: String(args?.name || "新 Key"), mask: "sk-demo···0000", route: args?.route || "auto", routeOrder: args?.routeOrder || "", dailyQuota: args?.dailyQuota || 0, rateLimit: 0, enabled: true, createdAt: NOW, todayReq: 0, todayTokens: 0, secret: "sk-demo0000000000000000000000000000000000000000000000" };
       case "proxy_key_update":
@@ -753,7 +734,7 @@ export const mock = {
         return { rows: rows.slice(offset, offset + limit), total: rows.length };
       }
       case "proxy_oplog_ops":
-        return ["代理请求", "号池账号", "号池同步", "网关启停", "网关配置", "自动签到", "OAuth 登录", "模型目录", "生态接入", "签到", "切换账号", "API Key", "冷却与风控"];
+        return ["代理请求", "号池账号", "号池同步", "网关启停", "网关配置", "自动签到", "OAuth 登录", "模型目录", "签到", "切换账号", "API Key", "冷却与风控"];
       case "proxy_oplog_export":
         return { ok: true, path: "(浏览器预览)/proxy-oplog.xlsx", count: 3, message: "导出成功（3 条记录）" };
       case "proxy_rules_list":
