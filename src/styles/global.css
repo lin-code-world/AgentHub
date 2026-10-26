@@ -245,7 +245,7 @@ body {
   gap: var(--gap-shell);
 }
 .app.side-collapsed {
-  grid-template-columns: 0 1fr;
+  grid-template-columns: 1fr;
   grid-template-areas: "tabs" "main";
 }
 
@@ -999,7 +999,7 @@ body {
     grid-template-columns: 200px 1fr;
   }
   .app.side-collapsed {
-    grid-template-columns: 0 1fr;
+    grid-template-columns: 1fr;
     grid-template-areas: "tabs" "main";
   }
 }
