@@ -389,14 +389,15 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
     }
   }
 }
+/* ===== 反代网关卡内容区：网格布局（顶部让位给右上角覆盖的服务开关）=====
+   第一行三列等宽：数字基线对齐、标签基线对齐；第二行「上游启闭」跨全列右对齐 */
 .mc-stats {
-  display: flex;
-  flex-wrap: wrap; /* 挤不下时「上游启闭」按钮换行右对齐，数字不被压缩 */
-  align-items: center;
-  gap: 10px 16px;
-  padding-right: 72px; /* 第一行右侧让位给覆盖的网关服务开关 */
+  margin-top: 40px; /* 顶部让位：卡片 padding 14 + 开关 22 + 4 间隙 */
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
-/* 网关服务开关：覆盖在反代网关卡右上角（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+/* 网关服务开关：覆盖在卡片右上角（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
    关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
 .mc-gw-switch {
   position: absolute;
@@ -430,35 +431,45 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   opacity: 0.5;
   pointer-events: none;
 }
+/* 单个统计列：数字行 + 标签行纵向排布，行高锁定后各列基线天然对齐 */
+.mc-stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .mc-stat b {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
   font-family: var(--font-mono);
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  display: block;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  white-space: nowrap;
 }
 .module-card.active .mc-stat b {
   color: var(--accent-strong);
 }
-/* 数字后的弱化单位（台/个/条）：与下卡片 .ov-unit 同构的两段式 */
+/* 数字后的弱化单位（台/个/条）：与数字基线对齐（flex baseline），不随字高浮动 */
 .mc-unit {
   font-size: 9px;
   font-weight: 500;
   color: var(--text-3);
-  margin-left: 2px;
   font-family: var(--font-ui);
 }
 .mc-stat span {
   display: block;
   margin-top: 3px;
   font-size: 9.5px;
+  line-height: 1.2;
   color: var(--text-3);
 }
-/* 上游启闭小按钮（仅反代网关卡）：绿色描边常态，悬停点亮加深 */
+/* 上游启闭小按钮（仅反代网关卡）：独占第二行右对齐（与开关右缘对齐），绿色描边常态 */
 .mc-up-btn {
-  margin-left: auto;
+  grid-column: 1 / -1;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 4px;
