@@ -21,7 +21,6 @@ import Sidebar from "./components/Sidebar.vue";
 import PageTabs from "./components/PageTabs.vue";
 import SettingsDialog from "./components/config/SettingsDialog.vue";
 import ConfigProxySection from "./components/config/ConfigProxySection.vue";
-import ProxyHomeView from "./views/proxy/ProxyHomeView.vue";
 import ProxyKeysView from "./views/proxy/ProxyKeysView.vue";
 import ProxyProvidersView from "./views/proxy/ProxyProvidersView.vue";
 import ProxyAgentsView from "./views/proxy/ProxyAgentsView.vue";
@@ -600,7 +599,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
     <PageTabs />
     <main class="main glass">
       <div class="pages">
-        <ProxyHomeView v-if="seen('proxy', 'home')" v-show="on('proxy', 'home')" :class="{ 'page-anim': on('proxy', 'home') }" />
         <ProxyKeysView v-if="seen('proxy', 'keys')" v-show="on('proxy', 'keys')" :class="{ 'page-anim': on('proxy', 'keys') }" />
         <ProxyProvidersView v-if="seen('proxy', 'providers')" v-show="on('proxy', 'providers')" :class="{ 'page-anim': on('proxy', 'providers') }" />
         <ProxyAgentsView v-if="seen('proxy', 'agents')" v-show="on('proxy', 'agents')" :class="{ 'page-anim': on('proxy', 'agents') }" />

@@ -525,7 +525,7 @@ function saveConfig(cfg, opts = {}) {
  *    刚写下的 false 抹掉，等于止血开关自己会弹回来。故与上面两个字段同列，以磁盘为准。
  *  注意：只应在这两个字段**各自的写入 IPC** 里绕过本名单；它们调的是 saveConfig。
  *  restoreOnLaunch 刻意不进名单：设置页「记住网关开关」就是经整份保存写盘的，
- *  磁盘优先会架空那个开关；渲染层快照由总览页每次启停同步（ProxyHomeView），不会过期。 */
+ *  磁盘优先会架空那个开关；渲染层快照由总览页每次启停同步（ProxyStatsView 的服务行），不会过期。 */
 const OUT_OF_BAND_PROXY_FIELDS = ["channelEnabled", "checkinAutoRules", "enableAnthropic", "enableResponses"];
 
 /** 设置页保存路径专用：先把 out-of-band 字段以**磁盘值**为准，再落盘。

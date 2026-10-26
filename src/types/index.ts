@@ -803,13 +803,14 @@ export const MODULES: ModuleDef[] = [
     key: "proxy",
     name: "反代网关",
     pages: [
-      { id: "home", name: "总览" },
+      // 「总览」= 原用量统计页（时间区间 + KPI + 趋势 + 明细），兼作网关服务启停入口；
+      // 放第一位：点进模块默认打开它（pages[0] 即默认页）
+      { id: "stats", name: "总览" },
       { id: "providers", name: "自定义提供商" },
       { id: "agents", name: "号池" },
       { id: "expiry", name: "积分日历" },
       { id: "keys", name: "API Keys" },
       { id: "models", name: "模型目录" },
-      { id: "stats", name: "用量统计" },
       { id: "poolsync", name: "号池同步" },
       { id: "ccswitch", name: "生态接入" },
       { id: "proxylog", name: "日志" },

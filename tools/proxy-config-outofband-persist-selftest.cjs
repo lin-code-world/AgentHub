@@ -18,7 +18,7 @@
 //   · checkinAutoRules ← proxy_checkin_auto_set（按渠道自动签到）
 //   · enableAnthropic / enableResponses ← 新增协议面的紧急止血开关（界面无入口，手工改 config.json）
 // restoreOnLaunch 刻意不在名单里：设置页「记住网关开关」开关本身就经整份保存写盘，
-// 磁盘优先会把它架空；渲染层快照由总览页每次启停同步（ProxyHomeView），不会过期。
+// 磁盘优先会把它架空；渲染层快照由总览页每次启停同步（ProxyStatsView 的服务行），不会过期。
 //
 // 本守卫锁住两条**相反**的契约（缺一不可）：
 //   A. 设置页整份提交（saveConfigFromUI）→ 上述两个字段**必须**以磁盘为准（旧快照不得冲掉）
