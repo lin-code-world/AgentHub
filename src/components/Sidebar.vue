@@ -215,7 +215,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
             </div>
             <div class="ov-meta">
               {{ c.summary.accountCount ? `${c.summary.onlineCount}/${c.summary.accountCount} 可用` : "空号池" }}
-              <template v-if="c.summary.todayTokens"> · 今日消耗 {{ fmtK(c.summary.todayTokens) }}</template>
             </div>
             <div v-if="c.summary.earliestExpire" class="ov-meta">最早到期 {{ fmtDay(c.summary.earliestExpire) }}</div>
           </div>
