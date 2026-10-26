@@ -25,10 +25,9 @@ import StatsDonutChart from "../../components/proxy/StatsDonutChart.vue";
 
 const app = useAppStore();
 
-// ===== 网关服务行（原总览页迁入）：状态 / 启停 / 接入地址，总览兼作网关操作入口 =====
+// ===== 网关服务开关（总览兼作网关操作入口）：状态 / 启停（失败走 toast）=====
 const st = ref<ProxyGatewayStatus | null>(null);
 const svcBusy = ref(false);
-const svcErr = ref("");
 
 async function refreshSvc() {
   try {
@@ -42,34 +41,17 @@ async function toggleService() {
   const wasRunning = !!st.value?.running;
   try {
     const r = wasRunning ? await api.proxyStop() : await api.proxyStart();
-    if (r && (r as { ok?: boolean }).ok === false) svcErr.value = (r as { message?: string }).message || "操作失败";
+    if (r && (r as { ok?: boolean }).ok === false) ElMessage.error((r as { message?: string }).message || "操作失败");
     else {
-      svcErr.value = "";
       app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
+      ElMessage.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
     }
   } catch (e) {
-    svcErr.value = String((e as Error).message || e);
+    ElMessage.error(String((e as Error).message || e));
   } finally {
     svcBusy.value = false;
     await refreshSvc();
   }
-}
-
-/** 接入地址：状态里有就用，没有按配置拼一个兜底 */
-const base = computed(() => st.value?.baseUrl || `http://${app.config.proxy.bind}:${app.config.proxy.port}/v1`);
-
-const endpoints = [
-  { key: "chat", text: "POST /v1/chat/completions" },
-  { key: "models", text: "GET /v1/models" },
-  { key: "health", text: "GET /healthz" },
-] as const;
-const copied = ref("");
-let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-function copyText(text: string, key: string) {
-  navigator.clipboard?.writeText(text).catch(() => {});
-  copied.value = key;
-  clearTimeout(copiedTimer);
-  copiedTimer = setTimeout(() => (copied.value = ""), 1500);
 }
 
 // ===== 时间区间 =====
@@ -332,7 +314,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.clearTimeout(searchTimer);
-  clearTimeout(copiedTimer);
   scheduleRefresh.cancel();
   if (offEvent) offEvent();
 });
@@ -341,34 +322,8 @@ onUnmounted(() => {
 <template>
   <section class="page">
     <div class="page-body">
-      <!-- 网关服务行（原总览页迁入）：状态 / 启停 / 接入地址 / 端点快捷复制 / 凭据加密态 -->
-      <div class="svc-bar">
-        <span class="pill">
-          <span class="dot" :class="{ off: !st?.running }"></span>{{ st?.running ? "RUNNING" : "STOPPED" }}
-        </span>
-        <button class="btn" :class="st?.running ? 'btn-stop' : 'btn-primary'" :disabled="svcBusy" @click="toggleService">
-          {{ svcBusy ? "处理中…" : st?.running ? "停止服务" : "启动服务" }}
-        </button>
-        <el-tooltip :content="`点击复制：${base}`" placement="top">
-          <button class="pill mono copy-chip" @click="copyText(base, 'base')">
-            {{ base }}<i class="ph" :class="copied === 'base' ? 'ph-check' : 'ph-copy'"></i>
-          </button>
-        </el-tooltip>
-        <el-tooltip
-          v-for="ep in endpoints"
-          :key="ep.key"
-          :content="`点击复制：${ep.text}`"
-          placement="top"
-        >
-          <button class="tag tag-dim copy-chip" @click="copyText(ep.text, ep.key)">
-            {{ ep.text }}<i class="ph" :class="copied === ep.key ? 'ph-check' : 'ph-copy'"></i>
-          </button>
-        </el-tooltip>
-        <span class="tag" :class="st?.vaultOk ? 'tag-ok' : 'tag-warn'">{{ st?.vaultOk ? "DPAPI 凭证加密" : "凭证加密不可用" }}</span>
-        <span v-if="svcErr" class="svc-err">{{ svcErr }}</span>
-      </div>
-
-      <!-- 顶部筛选栏：档位 + 自定义区间 + 生效范围（sticky，滚动只发生在下方内容区） -->
+      <!-- 顶部筛选栏：档位 + 自定义区间 + 生效范围（sticky，滚动只发生在下方内容区）；
+           右侧先给网关服务开关与端口号，再是刷新 / 清理 -->
       <div class="stats-filters">
         <div class="chips">
           <button v-for="p in PRESETS" :key="p.key" class="chip" :class="{ active: preset === p.key }" @click="pickPreset(p.key)">
@@ -389,6 +344,17 @@ onUnmounted(() => {
         />
         <span class="range-hint">{{ rangeLabel }} · {{ ov?.range.granularity === "hour" ? "按小时" : "按天" }}</span>
         <div class="spacer"></div>
+        <span class="svc-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">:{{ app.config.proxy.port }}</span>
+        <button
+          class="btn btn-sm svc-toggle"
+          :class="{ 'is-on': st?.running }"
+          :disabled="svcBusy"
+          :title="st?.running ? '点击停止网关服务' : '点击启动网关服务'"
+          @click="toggleService"
+        >
+          <span class="svc-dot" :class="{ off: !st?.running }"></span>
+          {{ svcBusy ? "切换中…" : st?.running ? "服务已开启" : "服务已关闭" }}
+        </button>
         <button class="btn btn-sm" @click="reload"><i class="ph ph-arrows-clockwise"></i> 刷新</button>
         <button class="btn btn-sm" @click="openClean"><i class="ph ph-broom"></i> 清理</button>
       </div>
@@ -618,54 +584,36 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* ===== 网关服务行（原总览页配方迁入）===== */
-.svc-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
+/* ===== 筛选栏内的网关服务开关与端口号 ===== */
+/* 端口号：mono 数字，悬停提示完整监听地址 */
+.svc-port {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: default;
 }
-.pill .dot {
+/* 服务开关：开着 = 主题色描边 + 状态点亮；关着 = 灰态，一眼可辨 */
+.svc-toggle .svc-dot {
+  display: inline-block;
   width: 6px;
   height: 6px;
+  margin-right: 6px;
   border-radius: 50%;
   background: var(--accent);
-  display: inline-block;
+  box-shadow: 0 0 6px var(--accent);
+  vertical-align: middle;
 }
-.pill .dot.off {
+.svc-toggle .svc-dot.off {
   background: var(--text-3);
+  box-shadow: none;
 }
-/* 地址 / 端点快捷复制：悬停点亮，点击后图标短暂变对勾 */
-.copy-chip {
-  cursor: pointer;
-  border: 1px solid transparent;
-  user-select: none;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.copy-chip .ph {
-  font-size: 11px;
-  margin-left: 2px;
-  opacity: 0.5;
-}
-.copy-chip:hover {
-  color: var(--accent-strong);
+.svc-toggle.is-on {
   border-color: var(--accent-line);
+  color: var(--accent-strong);
 }
-.copy-chip:hover .ph {
-  opacity: 1;
-}
-/* 停止服务用危险色描边，与启动服务的实心主色形成状态区分 */
-.btn-stop {
-  color: var(--danger);
-}
-.btn-stop:hover {
-  border-color: var(--danger);
-  background: var(--danger-dim);
-}
-.svc-err {
-  color: var(--err, #e05555);
-  font-size: 11px;
+.svc-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* 筛选栏固定在页面顶部：滚动只发生在下方内容区（对齐操作日志页的筛选栏配方） */
