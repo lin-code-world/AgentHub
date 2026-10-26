@@ -37,6 +37,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 前端约定
 
+- 代码格式化以根目录 `.prettierrc` 为准（printWidth 999 保持长行不拆、双引号、带分号、2 空格缩进、LF）：新写/修改的代码在提交前按它对齐，可用 `npm run format:check` 校验、`npm run format` 格式化；存量代码不做全量对齐，被 IDE 重排的文件以 prettier 口径收编。
 - `vite.config.ts` 里 unplugin-vue-components 设了 `dirs: []`：本地组件必须显式 import（自动注册已刻意关闭，避免同名静默换实现）；Element
   Plus 的 `<el-*>` 走 resolver 自动按需引入。
 - Vite dev 端口 1420 `strictPort`，与 `electron/main.cjs` 的加载地址绑定，改动会断桌面开发。
@@ -44,7 +45,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 验证（无测试框架，全部是仓库内 .cjs 自测脚本）
 
-- `npm run build` = `vue-tsc --noEmit` + `vite build`，是唯一类型门禁；仓库无 eslint / prettier 配置。
+- `npm run build` = `vue-tsc --noEmit` + `vite build`，是唯一类型门禁；仓库无 eslint 配置，格式化由 prettier 负责（见前端约定）。
 - `node scripts/dev-sink-golden.cjs` 是网关调度核心的「黄金字节等值」闸（响应字节 / 冷却决策 / 选号顺序 / 流水与基线逐字相等）。动
   `backend/proxy` 调度核心：改前 `--write` 录基线（`scripts/fixtures/gateway-sink-baseline.json`），改后比对。三协议回归闸另见
   `scripts/dev-anthropic-in-test.cjs`、`scripts/dev-responses-in-test.cjs`。
