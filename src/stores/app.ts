@@ -38,7 +38,6 @@ const defaultConfig: AppConfig = {
   proxy: {
     port: 9527,
     bind: "127.0.0.1",
-    restoreOnLaunch: false,
     routeStrategy: "smart",
     fixedChannel: "trae",
     routeOrder: "score",

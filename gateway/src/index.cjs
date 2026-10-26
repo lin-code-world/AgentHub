@@ -126,16 +126,15 @@ async function main() {
   console.log(`[AgentApiGateway] 数据目录 ${process.env.AGENTHUB_DATA_DIR}`);
   console.log(`[AgentApiGateway] 凭据加密 ${process.env.AGENTHUB_SECRET_KEY ? "AES-256-GCM (AGENTHUB_SECRET_KEY)" : "无（AGENTHUB_ALLOW_PLAINTEXT=1 已放行明文）"}`);
 
-  // 首启修正自己的 config：server 由本入口显式启动（restoreOnLaunch 保持 false，避免
-  // boot() 拿磁盘旧端口抢先监听）；qoder 双区需要本机客户端 wasm 签名，容器里必然失败
+  // 首启修正自己的 config：server 由本入口按容器环境显式启动（boot 传 startServer:false，
+  // 避免拿磁盘旧端口抢先监听）；qoder 双区需要本机客户端 wasm 签名，容器里必然失败
   const cfg = config.loadConfig();
-  if (cfg.proxy.restoreOnLaunch || cfg.proxy.channelEnabled.qoder !== false || cfg.proxy.channelEnabled.qoder_intl !== false) {
-    cfg.proxy.restoreOnLaunch = false;
+  if (cfg.proxy.channelEnabled.qoder !== false || cfg.proxy.channelEnabled.qoder_intl !== false) {
     cfg.proxy.channelEnabled = Object.assign({}, cfg.proxy.channelEnabled, { qoder: false, qoder_intl: false });
     config.saveConfig(cfg);
   }
 
-  await proxyIndex.boot();
+  await proxyIndex.boot({ startServer: false });
   commandTable = collectCommands();
 
   const started = await server.start(gatewaySettings);

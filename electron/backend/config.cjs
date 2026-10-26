@@ -158,7 +158,6 @@ function defaultConfig() {
     proxy: {
       port: 9527,               // 监听端口（默认 9527）
       bind: "127.0.0.1",        // 绑定地址：127.0.0.1 仅本机 / 0.0.0.0 局域网开放
-      restoreOnLaunch: false,    // 网关开关的上次状态：启动应用时是否随之启动（默认关，由用户自行开启）
       routeStrategy: "smart",   // smart=智能路由（健康度×余额打分）/ fixed=指定渠道优先
       fixedChannel: "trae",     // fixed 策略下的优先渠道
       routeOrder: "score",      // 渠道成本感知排序：score=按打分（现状）/ cost-first=按成本档升序
@@ -433,9 +432,10 @@ function loadConfig() {
   // 整个文件不是对象（null/数字/数组）也当没有，不然合并完必炸
   if (!disk || typeof disk !== "object" || Array.isArray(disk)) disk = {};
   const merged = mergeConfig(defaultConfig(), disk);
-  // 迁移：旧版 proxy.autoStart 是「永远自启」的开关且默认 true，不是用户选择；
-  // 新语义是 restoreOnLaunch「记住上次开关」，所以旧值一律丢弃，改完存盘即不再出现
+  // 迁移：旧版 proxy.autoStart / proxy.restoreOnLaunch 都是「网关是否随应用启动」的历史开关，
+  // 现在固定为启动即监听（设置页已无对应选项），旧值一律丢弃，改完存盘即不再出现
   if (merged.proxy && "autoStart" in merged.proxy) delete merged.proxy.autoStart;
+  if (merged.proxy && "restoreOnLaunch" in merged.proxy) delete merged.proxy.restoreOnLaunch;
   // 迁移：旧版「全局定时自动签到」（proxy.checkinAuto / checkinAutoTime）→ 按渠道规则
   // （号池页每个渠道各自设时间与抖动）。只在旧开关确实开着时搬到全部渠道；搬完即删旧字段，
   // 天然防二次搬运——用户之后在号池页手改的规则不会被旧值再覆盖
@@ -521,9 +521,7 @@ function saveConfig(cfg, opts = {}) {
  *    用户按注释提示手工改 config.json；而「手工改完要重启才进内存快照」这件事不能当约束——
  *    应用在跑的时候改盘，之后任何一次无关的整份保存（切主题、拖模块顺序）都会把这个
  *    刚写下的 false 抹掉，等于止血开关自己会弹回来。故与上面两个字段同列，以磁盘为准。
- *  注意：只应在这两个字段**各自的写入 IPC** 里绕过本名单；它们调的是 saveConfig。
- *  restoreOnLaunch 刻意不进名单：设置页「记住网关开关」就是经整份保存写盘的，
- *  磁盘优先会架空那个开关；渲染层快照由总览页每次启停同步（ProxyStatsView 的服务行），不会过期。 */
+ *  注意：只应在这两个字段**各自的写入 IPC** 里绕过本名单；它们调的是 saveConfig。 */
 const OUT_OF_BAND_PROXY_FIELDS = ["channelEnabled", "checkinAutoRules", "enableAnthropic", "enableResponses"];
 
 /** 设置页保存路径专用：先把 out-of-band 字段以**磁盘值**为准，再落盘。

@@ -59,8 +59,6 @@ export interface AppConfig {
 export interface ProxyConfig {
   port: number;
   bind: string;
-  /** 网关开关的上次状态：启动应用时是否随之启动（默认 false，即首次打开是关闭的） */
-  restoreOnLaunch: boolean;
   routeStrategy: "smart" | "fixed";
   /** fixed 策略下的优先渠道（渠道 id；渠道可扩充，故为字符串） */
   fixedChannel: string;
@@ -253,20 +251,22 @@ export type ProxyProviderKind = "openai_compat";
 export type ProxyChannelKind = "builtin" | ProxyProviderKind;
 
 /** models 条目：字符串 = 裸名且上游同名；对象 = 可带「客户端名 → 上游真名」映射与目录元数据 */
-export type ProxyProviderModel = string | {
-  model: string;
-  /** 上游真实模型名，缺省 = model。`slug/model` 路由时发给上游的是这个 */
-  upstream?: string;
-  /** 额外的可请求名：原名与别名都命中同一上游模型，但别名不出现在 /v1/models */
-  aliases?: string[];
-  /** 思考档位声明：supportedEfforts 决定客户端要的档位能否原样透传，不支持时按此降级 */
-  reasoning?: { supportedEfforts?: string[]; defaultEffort?: string };
-  name?: string;
-  rate?: number;
-  capabilities?: Record<string, boolean | string | number>;
-  contextLength?: number;
-  maxOutputTokens?: number;
-};
+export type ProxyProviderModel =
+  | string
+  | {
+      model: string;
+      /** 上游真实模型名，缺省 = model。`slug/model` 路由时发给上游的是这个 */
+      upstream?: string;
+      /** 额外的可请求名：原名与别名都命中同一上游模型，但别名不出现在 /v1/models */
+      aliases?: string[];
+      /** 思考档位声明：supportedEfforts 决定客户端要的档位能否原样透传，不支持时按此降级 */
+      reasoning?: { supportedEfforts?: string[]; defaultEffort?: string };
+      name?: string;
+      rate?: number;
+      capabilities?: Record<string, boolean | string | number>;
+      contextLength?: number;
+      maxOutputTokens?: number;
+    };
 
 /** 提供商条目（管理页的模型表按对象处理；字符串简写只在读侧兼容，写侧一律展开成对象） */
 export type ProxyProviderModelRow = Exclude<ProxyProviderModel, string>;
@@ -675,14 +675,13 @@ export const MODULES: ModuleDef[] = [
       // 「总览」= 原用量统计页（时间区间 + KPI + 趋势 + 明细），兼作网关服务启停入口；
       // 放第一位：点进模块默认打开它（pages[0] 即默认页）
       { id: "stats", name: "总览" },
-      { id: "providers", name: "自定义提供商" },
       { id: "agents", name: "号池" },
-      { id: "expiry", name: "积分日历" },
-      { id: "keys", name: "API Keys" },
       { id: "models", name: "模型目录" },
+      { id: "providers", name: "自定义提供商" },
+      { id: "keys", name: "API Keys" },
+      { id: "expiry", name: "积分日历" },
       { id: "poolsync", name: "号池同步" },
       { id: "proxylog", name: "日志" },
     ],
-
   },
 ];

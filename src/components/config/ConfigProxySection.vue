@@ -190,13 +190,6 @@ function openDataDir() {
         </div>
         <div class="set-row">
           <div class="set-info">
-            <div class="set-name">记住网关开关（随应用启动）</div>
-            <div class="set-desc">默认关闭：首次打开应用网关是停的，需在「总览」页手动启动；启动/停止都会记在这里，下次打开按它恢复</div>
-          </div>
-          <button class="switch" :class="{ on: app.config.proxy.restoreOnLaunch }" @click="app.config.proxy.restoreOnLaunch = !app.config.proxy.restoreOnLaunch"></button>
-        </div>
-        <div class="set-row">
-          <div class="set-info">
             <div class="set-name">/status 调试端点</div>
             <div class="set-desc">默认关闭；开启后仅回环地址可访问</div>
           </div>

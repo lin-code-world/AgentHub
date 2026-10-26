@@ -17,8 +17,6 @@
 //   · channelEnabled   ← proxy_channel_toggle（上游启闭）
 //   · checkinAutoRules ← proxy_checkin_auto_set（按渠道自动签到）
 //   · enableAnthropic / enableResponses ← 新增协议面的紧急止血开关（界面无入口，手工改 config.json）
-// restoreOnLaunch 刻意不在名单里：设置页「记住网关开关」开关本身就经整份保存写盘，
-// 磁盘优先会把它架空；渲染层快照由总览页每次启停同步（ProxyStatsView 的服务行），不会过期。
 //
 // 本守卫锁住两条**相反**的契约（缺一不可）：
 //   A. 设置页整份提交（saveConfigFromUI）→ 上述两个字段**必须**以磁盘为准（旧快照不得冲掉）
@@ -56,7 +54,7 @@ console.log("");
 console.log("=== 前置：名单与接口存在 ===");
 ok("导出了 OUT_OF_BAND_PROXY_FIELDS", Array.isArray(FIELDS) && FIELDS.length === 4, JSON.stringify(FIELDS));
 ok("名单含 channelEnabled / checkinAutoRules / enableAnthropic / enableResponses",
-  ["channelEnabled", "checkinAutoRules", "enableAnthropic", "enableResponses"].every((f) => FIELDS.includes(f)) && !FIELDS.includes("restoreOnLaunch"),
+  ["channelEnabled", "checkinAutoRules", "enableAnthropic", "enableResponses"].every((f) => FIELDS.includes(f)),
   JSON.stringify(FIELDS));
 ok("导出了 saveConfigFromUI", typeof config.saveConfigFromUI === "function");
 
@@ -65,7 +63,6 @@ function writeDiskState() {
   const cfg = config.loadConfig();
   cfg.proxy.channelEnabled = { lobster: false };            // 有道 已关闭
   cfg.proxy.checkinAutoRules = { lobster: { enabled: true, time: "09:00", jitterMin: 30 } };
-  cfg.proxy.restoreOnLaunch = true;
   cfg.proxy.enableAnthropic = false;                        // 手工改 config.json 关掉的新协议面
   cfg.proxy.enableResponses = false;
   config.saveConfig(cfg);                                   // = 那几个 IPC 所用的路径
@@ -76,12 +73,10 @@ console.log("");
 console.log("=== 磁盘初始状态（模拟用户已用各弹窗设好）===");
 console.log("  channelEnabled   = " + JSON.stringify(disk0.channelEnabled));
 console.log("  checkinAutoRules = " + JSON.stringify(disk0.checkinAutoRules));
-console.log("  restoreOnLaunch  = " + JSON.stringify(disk0.restoreOnLaunch));
 console.log("  enableAnthropic  = " + JSON.stringify(disk0.enableAnthropic));
 console.log("  enableResponses  = " + JSON.stringify(disk0.enableResponses));
 ok("磁盘已记录 channelEnabled.lobster=false", disk0.channelEnabled && disk0.channelEnabled.lobster === false);
 ok("磁盘已记录 checkinAutoRules.lobster", !!(disk0.checkinAutoRules && disk0.checkinAutoRules.lobster));
-ok("磁盘已记录 restoreOnLaunch=true", disk0.restoreOnLaunch === true);
 ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enableAnthropic === false && disk0.enableResponses === false);
 
 // —— 契约 A：设置页整份提交（旧快照）不得冲掉 ——
@@ -94,19 +89,17 @@ config.saveConfigFromUI(stale);
 const after = config.loadConfig().proxy;
 console.log("  保存后磁盘 channelEnabled   = " + JSON.stringify(after.channelEnabled));
 console.log("  保存后磁盘 checkinAutoRules = " + JSON.stringify(after.checkinAutoRules));
-console.log("  保存后磁盘 restoreOnLaunch  = " + JSON.stringify(after.restoreOnLaunch));
 ok("A1 channelEnabled 未被冲掉（有道 仍是关闭）", after.channelEnabled && after.channelEnabled.lobster === false, JSON.stringify(after.channelEnabled));
 ok("A2 checkinAutoRules 未被冲掉", !!(after.checkinAutoRules && after.checkinAutoRules.lobster), JSON.stringify(after.checkinAutoRules));
-// restoreOnLaunch 是设置页自有字段（「记住网关开关」开关经整份保存写盘）：提交值必须原样生效。
-// 若磁盘优先把它顶回 true，设置页开关就被架空了——用户拨开关点保存，落盘还是旧值
-ok("A3 restoreOnLaunch 按提交值落盘（设置页开关不被架空）", after.restoreOnLaunch === false, JSON.stringify(after.restoreOnLaunch));
+// A3：「记住网关开关（随应用启动）」选项已移除，网关固定启动即监听，配置里不再有这个字段
+ok("A3 默认配置不再含 restoreOnLaunch", !("restoreOnLaunch" in config.defaultConfig().proxy));
 ok("A4 设置页真正拥有的字段照常生效（port 改成了 9600）", Number(after.port) === 9600, String(after.port));
-// A5：反向同样成立——磁盘 false、提交 true，落盘必须是 true（开关两个方向都能改）
+// A5：旧版本写下的 restoreOnLaunch 在读取时要被迁移清理，否则整份保存会把它重新写回磁盘
 {
-  const c = config.defaultConfig();
-  c.proxy.restoreOnLaunch = true;
-  config.saveConfigFromUI(c);
-  ok("A5 restoreOnLaunch 反向提交（true）同样生效", config.loadConfig().proxy.restoreOnLaunch === true);
+  const raw = JSON.parse(fs.readFileSync(config.configPath(), "utf8"));
+  raw.proxy.restoreOnLaunch = true;
+  fs.writeFileSync(config.configPath(), JSON.stringify(raw, null, 2), "utf8");
+  ok("A5 旧配置的 restoreOnLaunch 读取时被清理", !("restoreOnLaunch" in config.loadConfig().proxy));
 }
 // A6/A7：两个协议面止血开关。界面没有入口（用户手工改 config.json），应用在跑的时候改盘后
 // 内存快照与渲染层快照都还是旧的——此时任何一次无关的整份保存都会把这个 false 抹掉，
@@ -133,12 +126,6 @@ ok("B1 channelEnabled 可新增键（qoder=false）",
 ok("B2 channelEnabled 可清空（重新启用）",
   JSON.stringify(config.loadConfig().proxy.channelEnabled) === "{}",
   JSON.stringify(config.loadConfig().proxy.channelEnabled));
-{
-  const cfg = config.loadConfig();
-  cfg.proxy.restoreOnLaunch = false;
-  config.saveConfig(cfg);
-}
-ok("B3 restoreOnLaunch 可改回 false", config.loadConfig().proxy.restoreOnLaunch === false);
 {
   const cfg = config.loadConfig();
   cfg.proxy.checkinAutoRules = {};

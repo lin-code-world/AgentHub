@@ -38,7 +38,6 @@ async function toggleGw() {
       proxyRunning.value = wasRunning;
       toast.error((r as { message?: string }).message || "操作失败");
     } else {
-      app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
       toast.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
     }
   } catch (e) {

@@ -76,7 +76,7 @@ console.log("=== A：整份提交（设置页路径）不得冲掉 webdavShared 
 // 真实渲染层永远提交全量配置（loadConfig 的完整合并结果），这里照原样构造
 const staleSnapshot = {
   theme: "light",
-  proxy: { restoreOnLaunch: false },
+  proxy: { debugStatus: false },
   webdav: { endpoint: "", username: "", password: "", root: "/agent-skills", deviceId: "d0", deviceName: "测试机" },
   webdavShared: { endpoint: "", username: "", password: "", roots: {} },
 };
@@ -106,7 +106,7 @@ ok("前置：解密失败内存密码为空串", config.loadConfig().webdavShare
 // 模拟后台读改写保存（网关启停 rememberRunning 同款路径：loadConfig → 改无关字段 → saveConfig）
 {
   const cfg = config.loadConfig();
-  cfg.proxy.restoreOnLaunch = true;
+  cfg.proxy.debugStatus = true;
   config.saveConfig(cfg);
 }
 d = diskShared();

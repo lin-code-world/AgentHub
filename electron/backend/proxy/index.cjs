@@ -457,11 +457,13 @@ function stopCheckinAuto() {
   checkinTimer = null;
 }
 
-/** 启动装配：规则热加载初始化 + 数据库 + 定时额度刷新 + 按上次的开关状态恢复网关
- *  （restoreOnLaunch 不是「用户偏好」而是「上次退出时网关是开是关」，默认 false → 首次打开是关闭的） */
-async function boot() {
+/** 启动装配：规则热加载初始化 + 数据库 + 定时额度刷新 + 网关随应用启动
+ *  网关不再有「记住上次开关」选项：打开应用即监听（桌面形态），手动停止只影响本次会话。
+ *  Docker 形态传 { startServer: false } 自行接管监听（见 gateway/src/index.cjs）。 */
+async function boot(opts = {}) {
   if (booted) return;
   booted = true;
+  const startServer = opts.startServer !== false;
   rules.init();
   store.open();
   // 存量迁移（deviceMid 撞车自愈启动闸）：历史版本会给「导入时是本机登录态」的账号继承
@@ -489,8 +491,17 @@ async function boot() {
       await ps.backupAnchorMid();
     })().catch(() => {});
   } catch { /* WebDAV 不可用不影响启动 */ }
-  if (settings().restoreOnLaunch) {
-    server.start(settings).then(() => events.emit({ type: "status" })).catch(() => {});
+  // 网关随应用启动：设置页已移除「记住网关开关」选项，打开应用即监听配置里的端口。
+  // 启动失败（端口被占等）必须留痕：此前 `.catch(() => {})` 连失败原因一起丢掉，
+  // 用户只会看到「网关没起来」而日志里没有任何线索
+  if (startServer) {
+    void server
+      .start(settings)
+      .then((r) => {
+        oplog.log(r && r.ok ? "info" : "error", "网关启停", r && r.ok ? `随应用启动（端口 ${r.port}${r.already ? "，本就运行中" : ""}）` : `随应用启动失败：${(r && r.message) || "未知原因"}`);
+        events.emit({ type: "status" });
+      })
+      .catch((e) => oplog.log("error", "网关启停", `随应用启动异常：${(e && e.message) || e}`));
   }
 }
 
@@ -511,8 +522,8 @@ function shutdown() {
 
 /**
  * 模块开关（issue #91）运行时启停。
- * 开：从未装配过（启动时模块被关）→ 完整 boot；装配过 → 只重启各定时设施，
- *     网关是否自启仍由「记住网关开关」决定——启用模块不等于打开网关。
+ * 开：从未装配过（启动时模块被关）→ 完整 boot（含网关监听）；装配过 → 只重启各定时设施，
+ *     不重新拉起网关（boot 时已启动；用户本次手动停掉的保持停止，直到下次打开应用）。
  * 关：停定时器/网关并关库（各 store 函数入口都惰性 open，随时可重开）。
  * 不动 booted 装配闸与 rules 监听：重启应用后由启动短路决定是否装配，
  * 会话内反复开关不做全量拆卸/重建，避免 chokidar 重复挂监听。
@@ -741,19 +752,8 @@ function vaultOk() {
   }
 }
 
-/** 记住网关的开关状态：每次启停都写回整体配置的 proxy.restoreOnLaunch，
- *  下次打开应用按它决定是否自动启动（默认 false，即首次打开是关闭的） */
-function rememberRunning(running) {
-  try {
-    const cfg = config.loadConfig();
-    if (cfg.proxy.restoreOnLaunch === running) return;
-    cfg.proxy.restoreOnLaunch = running;
-    config.saveConfig(cfg);
-  } catch {
-    /* 落盘失败不影响本次启停，只影响下次开机是否自动拉起 */
-  }
-}
-
+/** 网关启停只作用于本次会话：设置里已没有「记住网关开关」，
+ *  下次打开应用一律重新拉起，故这里不再写回任何配置 */
 function register(ipcMain) {
   // 请求流水保留期从设置灌入号池存储模块：gc() 只在 open()（首次摸库）时跑，register 先行不踩空。
   // 改完设置后启动 GC 要等下次开库才按新值清；想立刻按新值删一轮，用用量统计页的「清理」按钮
@@ -763,14 +763,12 @@ function register(ipcMain) {
   ipcMain.handle("proxy_status", handle(() => gatewayStatus()));
   ipcMain.handle("proxy_start", handle(async () => {
     const r = await server.start(settings);
-    if (r.ok) rememberRunning(true);
     oplog.log(r.ok ? "info" : "error", "网关启停", r.ok ? `网关已启动（${r.already ? "本就运行中，" : ""}端口 ${r.port}）` : r.message || "启动失败");
     events.emit({ type: "status" });
     return r.ok ? ok({ port: r.port, already: !!r.already }) : fail(r.message);
   }));
   ipcMain.handle("proxy_stop", handle(() => {
     server.stop();
-    rememberRunning(false);
     oplog.log("info", "网关启停", "网关已停止");
     events.emit({ type: "status" });
     return ok({});
@@ -779,7 +777,6 @@ function register(ipcMain) {
   ipcMain.handle("proxy_restart", handle(async () => {
     await server.stopAsync();
     const r = await server.start(settings);
-    if (r.ok) rememberRunning(true);
     credits.startScheduler(() => settings().creditsRefreshMin); // 刷新周期一并热生效
     oplog.log(r.ok ? "info" : "error", "网关启停", r.ok ? `网关已重启（端口 ${r.port}）` : r.message || "重启失败");
     events.emit({ type: "status" });
