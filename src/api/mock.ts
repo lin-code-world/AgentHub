@@ -12,6 +12,8 @@
 // 未覆盖的命令返回 null 让页面降级
 import type { AppConfig } from "../types";
 import { MODULES } from "../types";
+// 版本号唯一事实源 = 仓库根 package.json 的 version（与桌面端 app.getVersion 同源）
+import pkg from "../../package.json";
 
 const KEY = "agenthub-config";
 const NOW = Date.now();
@@ -414,7 +416,7 @@ export const mock = {
         localStorage.setItem(KEY, JSON.stringify(args?.config ?? {}));
         return { ok: true, message: "设置保存成功" };
       case "get_app_version":
-        return "0.1.0";
+        return pkg.version;
       case "get_data_dir":
         return "(浏览器预览)";
       case "open_data_dir":

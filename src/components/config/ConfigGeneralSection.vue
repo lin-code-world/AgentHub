@@ -1,26 +1,23 @@
-<!-- 设置弹窗 · 通用：外观（主题）+ 应用行为（自启 / 托盘）+ 关于（含免责声明）
+<!-- 设置弹窗 · 通用：外观（主题）+ 应用行为（自启 / 托盘）+ 关于
      网关的操作设置在反代网关右上「配置」按钮切换的配置页里 -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { ElMessageBox } from "element-plus";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
+// 版本号唯一事实源 = 仓库根 package.json 的 version（Electron 打包态 app.getVersion 同源）
+import pkg from "../../../package.json";
 
 const app = useAppStore();
-const version = ref("v0.1.0");
+const version = `v${pkg.version}`;
 const dataDir = ref("");
 const isPortable = ref(false);
 
-/** 仅在设置弹窗 · 通用可见时刷新数据（版本 / 数据目录保持最新） */
+/** 仅在设置弹窗 · 通用可见时刷新数据（数据目录保持最新） */
 const active = computed(() => app.settingsOpen && app.settingsTab === "general");
 watch(active, (v) => { if (v) refresh(); }, { immediate: true });
 
 async function refresh() {
-  try {
-    version.value = "v" + (await api.getAppVersion());
-  } catch {
-    /* 取不到就用默认 */
-  }
   try {
     dataDir.value = await api.getDataDir();
   } catch {
@@ -77,55 +74,6 @@ async function openDataDir() {
     /* 浏览器预览无此能力 */
   }
 }
-
-// ===== 免责声明（关于卡内点击弹出；滚动长文，点「我已知晓」关闭）=====
-const disclaimerOpen = ref(false);
-const DISCLAIMER: { h: string; p: string[] }[] = [
-  {
-    h: "一、软件性质与用途",
-    p: [
-      "AgentApiGateway（以下简称「本软件」）是由作者「沐晖」开发并免费提供的开源工具，仅供技术交流、学习研究与个人合法使用。本软件不构成任何商业产品、服务或承诺，作者不提供任何形式的担保、技术支持义务或质量保证。",
-      "你在下载、安装、复制、修改或使用的任一时刻，即视为已阅读、理解并自愿接受本声明的全部内容；如不同意，请立即停止使用并删除本软件。",
-    ],
-  },
-  {
-    h: "二、账号与第三方平台风险",
-    p: [
-      "本软件的「反代网关」等功能涉及将你本机已登录的第三方平台客户端（包括但不限于 Trae、WorkBuddy 等）的凭证用于本地 API 转发。此类使用方式可能违反相关平台的用户协议、服务条款或使用政策。",
-      "因使用本软件（包括反代、共享账号额度、调用第三方接口等）导致的账号被限制、冻结、停用、封禁，额度被清零，或被第三方平台追究任何责任等一切后果，均由使用者本人自行承担，作者概不负责。",
-      "请你务必自行评估风险，并优先使用你自己拥有合法权益的账号与额度；切勿将反代服务开放给不可信的网络环境或他人使用。",
-    ],
-  },
-  {
-    h: "三、数据安全与文件操作",
-    p: [
-      "本软件涉及技能目录的收纳、合并、Junction 挂载、删除，以及 WebDAV 网盘的上传、下载与合并等文件操作。尽管已提供回收站、备份压缩包与冲突裁决机制，作者仍不对任何数据丢失、文件损坏、同步冲突误判、配置错乱或云端数据被覆盖等后果承担责任。",
-      "请在首次使用前自行备份重要数据；执行删除、清空回收站、从压缩包恢复等不可逆操作前，请仔细确认弹窗中的提示内容。",
-      "WebDAV 密码等凭据经系统密钥加密后保存在本机，作者不会、也无能力收集你的任何凭据与数据；因本机系统环境（如密钥损坏、重装系统）导致凭据无法解密的风险由使用者自行承担。",
-    ],
-  },
-  {
-    h: "四、免责范围",
-    p: [
-      "在法律允许的最大范围内，作者不对使用或无法使用本软件所引起的一切直接、间接、附带、特殊或后果性损害承担责任，包括但不限于：数据丢失、账号损失、工作中断、设备故障、利润损失、商业机会损失，以及与第三方平台产生的任何纠纷。",
-      "本软件按「现状」提供，不保证无错误、不中断运行，也不保证与任何第三方软件、系统版本或网盘服务持续兼容。",
-    ],
-  },
-  {
-    h: "五、知识产权与第三方资源",
-    p: [
-      "本软件中提及的第三方平台名称、商标与服务（如 Trae、WorkBuddy、坚果云、Nextcloud、群晖等）均归其各自权利人所有，本软件与上述平台无任何隶属、合作或背书关系。",
-      "使用者通过本软件管理的技能、脚本与配置等内容的合法性与合规性由使用者本人负责，与作者无关。",
-    ],
-  },
-  {
-    h: "六、其他",
-    p: [
-      "本声明的最终解释权归作者所有。作者有权在不另行通知的情况下修改本声明，修改后的声明随新版本软件发布即生效。",
-      "若本声明的任何条款被认定为无效或不可执行，不影响其余条款的效力。",
-    ],
-  },
-];
 
 // ===== 全局快捷键（默认 Alt+`，两键）=====
 // 校验口径与后端一致（功能键+字符键），但**前端先拦一道**：非法值即时红字提示，
@@ -322,34 +270,10 @@ onMounted(() => {
         </div>
         <button class="btn btn-ghost" @click="openDataDir">打开目录</button>
       </div>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">免责声明</div>
-          <div class="set-desc">本平台仅供交流学习使用；使用本平台（含反代网关等功能）产生的一切后果，作者概不负责</div>
-        </div>
-        <button class="btn btn-ghost" @click="disclaimerOpen = true">查看声明</button>
-      </div>
+      
     </div>
 
-    <!-- 免责声明：文档型弹窗（仅此与帮助保留弹窗形态），内容超长时弹窗内滚动 -->
-    <el-dialog v-model="disclaimerOpen" class="disclaimer-dialog" width="560px" align-center append-to-body>
-      <template #header>
-        <div>
-          <div class="dc-title">免责声明</div>
-          <div class="dc-sub">使用本平台前请仔细阅读；继续使用即视为你已理解并接受全部条款</div>
-        </div>
-      </template>
-      <div class="dc-body">
-        <section v-for="sec in DISCLAIMER" :key="sec.h" class="dc-sec">
-          <h3>{{ sec.h }}</h3>
-          <p v-for="(p, i) in sec.p" :key="i">{{ p }}</p>
-        </section>
-        <div class="dc-foot">—— 作者：沐晖 · AgentApiGateway</div>
-      </div>
-      <template #footer>
-        <button class="btn btn-cta" @click="disclaimerOpen = false">我已知晓</button>
-      </template>
-    </el-dialog>
+
   </div>
 </template>
 
@@ -390,45 +314,6 @@ onMounted(() => {
   font-size: 0.94em;
 }
 
-/* ===== 免责声明弹窗 ===== */
-.disclaimer-dialog {
-  max-width: calc(100vw - 48px);
-}
-.disclaimer-dialog :deep(.el-dialog__body) {
-  max-height: min(52vh, 460px);
-  overflow-y: auto;
-}
-.dc-title {
-  font-size: 15px;
-  font-weight: 700;
-}
-.dc-sub {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 2px;
-}
-.dc-sec {
-  margin-bottom: 14px;
-}
-.dc-sec h3 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 6px;
-}
-.dc-sec p {
-  font-size: 12px;
-  line-height: 1.75;
-  color: var(--text-2);
-  margin: 0 0 6px;
-  text-align: justify;
-}
-.dc-foot {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--text-3);
-  text-align: right;
-}
 /* 板块启停开关：切换进行中半透明防连点 */
 .switch.busy {
   opacity: 0.5;
