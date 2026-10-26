@@ -13,7 +13,9 @@
     "preview": "vite preview",
     "electron:build": "npm run build && electron-builder",
     "electron:pack": "npm run build && electron-builder --dir",
-    "gen:icon": "node tools/gen-icon.cjs"
+    "gen:icon": "node tools/gen-icon.cjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "chokidar": "^3.6.0",
@@ -27,6 +29,7 @@
     "electron-builder": "^24.13.3",
     "element-plus": "^2.14.5",
     "pinia": "^2.1.7",
+    "prettier": "^3.9.10",
     "typescript": "~5.3.3",
     "unplugin-vue-components": "^0.27.5",
     "vite": "^4.5.3",
