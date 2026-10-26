@@ -38,20 +38,23 @@ async function toggleGw() {
   if (gwBusy.value) return;
   gwBusy.value = true;
   const wasRunning = gwRunning.value;
+  // 乐观更新先行：开关立即切到目标态（后端 stop/start 同步翻转 running，
+  // 返回即代表已生效）；真实状态随后由 proxy status 事件回流纠偏
+  gwRunning.value = !wasRunning;
   try {
     const r = wasRunning ? await api.proxyStop() : await api.proxyStart();
     if (r && (r as { ok?: boolean }).ok === false) {
+      gwRunning.value = wasRunning; // 后端拒绝：回弹
       toast.error((r as { message?: string }).message || "操作失败");
     } else {
       app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
       toast.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
-      gwRunning.value = !wasRunning;
     }
   } catch (e) {
+    gwRunning.value = wasRunning; // 调用异常：回弹
     toast.error(String((e as Error).message || e));
   } finally {
     gwBusy.value = false;
-    await refreshGw();
   }
 }
 
