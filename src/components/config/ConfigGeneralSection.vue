@@ -261,7 +261,7 @@ onMounted(() => {
     <div class="card">
       <div class="set-row">
         <div class="set-info"><div class="set-name">版本</div></div>
-        <span class="num">{{ version }} · 作者 沐晖</span>
+        <span class="num">{{ version }}</span>
       </div>
       <div class="set-row">
         <div class="set-info">

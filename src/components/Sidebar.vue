@@ -127,9 +127,10 @@ async function refreshChannels() {
 }
 // 死渠道（有号已过期 且 在线余额合计 0）不占侧栏那一行：它们不可用却和可用渠道长得一样，
 // 渠道一多就把真正要看的挤下去。判据落在 channelHealth.ts 里，理由是那条规则错了会静默藏号。
+// 空号池（accountCount = 0，还没接入账号的渠道）同样不占行：侧栏只列「有号池」的渠道。
 const visibleChannels = computed(() => {
   const now = Date.now();
-  return channels.value.filter((c) => !isUnusableChannel(c.summary, now));
+  return channels.value.filter((c) => c.summary.accountCount > 0 && !isUnusableChannel(c.summary, now));
 });
 const fmtDay = (ts: number) => {
   if (!ts) return "-";
