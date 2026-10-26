@@ -163,13 +163,14 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
           :class="{ active: app.activeModule === mod.key }"
           @click="app.selectModule(mod.key)"
         >
-          <div class="mc-stats">
-            <div v-for="s in MODULE_META[mod.key].stats" :key="s.label" class="mc-stat">
-              <b>{{ s.v }}<span v-if="s.unit" class="mc-unit">{{ s.unit }}</span></b><span>{{ s.label }}</span>
-            </div>
-          </div>
-          <!-- 服务开关 + 上游启闭：同一行两端对齐 -->
+          <!-- 服务开关（右）+ 上游启闭（左）：第一行两端对齐 -->
           <div class="mc-actions">
+            <!-- 上游启闭（仅反代网关卡）：渠道级开关入口，弹窗内各渠道图标 + 名称 + 开关 -->
+            <el-tooltip v-if="mod.key === 'proxy'" content="上游启闭：控制各渠道在反代网关中的启用与可见" placement="top">
+              <button class="mc-up-btn" @click.stop="upOpen = true">
+                <i class="ph ph-plugs-connected"></i>上游启闭
+              </button>
+            </el-tooltip>
             <!-- 网关服务开关（stop 与卡片点击互不影响） -->
             <div
               v-if="mod.key === 'proxy'"
@@ -182,12 +183,11 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
             >
               <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
             </div>
-            <!-- 上游启闭（仅反代网关卡）：渠道级开关入口，弹窗内各渠道图标 + 名称 + 开关 -->
-            <el-tooltip v-if="mod.key === 'proxy'" content="上游启闭：控制各渠道在反代网关中的启用与可见" placement="top">
-              <button class="mc-up-btn" @click.stop="upOpen = true">
-                <i class="ph ph-plugs-connected"></i>上游启闭
-              </button>
-            </el-tooltip>
+          </div>
+          <div class="mc-stats">
+            <div v-for="s in MODULE_META[mod.key].stats" :key="s.label" class="mc-stat">
+              <b>{{ s.v }}<span v-if="s.unit" class="mc-unit">{{ s.unit }}</span></b><span>{{ s.label }}</span>
+            </div>
           </div>
         </div>
       </nav>
@@ -392,21 +392,20 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
     }
   }
 }
-/* ===== 反代网关卡内容区：三列统计 + 底部操作行（服务开关 | 上游启闭）===== */
-.mc-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-/* 底部操作行：服务开关靠左、上游启闭靠右，同一行两端对齐 */
+/* ===== 反代网关卡内容区：顶部操作行（上游启闭 | 服务开关）+ 三列统计 ===== */
 .mc-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 12px;
+  margin-bottom: 12px;
 }
-/* 网关服务开关（文档流内，操作行左侧；scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+.mc-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+/* 网关服务开关（文档流内，操作行右侧；scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
    关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
 .mc-gw-switch {
   width: 64px;
@@ -425,12 +424,12 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .mc-gw-switch-text {
   font-size: 9.5px;
   font-weight: 600;
-  color: var(--text-3);
+  color: var(--text-2); /* 关态：比滑块灰底亮一档的正文色，保证可读 */
   user-select: none;
   line-height: 1;
 }
 .mc-gw-switch.on .mc-gw-switch-text {
-  color: #06130b;
+  color: #06130b; /* 开态：主题绿底上用深色字，对比清晰 */
 }
 .mc-gw-switch.busy {
   opacity: 0.5;
