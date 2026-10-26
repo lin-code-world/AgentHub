@@ -116,13 +116,11 @@ function defaultConfig() {
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    moduleOrder: ["proxy", "memory"],
+    moduleOrder: ["proxy"],
     // ===== 四大板块启用开关（issue #91 轻量模式）：关闭后左上角置灰不可点、后台完全不运行。
-    // 唯一写入口是 module_toggle IPC（主进程读改写），设置页表单不拥有它；
-    // 记忆中枢旧版 memory.enabled=false 由 loadConfig 迁移到这里，旧字段保留但不再被读取
+    // 唯一写入口是 module_toggle IPC（主进程读改写），设置页表单不拥有它
     modules: {
       proxy: { enabled: true },
-      memory: { enabled: true },
     },
     update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     // 设备身份段：deviceId/deviceName 是号池同步（poolsync）的本机设备标识来源，
@@ -152,13 +150,7 @@ function defaultConfig() {
       },
       roots: {
         proxy: "/agenthub-proxy",  // 反代网关号池同步根目录
-        memory: "/agenthub-memory", // 记忆中枢同步根目录
       },
-    },
-    // ===== 记忆中枢（模块自带配置在 <仓库>/config/memory.config.json，此处只放框架指针） =====
-    memory: {
-      enabled: true,
-      rootDir: "",   // 空 = 默认 <用户文件夹>/AgentHub/memory
     },
     // 后台与调度
     schedule: {
@@ -321,7 +313,6 @@ function normalizeShared(s) {
     },
     roots: {
       proxy: normRoot(roots.proxy, def.roots.proxy),
-      memory: normRoot(roots.memory, def.roots.memory),
     },
   };
 }
@@ -483,15 +474,13 @@ function loadConfig() {
   merged.proxy.checkinAutoRules = normalizeCheckinRules(merged.proxy.checkinAutoRules);
   if (merged.theme !== "dark" && merged.theme !== "light") merged.theme = "dark";
   merged.moduleOrder = normalizeModuleOrder(merged.moduleOrder);
-  // 模块开关归一化（issue #91）：非法/缺失回 true；旧版「记忆中枢已关闭」（memory.enabled=false）
-  // 一次性迁移进 modules.memory.enabled，此后 modules.* 是唯一事实源
+  // 模块开关归一化（issue #91）：非法/缺失回 true；modules.* 是唯一事实源
   merged.modules = merged.modules && typeof merged.modules === "object" ? merged.modules : {};
-  for (const k of ["proxy", "memory"]) {
+  for (const k of ["proxy"]) {
     const m = merged.modules[k] && typeof merged.modules[k] === "object" ? merged.modules[k] : {};
     m.enabled = m.enabled !== false;
     merged.modules[k] = m;
   }
-  if (merged.memory && merged.memory.enabled === false) merged.modules.memory.enabled = false;
   merged.webdav.password = decryptSecret(merged.webdav.password);
   merged.webdavShared = normalizeShared(merged.webdavShared);
   merged.webdavShared.password = decryptSecret(merged.webdavShared.password);

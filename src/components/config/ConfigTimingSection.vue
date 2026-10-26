@@ -8,21 +8,14 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 同步时间：各板块「自动同步 / 自动刷新」的周期统一在这里管，
-     两个页签（记忆中枢 / 反代网关）各自切换对应的时间设置。
-     两个配置源各自走自己的保存链路——框架 app.save()、记忆中枢 mem.save()；
-     改动即改即存，状态反馈集中在顶部 -->
+<!-- 设置 · 同步时间：反代网关「号池定时同步」的周期在这里管，改动即改即存，状态反馈集中在顶部 -->
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { ref } from "vue";
 import { useAppStore } from "../../stores/app";
-import { useMemoryStore } from "../../stores/memory";
 
 const app = useAppStore();
-const mem = useMemoryStore();
 
-const tab = ref<"memory" | "proxy">("memory");
-
-const ready = ref(false);
+const ready = ref(true);
 const saveState = ref("");
 let stateTimer = 0;
 
@@ -38,34 +31,12 @@ async function saveFramework() {
   feedback(r && r.ok === false ? `保存失败：${r.message}` : "已保存");
 }
 
-/** 记忆中枢同步配置改动即存（schema 热生效，调度器下一拍自取） */
-async function saveMemory(entries: Record<string, unknown>) {
-  try {
-    await mem.save(entries);
-    feedback("已保存");
-  } catch (e) {
-    feedback(`保存失败：${(e as Error).message || "未知错误"}`);
-  }
-}
-
-function setMemInterval(v: number) {
-  if (!Number.isFinite(v)) return;
-  void saveMemory({ "sync.intervalMin": Math.min(1440, Math.max(5, Math.round(v))) });
-}
-
 /** 自动签到已改为按渠道设置（时间/抖动随各渠道领取形态不同），从这里直接去号池页 */
 function gotoProxyPool() {
   app.settingsOpen = false;
   app.selectModule("proxy");
   app.setPage("agents");
 }
-
-onMounted(async () => {
-  // 模块配置是懒加载：没加载过就先拉，否则会用默认值盖掉磁盘真实配置
-  // （loadAll 不做幂等守卫，重复调用会重启进度轮询，所以这里自己挡一道）
-  await mem.loadAll();
-  ready.value = true;
-});
 </script>
 
 <template>
@@ -75,75 +46,48 @@ onMounted(async () => {
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
     </div>
 
-    <div class="cfg-subtabs">
-      <button class="cfg-subtab" :class="{ active: tab === 'memory' }" @click="tab = 'memory'"><i class="ph ph-brain"></i>记忆中枢</button>
-      <button class="cfg-subtab" :class="{ active: tab === 'proxy' }" @click="tab = 'proxy'"><i class="ph ph-plugs-connected"></i>反代网关</button>
-    </div>
-
-    <template v-if="tab === 'memory'">
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">自动同步（WebDAV）</div>
-          <div class="s-desc">开启后按周期与其它设备互相同步记忆中枢</div>
-        </div>
-        <div class="switch" :class="{ on: !!mem.cfg('sync.auto', true) }" role="switch" :aria-checked="!!mem.cfg('sync.auto', true)" @click="saveMemory({ 'sync.auto': !mem.cfg('sync.auto', true) })"></div>
+    <div class="switch-row">
+      <div class="s-left">
+        <div class="s-title">号池定时同步（WebDAV）</div>
+        <div class="s-desc">API Keys、模型映射与账号随号池同步；开启后按周期自动跑，换设备不用手动点</div>
       </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">同步间隔</div>
-          <div class="s-desc">5 ~ 1440 分钟；记忆页「WebDAV 同步」也可随时手动跑</div>
-        </div>
-        <div class="tg-ctl">
-          <input type="number" class="f-input" style="width: 90px" min="5" max="1440" :value="Number(mem.cfg('sync.intervalMin', 60))" @change="setMemInterval(Number(($event.target as HTMLInputElement).value))" />
-          <span class="tg-unit">分钟</span>
-        </div>
-      </div>
-    </template>
-
-    <template v-else>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">号池定时同步（WebDAV）</div>
-          <div class="s-desc">API Keys、模型映射与账号随号池同步；开启后按周期自动跑，换设备不用手动点</div>
-        </div>
-        <div class="tg-ctl">
-          <el-select v-if="app.config.proxy.poolsyncSchedule.hourly" v-model="app.config.proxy.poolsyncSchedule.hourlyInterval" class="f-el-select" popper-class="glass-popper" style="width: 110px" @change="saveFramework">
-            <el-option v-for="n in [1, 2, 3, 6, 12]" :key="n" :value="n" :label="`${n} 小时`" />
-          </el-select>
-          <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.hourly }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.hourly" @click="app.config.proxy.poolsyncSchedule.hourly = !app.config.proxy.poolsyncSchedule.hourly; saveFramework()"></div>
-        </div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">号池每天固定时间</div>
-          <div class="s-desc">每天到点同步一次（错过自动补跑）；与每小时档可同时开</div>
-        </div>
-        <div class="tg-ctl">
-          <input v-if="app.config.proxy.poolsyncSchedule.daily" type="time" class="f-input" style="width: 110px" v-model="app.config.proxy.poolsyncSchedule.dailyTime" @change="saveFramework" />
-          <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.daily }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.daily" @click="app.config.proxy.poolsyncSchedule.daily = !app.config.proxy.poolsyncSchedule.daily; saveFramework()"></div>
-        </div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">额度自动刷新周期</div>
-          <div class="s-desc">逐账号批量查询各渠道额度（每渠道并发 ≤2）</div>
-        </div>
-        <el-select v-model="app.config.proxy.creditsRefreshMin" class="f-el-select" popper-class="glass-popper" style="width: 120px" @change="saveFramework">
-          <el-option :value="10" label="10 分钟" />
-          <el-option :value="30" label="30 分钟" />
-          <el-option :value="60" label="60 分钟" />
+      <div class="tg-ctl">
+        <el-select v-if="app.config.proxy.poolsyncSchedule.hourly" v-model="app.config.proxy.poolsyncSchedule.hourlyInterval" class="f-el-select" popper-class="glass-popper" style="width: 110px" @change="saveFramework">
+          <el-option v-for="n in [1, 2, 3, 6, 12]" :key="n" :value="n" :label="`${n} 小时`" />
         </el-select>
+        <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.hourly }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.hourly" @click="app.config.proxy.poolsyncSchedule.hourly = !app.config.proxy.poolsyncSchedule.hourly; saveFramework()"></div>
       </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">定时自动签到</div>
-          <div class="s-desc">已改为按渠道设置（签到 / 领加油包 / 领 Credits 的形态各不相同）：到号池页各渠道工具栏的「自动签到 / 自动领加油包 / 自动领 Credits」里设每天的时间与抖动</div>
-        </div>
-        <div class="tg-ctl">
-          <button class="btn btn-sm" @click="gotoProxyPool">去号池页设置</button>
-        </div>
+    </div>
+    <div class="switch-row">
+      <div class="s-left">
+        <div class="s-title">号池每天固定时间</div>
+        <div class="s-desc">每天到点同步一次（错过自动补跑）；与每小时档可同时开</div>
       </div>
-    </template>
+      <div class="tg-ctl">
+        <input v-if="app.config.proxy.poolsyncSchedule.daily" type="time" class="f-input" style="width: 110px" v-model="app.config.proxy.poolsyncSchedule.dailyTime" @change="saveFramework" />
+        <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.daily }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.daily" @click="app.config.proxy.poolsyncSchedule.daily = !app.config.proxy.poolsyncSchedule.daily; saveFramework()"></div>
+      </div>
+    </div>
+    <div class="switch-row">
+      <div class="s-left">
+        <div class="s-title">额度自动刷新周期</div>
+        <div class="s-desc">逐账号批量查询各渠道额度（每渠道并发 ≤2）</div>
+      </div>
+      <el-select v-model="app.config.proxy.creditsRefreshMin" class="f-el-select" popper-class="glass-popper" style="width: 120px" @change="saveFramework">
+        <el-option :value="10" label="10 分钟" />
+        <el-option :value="30" label="30 分钟" />
+        <el-option :value="60" label="60 分钟" />
+      </el-select>
+    </div>
+    <div class="switch-row">
+      <div class="s-left">
+        <div class="s-title">定时自动签到</div>
+        <div class="s-desc">已改为按渠道设置（签到 / 领加油包 / 领 Credits 的形态各不相同）：到号池页各渠道工具栏的「自动签到 / 自动领加油包 / 自动领 Credits」里设每天的时间与抖动</div>
+      </div>
+      <div class="tg-ctl">
+        <button class="btn btn-sm" @click="gotoProxyPool">去号池页设置</button>
+      </div>
+    </div>
   </div>
 </template>
 

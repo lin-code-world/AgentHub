@@ -19,7 +19,6 @@ const updater = require("./updater.cjs");
 const webdav = require("./webdav.cjs");
 const proxy = require("./proxy/index.cjs");
 const proxyRemote = require("./proxy/remote.cjs");
-const memory = require("./memory/index.cjs");
 
 // 渲染层拿到的密码一律是掩码；保存/测试连接收到精确掩码时回填磁盘真值
 const PASSWORD_MASK = "••••••••";
@@ -205,9 +204,6 @@ function register(ctx) {
   ipcMain.handle("remote_targets_activate", handle(({ id }) => proxyRemote.activateTarget(id)));
   ipcMain.handle("remote_test", handle((p) => proxyRemote.testTarget(p)));
   ipcMain.handle("remote_invoke", handle(({ cmd, args }) => proxyRemote.rpc(cmd, args)));
-
-  // ===== 记忆中枢（命令实现见 backend/memory/index.cjs） =====
-  memory.register(ipcMain);
 }
 
 module.exports = { register, onConfigSaved, refreshConfigCache };

@@ -40,7 +40,7 @@ const defaultConfig: AppConfig = {
   fxPools: false,
   fxCursor: true,
   moduleOrder: MODULES.map((m) => m.key),
-  modules: { proxy: { enabled: true }, memory: { enabled: true } },
+  modules: { proxy: { enabled: true } },
   update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
   schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）
@@ -75,8 +75,6 @@ const defaultConfig: AppConfig = {
     channelEnabled: {},
     ccSwitchModel: "",
   },
-  // 记忆中枢指针（其余配置在 <仓库>/config/memory.config.json，由 memory 模块页读取）
-  memory: { enabled: true, rootDir: "" },
 };
 
 /** 动效开关的 localStorage 镜像：main.ts 在配置异步加载前靠它同步判定首帧状态
@@ -133,9 +131,6 @@ export const useAppStore = defineStore("app", {
     updateAvailable: false,
     /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
     pageBeforeConfig: "",
-    // ===== 记忆中枢：页签显隐白名单（由 memory store 的 loadAll 从 cfg["ui.tabs"] 写回）=====
-    /** 空数组 = 未加载/未配置，pagesOf 兜底为默认 8 个（dashboard/browse/projects/profile/agents/auto/import/sync） */
-    memoryTabs: [] as string[],
   }),
   getters: {
     isDark: (s) => s.config.theme === "dark",
@@ -149,15 +144,9 @@ export const useAppStore = defineStore("app", {
         .filter((m) => moduleEnabled(m.key))
         .map((m) => ({ ...m, enabled: !s.config.modules?.[m.key] || s.config.modules[m.key].enabled !== false }));
     },
-    /** 当前模块的子页面：memory 模块按 ui.tabs 白名单过滤（空=默认 8 个核心页；dashboard/browse 保底），其余模块全量返回 */
+    /** 当前模块的子页面：全量返回（MODULES 是唯一事实源） */
     pagesOf(s): PageDef[] {
-      const all = this.moduleOf(s.activeModule).pages;
-      if (s.activeModule !== "memory") return all;
-      const DEFAULT_TABS = ["dashboard", "browse", "projects", "profile", "agents", "auto", "import", "sync"];
-      const allow = new Set(s.memoryTabs.length ? s.memoryTabs : DEFAULT_TABS);
-      allow.add("dashboard");
-      allow.add("browse");
-      return all.filter((p) => allow.has(p.id));
+      return this.moduleOf(s.activeModule).pages;
     },
     /** 子页面徽标：各模块子页的静态兜底值（PageDef.badge） */
     pageBadge(s): (pageId: string) => string | undefined {

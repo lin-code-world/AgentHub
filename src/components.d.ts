@@ -13,7 +13,6 @@ declare module 'vue' {
     ElDropdown: typeof import('element-plus/es')['ElDropdown']
     ElDropdownItem: typeof import('element-plus/es')['ElDropdownItem']
     ElDropdownMenu: typeof import('element-plus/es')['ElDropdownMenu']
-    ElEmpty: typeof import('element-plus/es')['ElEmpty']
     ElInput: typeof import('element-plus/es')['ElInput']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElOptionGroup: typeof import('element-plus/es')['ElOptionGroup']

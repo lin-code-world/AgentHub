@@ -21,14 +21,13 @@ const app = useAppStore();
 const active = computed(() => app.settingsOpen && app.settingsTab === "webdav");
 watch(active, (v) => { if (v) loadPage(); }, { immediate: true });
 
-// 激活即加载：共享配置 / 各板块各自的同步状态
+// 激活即加载：共享配置 / 号池同步状态
 async function loadPage() {
   loadShared();
   refreshPoolsync();
-  refreshMemSync();
 }
 
-// ===== 统一 WebDAV 服务器（webdavShared）：技能仓库 / 用量统计 / 反代网关 / 记忆中枢共用 =====
+// ===== 统一 WebDAV 服务器（webdavShared）：号池同步用 =====
 const SYNC_PASSWORD_MASK = "••••••••"; // 与后端掩码约定一致：精确掩码视为「未修改密码」
 const shared = ref<api.SharedWebdavConfig>({
   type: "webdav",
@@ -37,7 +36,7 @@ const shared = ref<api.SharedWebdavConfig>({
   password: "",
   encryptionPassphrase: "",
   s3: { bucket: "", region: "", pathStyle: false },
-  roots: { proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
+  roots: { proxy: "/agenthub-proxy" },
 });
 const sharedTestResult = ref<{ ok: boolean; message: string } | null>(null);
 const sharedSaveMsg = ref("");
@@ -134,35 +133,12 @@ function fmtAgoMs(ms: number) {
   return new Date(ms).toLocaleString("zh-CN", { hour12: false });
 }
 
-// ---- 记忆中枢同步（整体打包上传/下载；进度事件 event:"memory" type:"sync"） ----
-const memSync = ref<{ running: boolean; lastSyncAt: number; configured: boolean } | null>(null);
-const memSyncMsg = ref("");
-const memSyncRunning = computed(() => !!memSync.value?.running);
-async function refreshMemSync() {
-  try {
-    const s = await api.memorySyncStatus();
-    memSync.value = { running: s.running, lastSyncAt: s.lastSyncAt, configured: s.configured };
-  } catch { /* 浏览器预览走 mock */ }
-}
-async function runMemSync() {
-  memSyncMsg.value = "";
-  try {
-    const r = await api.memorySyncRun();
-    memSyncMsg.value = r.ok
-      ? `同步完成：下载 ${r.downloaded ?? 0} · 冲突 ${r.conflicts ?? 0}`
-      : r.cancelled ? "已取消" : r.message || "同步失败";
-  } catch (e) {
-    memSyncMsg.value = String((e as Error).message || e);
-  }
-  await refreshMemSync();
-}
-
-/** 未配置时引导到上方「统一 WebDAV 服务器」表单（与号池同步页的门控行为对齐） */
+    /** 未配置时引导到上方「统一 WebDAV 服务器」表单（与号池同步页的门控行为对齐） */
 function gotoSharedForm() {
   document.getElementById("shared-webdav-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// 各板块的同步进度事件合流：号池（proxy/poolsync）、记忆（memory/sync）；
+// 各板块的同步进度事件合流：号池（proxy/poolsync）；
 // 运行中就地更新运行态，结束时回读完整状态（拿 lastSyncAt / lastError / 摘要）
 onMounted(() => {
   offEvents = onUpdateEvent((e) => {
@@ -171,10 +147,6 @@ onMounted(() => {
       poolsync.value.running = !!p.running;
       if (p.stage) poolsync.value.stage = p.stage;
       poolsync.value.detail = p.detail || "";
-    }
-    if (p?.event === "memory" && p?.type === "sync" && memSync.value) {
-      memSync.value.running = !!p.running;
-      if (!p.running) refreshMemSync();
     }
   });
 });
@@ -263,7 +235,6 @@ onUnmounted(() => {
           </div>
           <div class="form-grid">
             <div class="form-field"><label>反代网关号池（默认 /agenthub-proxy）</label><input class="f-input mono" v-model="shared.roots.proxy" placeholder="/agenthub-proxy" /></div>
-            <div class="form-field"><label>记忆中枢（默认 /agenthub-memory）</label><input class="f-input mono" v-model="shared.roots.memory" placeholder="/agenthub-memory" /></div>
           </div>
         </div>
       </div>
@@ -299,23 +270,6 @@ onUnmounted(() => {
             <span v-if="poolsyncMsg" class="hint">{{ poolsyncMsg }}</span>
             <button v-if="poolsync && !poolsync.configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
             <button v-else class="btn-outline" :disabled="poolsyncRunning || !poolsync" @click="runPoolsync">{{ poolsyncRunning ? "同步中…" : "立即同步" }}</button>
-          </div>
-        </div>
-
-        <!-- 记忆中枢 -->
-        <div class="switch-row" style="align-items: flex-start">
-          <div class="s-left">
-            <div class="s-title">记忆中枢同步</div>
-            <div class="s-desc">把记忆文件夹整体打包上传/下载，按三方比对只搬变化的部分，冲突进队列等裁决 · 根目录 {{ shared.roots.memory || "/agenthub-memory" }}</div>
-            <div class="s-desc" style="margin-top: 2px" v-if="memSync">
-              <span :style="{ color: memSync.configured ? 'var(--ok)' : 'var(--warn)' }">{{ memSync.configured ? "已就绪" : "未配置" }}</span>
-              <template v-if="memSync.configured && memSync.lastSyncAt"> · 上次同步 {{ fmtAgoMs(memSync.lastSyncAt) }}</template>
-            </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0">
-            <span v-if="memSyncMsg" class="hint">{{ memSyncMsg }}</span>
-            <button v-if="memSync && !memSync.configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
-            <button v-else class="btn-outline" :disabled="memSyncRunning || !memSync" @click="runMemSync">{{ memSyncRunning ? "同步中…" : "立即同步" }}</button>
           </div>
         </div>
       </div>

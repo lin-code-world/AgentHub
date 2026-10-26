@@ -10,7 +10,7 @@
  */
 // 全局类型与常量：四大模块 / 子页面 / 应用配置 / 反代网关数据结构
 // MODULES 是左栏导航的唯一事实源，App.vue 据此装配各模块视图组件
-export type ModuleKey = "proxy" | "memory";
+export type ModuleKey = "proxy";
 export type Theme = "dark" | "light";
 
 export interface PageDef {
@@ -72,13 +72,6 @@ export interface AppConfig {
   };
   /** 反代网关设置（框架整体设置的一部分；端口改动需重启监听，其余热生效） */
   proxy: ProxyConfig;
-  /** 记忆中枢：框架侧只管启用开关与根目录指针，其余配置在 <仓库>/config/memory.config.json */
-  memory: MemoryPointerConfig;
-}
-
-export interface MemoryPointerConfig {
-  enabled: boolean;
-  rootDir: string;
 }
 
 export interface UpdateConfig {
@@ -803,7 +796,7 @@ export interface UpdateStatus {
 
 /** 主进程推送的更新事件：event="state" 时其余字段为完整状态；event="focus-update" 为通知/托盘点击的跳转信号 */
 export interface UpdateEvent extends UpdateStatus {
-  event: "state" | "focus-update" | "usage-local-synced";
+  event: "state" | "focus-update";
 }
 
 /** 四大模块 → 子页面映射（内置顺序即默认导航顺序，可在「设置 · 通用」中调整）
@@ -828,202 +821,5 @@ export const MODULES: ModuleDef[] = [
       { id: "netproxy", name: "网络代理" },
     ],
   },
-  {
-    key: "memory",
-    name: "记忆中枢",
-    pages: [
-      { id: "dashboard", name: "仪表盘" },
-      // 待确认收件箱（事实失效 / 项目归类 / 去重三类人工裁决）不是独立页签：
-      // 它是「记忆浏览」内的第四个视图（列表 / 热力图 / 待确认 / 回收站），条目带待处理红点
-      { id: "browse", name: "记忆浏览" },
-      { id: "projects", name: "项目归档" },
-      { id: "profile", name: "深层画像" },
-      { id: "agents", name: "Agent 接入" },
-      { id: "index", name: "检索与索引" },
-      { id: "auto", name: "自动化" },
-      { id: "import", name: "导入与去重" },
-      { id: "sync", name: "WebDAV同步" },
-    ],
-  },
 ];
 
-// ===== 记忆中枢：数据结构（与 electron/backend/memory 的返回一一对应） =====
-
-export type MemoryLayer = "l1" | "l2";
-
-export type MemoryRow = {
-  id: string;
-  /** 相对仓库根的 MD 路径 */
-  path: string;
-  /** daily 文件的节锚点（非 daily 为 null） */
-  anchor?: string | null;
-  type: string;
-  layer: MemoryLayer;
-  title: string;
-  summary: string;
-  tags: string[];
-  project: string | null;
-  /** 项目显示名（后端按台账解析；slug 是机器标识，界面展示用这个） */
-  projectName?: string | null;
-  agent: string;
-  device?: string | null;
-  session?: string | null;
-  created: number;
-  updated?: number;
-  importance: number;
-  pinned?: boolean;
-  starred?: boolean;
-  /** 已失效（双时间轴） */
-  superseded?: boolean;
-  validTo?: number | null;
-  supersededBy?: string | null;
-  /** 检索得分（仅搜索接口返回） */
-  score?: number;
-  scoreParts?: Record<string, number>;
-};
-
-export type MemoryDetail = MemoryRow & {
-  body: string;
-  hash?: string;
-  refs?: string[];
-  dedupStatus?: string;
-  aiProcessed?: boolean;
-  bodyMissing?: boolean;
-};
-
-export type MemoryStats = {
-  total: number;
-  projects: number;
-  today: number;
-  yesterday: number;
-  pending: number;
-  l2: number;
-  agents: number;
-  indexBytes: number;
-  llmToday: number;
-  llmCalls: number;
-};
-
-export type MemoryIndexStatus = {
-  rows: number;
-  fts: number;
-  ftsW: number;
-  consistent: boolean;
-  projects: number;
-  today: number;
-  pending: number;
-  sizeBytes: number;
-  walBytes: number;
-  lastBuildAt: number;
-  lastScanAt: number;
-  rootDir: string;
-};
-
-export type MemoryTimelineNode = {
-  id: string;
-  title: string;
-  created: number;
-  validFrom?: number | null;
-  validTo?: number | null;
-  supersededBy?: string | null;
-  current: boolean;
-};
-
-export type MemoryProjectCard = {
-  slug: string;
-  name: string;
-  remotes: string[];
-  /** 完整 git 地址（host/owner/repo，来自 origin 探测；老卡可能为空） */
-  gitUrl?: string;
-  aliases: string[];
-  localPaths: string[];
-  origin: string;
-  updated: number;
-  count: number;
-  l2: number;
-  latest: number;
-  agents: string[];
-};
-
-export type MemoryAgentCard = {
-  id: string;
-  name: string;
-  custom?: boolean;
-  optional?: boolean;
-  enabled: boolean;
-  note?: string;
-  configPath: string;
-  configExists: boolean;
-  format: string;
-  snippetHint?: string;
-  instructionPath: string;
-  instructionExists: boolean;
-  injected: boolean;
-  verifyConfig: { ok: boolean; message: string };
-  beat: { lastCall: number; calls: number; writes: number; searches: number; errors: number; lastTool: string } | null;
-  pathReady: boolean;
-};
-
-export type MemoryAgentVerify = {
-  agent: string;
-  name: string;
-  /** none < detected < configured < handshaked < verified */
-  level: "none" | "detected" | "configured" | "handshaked" | "verified";
-  config: { ok: boolean; message: string };
-  handshake: { ok: boolean; message?: string; latencyMs?: number; tools?: number; serverInfo?: Record<string, unknown> };
-  real: { ok: boolean; message?: string; lastCall?: number; calls?: number; writes?: number; searches?: number; errors?: number; lastTool?: string };
-  command: { command: string | null; args: string[]; env: Record<string, string>; hostExists: boolean; bridgeExists: boolean };
-  configPath: string;
-  instructionPath: string;
-  instructionInjected: boolean;
-};
-
-export type MemoryBridgeStatus = { running: boolean; port: number; tokenReady?: boolean; pid?: number };
-
-export type MemoryConfigFieldMeta = {
-  type: string;
-  def: unknown;
-  label: string;
-  group: string;
-  hot?: boolean;
-  desc?: string;
-  min?: number;
-  max?: number;
-  step?: number;
-  options?: string[];
-  tier?: "basic" | "advanced" | "internal";
-};
-
-export type MemoryConfigEnvelope = {
-  config: Record<string, any>;
-  schema: Record<string, MemoryConfigFieldMeta>;
-  root: string;
-  diff: { key: string; value: unknown; default: unknown }[];
-};
-
-export type MemoryStatusEnvelope = {
-  enabled: boolean;
-  root: string;
-  bridge: MemoryBridgeStatus;
-  index: MemoryIndexStatus | null;
-  verifiedAgents: number;
-  beats: { agent: string; last_call: number; calls: number; writes: number; searches: number; errors: number; last_tool: string }[];
-};
-
-export type MemoryToolRow = {
-  name: string;
-  description: string;
-  readOnly: boolean;
-  destructive: boolean;
-  idempotent: boolean;
-  openWorld: boolean;
-};
-
-export type MemoryBeatsRow = { agent: string; last_call: number; calls: number; writes: number; searches: number; errors: number; last_tool: string };
-
-/** 记忆中枢事件（event="memory"，type 区分：新记忆/索引/桥/任务/配置等） */
-export interface MemoryEvent {
-  event: "memory";
-  type: string;
-  [key: string]: unknown;
-}

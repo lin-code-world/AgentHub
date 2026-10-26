@@ -8,16 +8,12 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 左栏双卡片：上 = 品牌 + 四大模块切换；下 = 当前模块的总览概况
-     概况数据全部来自真实统计：sync 走 usage store、proxy 走号池/Keys/网关状态、
-     memory 走记忆中枢统计 IPC；模块顺序自定义在「设置 · 通用」
+<!-- 左栏双卡片：上 = 品牌 + 模块切换；下 = 当前模块的总览概况
+     概况数据全部来自真实统计：proxy 走号池/Keys/网关状态；模块顺序自定义在「设置 · 通用」
      版本 / 署名 / GitHub / 亮暗 / 设置入口统一收在最左下角 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ElMessageBox } from "element-plus";
 import { useAppStore } from "../stores/app";
-import { useMemoryStore } from "../stores/memory";
-import { formatInteger, timeAgo } from "../composables/useFormat";
 import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
 import type { ModuleKey } from "../types";
@@ -27,12 +23,10 @@ import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
 import logoUrl from "../assets/logo.png";
 
 const app = useAppStore();
-const memStore = useMemoryStore();
 
-// 事件合流：poolsync/credits、memory 写入/索引等事件密集到达时，
+// 事件合流：poolsync/credits 事件密集到达时，
 // 侧栏卡片的刷新被合并成有节制的几次，不再逐事件打 IPC（事件风暴 → IPC 风暴）
 const scheduleProxyRefresh = coalesceAsync(() => Promise.all([refreshProxyMeta(), refreshChannels()]), 800);
-const scheduleMemoryRefresh = coalesceAsync(refreshMemoryStats, 800);
 
 // 版本号从主进程取（浏览器预览时 mock 返回 0.1.0）
 const version = ref("v0.1.0");
@@ -45,7 +39,6 @@ function modOn(k: string) {
 function refreshStatsForEnabled(only?: string) {
   const want = (k: string) => (only ? only === k : true);
   if (want("proxy") && modOn("proxy")) { refreshProxyMeta(); refreshChannels(); }
-  if (want("memory") && modOn("memory")) refreshMemoryStats();
 }
 /** 侧栏 GitHub 入口：交由主进程 shell.openExternal 用默认浏览器打开仓库 */
 function openRepo() {
@@ -71,15 +64,12 @@ onMounted(async () => {
       scheduleProxyRefresh();
       return;
     }
-    // 记忆中枢：写入 / 索引 / 桥状态变化时刷新侧栏卡片（实时条数）
-    if (p.event === "memory") scheduleMemoryRefresh();
   });
 });
 let offProxyEvent: (() => void) | undefined;
 onUnmounted(() => {
   if (offProxyEvent) offProxyEvent();
   scheduleProxyRefresh.cancel();
-  scheduleMemoryRefresh.cancel();
 });
 // 切模块时刷新对应板块的实时统计（号池可能刚被同步）
 watch(
@@ -88,8 +78,6 @@ watch(
     if (m === "proxy") {
       refreshChannels();
       refreshProxyMeta();
-    } else if (m === "memory") {
-      refreshMemoryStats();
     }
   }
 );
@@ -107,51 +95,6 @@ async function refreshProxyMeta() {
   }
 }
 
-// ===== 记忆中枢 · 真实概况（条数 / 今日 / 待处理 / 项目 / 已连通 Agent / 索引一致率） =====
-type MemoryOverview = {
-  enabled: boolean; total: number; today: number; l2: number; projects: number; pending: number;
-  agents: number; verifiedAgents: number; consistent: boolean;
-  topProjects: { slug: string; name: string; count: number; latest: number }[];
-};
-const memoryOverview = ref<MemoryOverview | null>(null);
-async function refreshMemoryStats() {
-  try {
-    // 三个查询互不依赖，并发取回；任一失败只降级对应字段，不拖垮整卡
-    const [st, stats, projects] = await Promise.all([
-      api.memoryStatus(),
-      api.memoryStats().catch(() => null),
-      api.memoryProjects().catch(() => null),
-    ]);
-    memoryOverview.value = {
-      enabled: st.enabled,
-      total: st.index?.rows ?? stats?.total ?? 0,
-      today: stats?.today ?? 0,
-      l2: stats?.l2 ?? 0,
-      projects: stats?.projects ?? (projects ? projects.projects.length : 0),
-      pending: stats?.pending ?? 0,
-      agents: st.beats.length,
-      verifiedAgents: st.verifiedAgents,
-      consistent: st.index ? st.index.consistent : true,
-      topProjects: (projects ? projects.projects : [])
-        .slice()
-        .sort((a, b) => (b.latest || 0) - (a.latest || 0))
-        .slice(0, 3)
-        .map((p) => ({ slug: p.slug, name: p.name, count: p.count, latest: p.latest })),
-    };
-  } catch {
-    /* 模块未启用或未初始化时保留旧值静默降级 */
-  }
-}
-
-/** 概况行/项目行点击：跳到对应页面（与仪表盘 KPI 的跳转口径一致） */
-function gotoMemory(page: string) {
-  if (app.activeModule !== "memory" || app.settingsOpen) {
-    app.selectModule("memory");
-    app.settingsOpen = false;
-  }
-  app.activePage = page;
-}
-
 // ===== 模块卡片的运行状态与统计（全部真实数据，无 mock） =====
 const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "warn"; stats: { v: string; label: string; unit?: string }[] }>>(() => {
   return {
@@ -162,21 +105,6 @@ const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "w
         { v: String(app.config.proxy.port), label: "端口" },
         { v: String(proxyKeyCount.value), label: "Key", unit: "个" },
         { v: channels.value.length ? String(channels.value.length) : "-", label: "已启用上游", unit: "个" },
-      ],
-    },
-    memory: {
-      state: !memoryOverview.value
-        ? "未启用"
-        : memoryOverview.value.pending > 0
-          ? `${memoryOverview.value.pending} 项待处理`
-          : memoryOverview.value.verifiedAgents > 0
-            ? `${memoryOverview.value.verifiedAgents} 个 Agent 已连通`
-            : "等待 Agent 调用",
-      level: memoryOverview.value && memoryOverview.value.pending === 0 && memoryOverview.value.verifiedAgents > 0 ? "ok" : "warn",
-      stats: [
-        // 普通 = 总量 − 深层 L2；「N 个 Agent 已连通」已在右上状态，这里只报记忆条数
-        { v: memoryOverview.value ? String(Math.max(0, memoryOverview.value.total - memoryOverview.value.l2)) : "-", label: "普通记忆", unit: "条" },
-        { v: memoryOverview.value ? String(memoryOverview.value.l2) : "-", label: "深层记忆", unit: "条" },
       ],
     },
   };
@@ -211,17 +139,11 @@ const upOpen = ref(false);
 // 模块图标（线稿 path，复刻 design.html）
 const MODULE_ICONS: Record<ModuleKey, string> = {
   proxy: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>',
-  // 记忆中枢：脑/记忆背包（同款线稿：外轮廓 + 内部层线）
-  memory: '<path d="M12 3a6 6 0 0 0-6 6v9a3 3 0 0 0 3 3h9a3 3 0 0 0 3-3V9a6 6 0 0 0-6-6z"/><path d="M9 10h6M9 14h6"/>',
 };
 
 // ===== 下卡片：模块总览概况（标题 / 提示全部接真实统计） =====
 const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(() => ({
   proxy: { title: "渠道额度", hint: visibleChannels.value.length ? `${visibleChannels.value.length} 个渠道` : "渠道" },
-  memory: {
-    title: "记忆概况",
-    hint: memoryOverview.value ? `${memoryOverview.value.total} 条记忆` : "记忆中枢",
-  },
 }));
 </script>
 
@@ -289,91 +211,8 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         <span class="ov-hint">{{ OVERVIEW[app.activeModule].hint }}</span>
       </div>
       <div class="ov-body">
-        <!-- 记忆中枢：概况（条数/今日/待处理/最近项目/已连通 Agent/索引一致率；每行可点跳对应页面） -->
-        <template v-if="app.activeModule === 'memory'">
-          <template v-if="memoryOverview">
-            <el-tooltip content="点击查看记忆浏览" placement="right">
-              <div class="ov-row ov-pick" @click="gotoMemory('browse')">
-                <span class="ov-dot" :class="{ off: !memoryOverview.enabled }"></span>
-                <div class="grow">
-                  <div class="ov-name">记忆总量<span class="ov-tag">L2 {{ formatInteger(memoryOverview.l2) }} 条</span></div>
-                  <div class="ov-meta">
-                    今日新增 {{ formatInteger(memoryOverview.today) }} 条 · {{ formatInteger(memoryOverview.projects) }} 个项目
-                  </div>
-                </div>
-                <b class="ov-num">{{ formatInteger(memoryOverview.total) }}<span class="ov-unit">条</span></b>
-              </div>
-            </el-tooltip>
-
-            <el-tooltip :content="memoryOverview.pending ? '有待处理项：待确认失效/归类/去重' : '暂无待处理项'" placement="right">
-              <div class="ov-row ov-pick" @click="memStore.gotoReview()">
-                <span class="ov-dot" :class="memoryOverview.pending ? 'warn-dot' : ''"></span>
-                <div class="grow">
-                  <div class="ov-name">
-                    待确认
-                    <span v-if="memoryOverview.pending" class="ov-tag warn">需处理</span>
-                  </div>
-                  <div class="ov-meta">事实失效 / 归类 / 去重</div>
-                </div>
-                <b class="ov-num">{{ formatInteger(memoryOverview.pending) }}<span class="ov-unit">项</span></b>
-              </div>
-            </el-tooltip>
-
-            <el-tooltip
-              v-for="p in memoryOverview.topProjects"
-              :key="p.slug"
-              :content="`点击查看项目归档（最近更新 ${timeAgo(p.latest)}）`"
-              placement="right"
-            >
-              <div
-                class="ov-row ov-pick"
-                @click="gotoMemory('projects')"
-              >
-                <span class="ov-dot"></span>
-                <div class="grow">
-                  <div class="ov-name">{{ p.name }}</div>
-                  <div class="ov-meta">最近 {{ timeAgo(p.latest) }}</div>
-                </div>
-                <b class="ov-num">{{ formatInteger(p.count) }}<span class="ov-unit">条</span></b>
-              </div>
-            </el-tooltip>
-            <div v-if="!memoryOverview.topProjects.length" class="ov-row">
-              <div class="grow"><div class="ov-meta">还没有项目 —— Agent 带上项目路径写记忆后会自动建项目文件夹</div></div>
-            </div>
-
-            <el-tooltip content="点击查看 Agent 接入（三级校验）" placement="right">
-              <div class="ov-row ov-pick" @click="gotoMemory('agents')">
-                <span class="ov-dot" :class="memoryOverview.verifiedAgents ? '' : 'off'"></span>
-                <div class="grow">
-                  <div class="ov-name">Agent 接入</div>
-                  <div class="ov-meta">
-                    {{ memoryOverview.agents ? `${memoryOverview.verifiedAgents}/${memoryOverview.agents} 真实调用过` : "尚未探测到可接入的 Agent" }}
-                  </div>
-                </div>
-                <el-tag :type="memoryOverview.verifiedAgents ? 'success' : 'warning'">
-                  {{ memoryOverview.verifiedAgents ? "已连通" : "待调用" }}
-                </el-tag>
-              </div>
-            </el-tooltip>
-
-            <el-tooltip :content="memoryOverview.consistent ? '索引与记忆文件一致' : '索引不一致：去「检索与索引」点诊断修复'" placement="right">
-              <div class="ov-row ov-pick" @click="gotoMemory('index')">
-                <span class="ov-dot" :class="memoryOverview.consistent ? '' : 'warn-dot'"></span>
-                <div class="grow">
-                  <div class="ov-name">索引健康</div>
-                  <div class="ov-meta">{{ memoryOverview.consistent ? "索引与文件一致" : "检出不一致，需重建" }}</div>
-                </div>
-                <el-tag :type="memoryOverview.consistent ? 'success' : 'warning'">{{ memoryOverview.consistent ? "正常" : "需修复" }}</el-tag>
-              </div>
-            </el-tooltip>
-          </template>
-          <div v-else class="ov-row">
-            <div class="grow"><div class="ov-meta">记忆中枢加载中…（未启用时可在「设置 · 通用」或配置页开启）</div></div>
-          </div>
-        </template>
-
         <!-- 反代网关：渠道额度（号池实时数据，渠道增减自动跟进） -->
-        <template v-else>
+        <template>
           <div v-for="c in visibleChannels" :key="c.id" class="ov-row">
             <div class="grow">
               <div class="ov-name">

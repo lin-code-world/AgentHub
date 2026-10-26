@@ -32,28 +32,10 @@ import ProxyPoolSyncView from "./views/proxy/ProxyPoolSyncView.vue";
 import ProxyCcSwitchView from "./views/proxy/ProxyCcSwitchView.vue";
 import ProxyLogView from "./views/proxy/ProxyLogView.vue";
 import ProxyNetworkView from "./views/proxy/ProxyNetworkView.vue";
-// 记忆中枢模块：9 个页面 + 隐藏配置页（模块级 .memory-scope 样式作用域，可整体剥离）
-// 「待确认」收件箱不再是独立页签，已并入记忆浏览的第三个视图（components/memory/MemReviewPanel）
-import MemoryDashboardView from "./views/memory/DashboardView.vue";
-import MemoryBrowseView from "./views/memory/BrowseView.vue";
-import MemoryProjectsView from "./views/memory/ProjectsView.vue";
-import MemoryProfileView from "./views/memory/ProfileView.vue";
-import MemoryAgentsView from "./views/memory/AgentsView.vue";
-import MemoryIndexView from "./views/memory/IndexView.vue";
-import MemoryAutoView from "./views/memory/AutoView.vue";
-import MemoryImportView from "./views/memory/ImportView.vue";
-import MemorySyncView from "./views/memory/SyncView.vue";
-import MemoryDetailDrawer from "./components/memory/MemoryDetailDrawer.vue";
-import ConfigMemorySection from "./components/config/ConfigMemorySection.vue";
-import { useMemoryStore } from "./stores/memory";
 import * as api from "./api/ipc";
 import type { UpdateEvent } from "./types";
 
 const app = useAppStore();
-const memory = useMemoryStore();
-
-/** 记忆中枢默认页签：ui.defaultTab（只在首次进入该模块时生效，之后记住用户点过的页） */
-let memoryDefaultApplied = false;
 
 /** 系统级减弱动效偏好（VueUse 托管媒体查询，动效层统一听它） */
 const reducedMotion = usePreferredReducedMotion();
@@ -82,7 +64,7 @@ const blobs = Array.from({ length: 5 }, () => {
 
 /** 卡片聚光的委托目标（与各模块的 :hover 聚光 CSS 对应）：
     bindPointer 按它写 --mx/--my；关闭鼠标光影时按同一份清单复位残位 */
-const SPOT_TARGETS = ".card, .kpi, .module-card, .mem-card, .mem-kpi, .mem-tile";
+const SPOT_TARGETS = ".card, .kpi, .module-card";
 
 /** 鼠标交互 · 其一：玻璃壳内的反光。光标在窗口里的相对位置 = 全窗口唯一光源的位置，
    反光落在各壳的 ::before 上（z-index: -1，在壳面之内、内容之下），不会盖住任何东西
@@ -531,11 +513,6 @@ onMounted(() => {
       app.configFocusUpdate++;
       return;
     }
-    // 记忆中枢事件分流：store.onEvent 维护新记忆高亮/索引进度/统计重拉
-    if ((ev as { event?: string }).event === "memory") {
-      memory.onEvent(ev as unknown as Parameters<typeof memory.onEvent>[0]);
-      return;
-    }
     // main 侧托盘等直写配置后的广播：重拉内存快照，防设置页旧快照把新值冲掉
     if ((ev as { event?: string }).event === "config-changed") {
       app.refreshConfig();
@@ -576,19 +553,6 @@ watch([() => app.config.fxParticles, () => app.config.fxPools], () => {
 watch(
   () => app.config.fxCursor,
   () => setCursorFX(app.config.fx && app.config.fxCursor !== false)
-);
-
-/** 记忆中枢默认页签：ui.defaultTab（首次进入该模块时落到配置页签，之后记住用户点过的页） */
-watch(
-  () => app.activeModule,
-  (m) => {
-    if (m !== "memory" || memoryDefaultApplied) return;
-    memoryDefaultApplied = true;
-    void memory.loadAll().then(() => {
-      const def = memory.cfg("ui.defaultTab", "dashboard");
-      if (typeof def === "string" && app.pagesOf.some((p) => p.id === def)) app.activePage = def;
-    });
-  }
 );
 
 /** 当前是否停在某模块某页（v-show 与进场动画条件共用） */
@@ -647,35 +611,15 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
         <ProxyCcSwitchView v-if="seen('proxy', 'ccswitch')" v-show="on('proxy', 'ccswitch')" :class="{ 'page-anim': on('proxy', 'ccswitch') }" />
         <ProxyLogView v-if="seen('proxy', 'proxylog')" v-show="on('proxy', 'proxylog')" :class="{ 'page-anim': on('proxy', 'proxylog') }" />
         <ProxyNetworkView v-if="seen('proxy', 'netproxy')" v-show="on('proxy', 'netproxy')" :class="{ 'page-anim': on('proxy', 'netproxy') }" />
-        <!-- 记忆中枢九页：各页自带 .memory-scope 容器（样式作用域见 styles/memory.css）；
-             模型与网关已并入配置页子板块，调用统计并入仪表盘；待确认并入记忆浏览 -->
-        <MemoryDashboardView v-if="seen('memory', 'dashboard')" v-show="on('memory', 'dashboard')" class="page" :class="{ 'page-anim': on('memory', 'dashboard') }" />
-        <MemoryBrowseView v-if="seen('memory', 'browse')" v-show="on('memory', 'browse')" class="page" :class="{ 'page-anim': on('memory', 'browse') }" />
-        <MemoryProjectsView v-if="seen('memory', 'projects')" v-show="on('memory', 'projects')" class="page" :class="{ 'page-anim': on('memory', 'projects') }" />
-        <MemoryProfileView v-if="seen('memory', 'profile')" v-show="on('memory', 'profile')" class="page" :class="{ 'page-anim': on('memory', 'profile') }" />
-        <MemoryAgentsView v-if="seen('memory', 'agents')" v-show="on('memory', 'agents')" class="page" :class="{ 'page-anim': on('memory', 'agents') }" />
-        <MemoryIndexView v-if="seen('memory', 'index')" v-show="on('memory', 'index')" class="page" :class="{ 'page-anim': on('memory', 'index') }" />
-        <MemoryAutoView v-if="seen('memory', 'auto')" v-show="on('memory', 'auto')" class="page" :class="{ 'page-anim': on('memory', 'auto') }" />
-        <MemoryImportView v-if="seen('memory', 'import')" v-show="on('memory', 'import')" class="page" :class="{ 'page-anim': on('memory', 'import') }" />
-        <MemorySyncView v-if="seen('memory', 'sync')" v-show="on('memory', 'sync')" class="page" :class="{ 'page-anim': on('memory', 'sync') }" />
         <!-- 各模块的配置页：右上「配置」按钮切换到这里的页面（page + cfg-body 组合出页壳与留白）；
              配置页内部的二级子板块 tab 由各 section 自己渲染 -->
         <div v-if="seen('proxy', 'config')" v-show="on('proxy', 'config')" class="page cfg-body" :class="{ 'page-anim': on('proxy', 'config') }">
           <ConfigProxySection />
         </div>
-        <div v-if="seen('memory', 'config')" v-show="on('memory', 'config')" class="page cfg-body" :class="{ 'page-anim': on('memory', 'config') }">
-          <ConfigMemorySection />
-        </div>
       </div>
     </main>
     <!-- 常驻挂载：显隐交给 el-dialog 自己管，进场动画才不会在 v-if 挂载时被跳过 -->
     <SettingsDialog />
-    <MemoryDetailDrawer
-      :show="memory.detailDrawerOpen"
-      :id="memory.detailDrawerId"
-      @close="memory.closeDetail"
-      @changed="memory.onMemoryUpdated"
-    />
   </div>
   </el-config-provider>
 </template>

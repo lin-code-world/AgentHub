@@ -25,7 +25,6 @@ import App from "./App.vue";
 // 图标增删后重跑 node tools/gen-phosphor-subset.cjs 再生成
 import "./assets/phosphor/phosphor-used.css";
 import "./styles/global.css";
-import "./styles/memory.css";
 import "./styles/element.css";
 // 液滴光标 + 点击涟漪（纯装饰动效层：触屏/减弱动效下自动不安装）
 // 首帧镜像（与 config 异步加载形成双轨）：界面动效默认开启，镜像为 "0" 才关（缺失跟随默认）；

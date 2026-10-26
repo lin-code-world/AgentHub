@@ -120,7 +120,6 @@ const ipc = require("./backend/ipc.cjs");
 const updater = require("./backend/updater.cjs");
 // 反代网关模块：本地 OpenAI 兼容服务（默认 127.0.0.1:9527），托盘常驻期间持续提供 API
 const proxy = require("./backend/proxy/index.cjs");
-const memory = require("./backend/memory/index.cjs");
 // 全局快捷键：唤起/释放界面。冲突时弹气泡并持续重试（见 backend/shortcut.cjs）
 const shortcut = require("./backend/shortcut.cjs");
 // 轻量模式：关窗决策（纯逻辑，可自测）+ 窗口几何持久化（销毁窗口后重建要回到原位）
@@ -462,17 +461,6 @@ function registerModuleToggle() {
         // whenReady 里 `if (on("proxy")) proxy.boot()`——不 boot 就走不到 boot() 内的
         // restoreOnLaunch 分支，无需改写用户设置。
         await proxy.setRuntime(enabled);
-      } else if (m === "memory") {
-        // 与 memory_toggle 同口径双写旧字段 memory.enabled：loadConfig 每次都会执行
-        // 「旧字段 false → modules.memory.enabled=false」的迁移，只写新字段的话
-        // 旧字段残留的 false 会把刚启用的开关在下一次任意 loadConfig 时打回（审查整改）
-        try {
-          const c2 = config.loadConfig();
-          c2.memory = { ...(c2.memory || {}), enabled };
-          config.saveConfig(c2);
-        } catch { /* 双写失败时迁移仍以旧字段为准，行为退化为旧版一致 */ }
-        if (enabled) await memory.boot().catch((e) => __crashLog("memory-boot-failed", __describe(e)));
-        else await memory.shutdown().catch(() => {});
       }
       // 渲染层各页订阅该事件刷新（左栏灰态即时生效、统计数字停止轮询）
       try {
@@ -584,12 +572,11 @@ if (!gotLock) {
     // 同步配置留痕：崩溃日志里一眼能看出崩时有没有配 WebDAV、
     // 各模块是否在跑远端同步；只记有无，不落任何账号密码。
     try {
-      // 与引擎 configured() 同口径：memory 只要求 endpoint；pool 还要账号密码。
-      const hasEndpoint = (w) => !!(w && String(w.endpoint || "").trim());
+      // 与引擎 configured() 同口径：pool 要求账号密码。
       const hasAuth = (w) => !!(w && w.endpoint && w.username && w.password);
       __crashLog(
         "sync-config",
-        `memory=${hasEndpoint(config.moduleWebdav("memory")) ? "yes" : "no"} pool=${hasAuth(config.moduleWebdav("proxy")) ? "yes" : "no"}`,
+        `pool=${hasAuth(config.moduleWebdav("proxy")) ? "yes" : "no"}`,
       );
     } catch (e) {
       __crashLog("sync-config-failed", __describe(e));
@@ -608,9 +595,6 @@ if (!gotLock) {
     // 都是裸调用，抛错会变成 rejected promise。原先这里没有任何 catch，
     // 未处理的 rejection 会让主进程直接退出——症状是「窗口凭空消失、无崩溃事件、无 dump、无日志」。
     if (on("proxy")) proxy.boot().catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
-    // 记忆中枢：仓库初始化 + 本地 HTTP API（供 MCP 桥转发）+ 目录监听；失败只影响本模块
-    //（boot 内部有 modules.memory.enabled 短路，无需在此判断）
-    memory.boot().catch((e) => __crashLog("memory-boot-failed", __describe(e)));
     createWindow();
     createTray();
     updater.init({ onShowWindow: showWindow, onTrayRefresh: refreshTrayMenu });
@@ -647,7 +631,6 @@ if (!gotLock) {
       // 不注销会让旧键在重启窗口期内处于悬空占用状态
       try { if (shortcutRegistrar) shortcutRegistrar.stop(); else shortcut.unregisterAll(globalShortcut); } catch { /* 忽略 */ }
       proxy.shutdown();
-      memory.shutdown();
     };
     // 下载完的更新：拦下这次退出，静默装完自动重启
     if (updater.pendingInstall()) {

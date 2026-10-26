@@ -16,20 +16,15 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from "vue";
 import { useAppStore } from "../stores/app";
-import { useMemoryStore } from "../stores/memory";
 import * as api from "../api/ipc";
 import { activeTargetName, refreshRemoteState, remoteActive, remoteState } from "../api/remote";
 import { toast } from "../utils/toast";
 
 const app = useAppStore();
-const mem = useMemoryStore();
 const scrollEl = ref<HTMLElement | null>(null);
 
-/** 页签待处理红点的唯一事实源（值＝待处理条数，0/未定义＝不显示）：
-    记忆中枢三类待处理在 memory store 的 pending（自动拉取）。
-    待确认收件箱已并入「记忆浏览」，故它的红点挂在浏览页上。 */
+/** 页签待处理红点：当前无动态数据源（原记忆中枢红点已随模块移除），保留结构备用 */
 function pendingCount(pageId: string): number {
-  if (app.activeModule === "memory") return mem.pending[pageId] || 0;
   return 0;
 }
 

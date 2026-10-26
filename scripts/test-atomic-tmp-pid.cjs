@@ -198,7 +198,7 @@ async function race(mode) {
         }
       }
     }
-    ok(sites.length >= 14, `④ 扫到 ${sites.length} 处「写 tmp 再 rename」的原子写（少于 14 说明扫描本身失效，判据会假绿）`);
+    ok(sites.length >= 10, `④ 扫到 ${sites.length} 处「写 tmp 再 rename」的原子写（少于 10 说明扫描本身失效，判据会假绿）`);
     ok(bad.length === 0, `④ 其中不带 pid 的还剩 ${bad.length} 处${bad.length ? "：" + bad.join(" ; ") : ""}`);
   }
 
@@ -208,8 +208,6 @@ async function race(mode) {
     const expect = [
       ["electron/backend/config.cjs", "设置落盘"],
       ["electron/backend/window-state.cjs", "窗口状态"],
-      ["electron/backend/memory/httpapi.cjs", "本地 API 运行信息"],
-      ["electron/backend/memory/index.cjs", "报告 md"],
       ["electron/backend/proxy/ideswitch.cjs", "WorkBuddy 登录文件"],
       ["electron/backend/proxy/qoderAuth.cjs", "Qoder 桌面登录文件"],
       ["electron/backend/proxy/qoderSigner.cjs", "签名器缓存"],
@@ -217,8 +215,8 @@ async function race(mode) {
     // 期望的那一句用字符串拼接出来，不写正则：转义层数一多，判据自己先错
     const baseOf = {
       "electron/backend/config.cjs": "p",
-      "electron/backend/window-state.cjs": "p", "electron/backend/memory/httpapi.cjs": "this.runtimeFile",
-      "electron/backend/memory/index.cjs": "file", "electron/backend/proxy/ideswitch.cjs": "file",
+      "electron/backend/window-state.cjs": "p",
+      "electron/backend/proxy/ideswitch.cjs": "file",
       "electron/backend/proxy/qoderAuth.cjs": "p.authFile", "electron/backend/proxy/qoderSigner.cjs": "out",
     };
     for (const [rel, label] of expect) {
@@ -229,12 +227,7 @@ async function race(mode) {
       const want = "const tmp = `${" + baseOf[rel] + mid + "process.pid" + tail;
       ok(src.includes(want), `⑤ ${rel}（${label}）必须写成 ${want}`);
     }
-    // 正对照的反面：本仓原有的四处不能被这次改动弄坏
-    for (const rel of ["electron/backend/memory/config.cjs", "electron/backend/memory/synonyms.cjs",
-      "electron/backend/memory/inject.cjs", "electron/backend/memory/store.cjs"]) {
-      const src = fs.readFileSync(path.join(root, rel), "utf8");
-      ok(/\.tmp\.\$\{process\.pid\}/.test(src), `⑤ ${rel} 原本就带 pid 的那处不能被改回去`);
-    }
+    // 正对照的反面：本仓原有的写法不能被这次改动弄坏（原记忆系四处已随模块移除）
   }
 
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 占用不影响结论 */ }
