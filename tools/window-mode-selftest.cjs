@@ -8,10 +8,10 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 轻量模式自测：窗口三态决策 + 窗口状态持久化/越界收敛
+// 关窗决策自测：两态决策 + 窗口状态持久化/越界收敛
 //
 // 覆盖两个纯逻辑模块（不 require electron，故可在裸 node 下跑）：
-//   electron/backend/window-mode.cjs   —— decideCloseAction / lightweightToggleState
+//   electron/backend/window-mode.cjs   —— decideCloseAction / releasesRenderer
 //   electron/backend/window-state.cjs  —— clampBounds / pickState / save+load 往返
 //
 // 这两个模块的价值恰恰在于「决策表容易写错、越界逻辑容易漏」，
@@ -43,59 +43,46 @@ function eq(actual, expected, label) {
   if (a !== b) throw new Error((label || "值") + " 期望 " + b + "，实际 " + a);
 }
 
-console.log("\n  轻量模式自测");
+console.log("\n  关窗决策自测");
 
 // ─────────────── 一、关窗决策真值表 ───────────────
 console.log("\n  [1] decideCloseAction 真值表");
 
-T("S1 quitting=true 一律放行真退出（哪怕开着托盘常驻+轻量）", () => {
-  eq(mode.decideCloseAction({ quitting: true, minimizeToTray: true, lightweightMode: true }), "quit");
-  eq(mode.decideCloseAction({ quitting: true, minimizeToTray: false, lightweightMode: false }), "quit");
+T("S1 quitting=true 一律放行真退出（托盘「退出」/更新重启）", () => {
+  eq(mode.decideCloseAction({ quitting: true, minimizeToTray: true }), "quit");
+  eq(mode.decideCloseAction({ quitting: true, minimizeToTray: false }), "quit");
 });
 
-T("S2 未开托盘常驻 → destroy（关窗即释放，与改造前行为一致）", () => {
-  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: false, lightweightMode: false }), "destroy");
-  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: false, lightweightMode: true }), "destroy");
+T("S2 未开托盘常驻 → quit（关窗即退出应用）", () => {
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: false }), "quit");
 });
 
-T("S3 托盘常驻 + 轻量关 → hide（保留渲染进程，改造前的老行为）", () => {
-  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true, lightweightMode: false }), "hide");
+T("S3 托盘常驻 → destroy（销毁界面进程，托盘与后台服务照常运行）", () => {
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true }), "destroy");
 });
 
-T("S4 托盘常驻 + 轻量开 → destroy（释放渲染进程，本次新增）", () => {
-  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true, lightweightMode: true }), "destroy");
-});
-
-T("S5 缺字段/畸形输入不炸，且按最保守语义回落", () => {
-  // 全空：minimizeToTray 非 true → destroy（保守：宁可释放也不悄悄改成常驻）
-  eq(mode.decideCloseAction({}), "destroy");
-  eq(mode.decideCloseAction(), "destroy");
-  eq(mode.decideCloseAction(null), "destroy");
+T("S4 缺字段/畸形输入不炸，且按最保守语义回落（非 true 即退出）", () => {
+  eq(mode.decideCloseAction({}), "quit");
+  eq(mode.decideCloseAction(), "quit");
+  eq(mode.decideCloseAction(null), "quit");
   // 只有字符串 "true" 不算 true（配置来自 JSON，必须严格判等）
-  eq(mode.decideCloseAction({ minimizeToTray: "true", lightweightMode: "true" }), "destroy");
+  eq(mode.decideCloseAction({ minimizeToTray: "true" }), "quit");
 });
 
-T("S6 releasesRenderer 只对 destroy 为真", () => {
+T("S5 releasesRenderer 只对 destroy 为真", () => {
   eq(mode.releasesRenderer("destroy"), true);
-  eq(mode.releasesRenderer("hide"), false);
   eq(mode.releasesRenderer("quit"), false);
+  eq(mode.releasesRenderer("hide"), false);
 });
 
-T("S7 开关可用性：未开托盘常驻时置灰并给理由", () => {
-  const off = mode.lightweightToggleState({ minimizeToTray: false });
-  eq(off.enabled, false);
-  if (!off.reason) throw new Error("置灰时必须给出理由（否则用户点了没反应）");
-  const on = mode.lightweightToggleState({ minimizeToTray: true });
-  eq(on.enabled, true);
-  eq(on.reason, "");
-});
-
-T("S8 ACTIONS 常量与决策返回值闭合（防新增动作忘了登记）", () => {
+T("S6 ACTIONS 常量与决策返回值闭合（防新增动作忘了登记）", () => {
   const all = [];
-  for (const q of [true, false]) for (const m of [true, false]) for (const l of [true, false]) {
-    all.push(mode.decideCloseAction({ quitting: q, minimizeToTray: m, lightweightMode: l }));
+  for (const q of [true, false]) for (const m of [true, false]) {
+    all.push(mode.decideCloseAction({ quitting: q, minimizeToTray: m }));
   }
   for (const a of all) if (!mode.ACTIONS.includes(a)) throw new Error("决策返回了未登记的动作：" + a);
+  // hide 已随轻量模式移除：确认常量表里没有它，避免 main.cjs 与自测对不上
+  if (mode.ACTIONS.includes("hide")) throw new Error("ACTIONS 仍含已移除的 hide 动作");
 });
 
 // ─────────────── 二、窗口状态持久化 ───────────────
@@ -220,7 +207,7 @@ T("S21 畸形输入（NaN/字符串/缺省）一律不抛错，且结果始终�
 fs.rmSync(TMP, { recursive: true, force: true });
 
 // ─────────────── 三、main.cjs 接线守卫（源码级）───────────────
-// 为什么需要：轻量模式会**销毁窗口**，用户下次唤回必然走 createWindow() 重建。
+// 为什么需要：关窗会**销毁窗口**，用户下次唤回必然走 createWindow() 重建。
 // 若窗口画布底色写死深色，浅色主题下重建就会先铺黑底再被首帧覆盖 → **闪黑** ✗。
 // 决策逻辑再对，接线被改回去也白修，故把这一点钉死。
 console.log("\n  [3] main.cjs 接线守卫");
@@ -240,5 +227,11 @@ T("S23 WINDOW_BG 取值与前端 global.css 的 --bg 一致（防两处色值漂
   }
 });
 
-console.log("\n  轻量模式自测: 通过 " + pass + "  失败 " + fail);
+T("S24 关窗即退出时显式 app.quit()（window-all-closed 是空实现，只放行 close 会留下无窗口主进程）", () => {
+  if (!/if \(action === "quit"\)[\s\S]{0,320}app\.quit\(\)/.test(mainSrc)) {
+    throw new Error("close 分支的 quit 路径没有显式 app.quit()：minimizeToTray 关闭时关窗会留下无窗口僵尸");
+  }
+});
+
+console.log("\n  关窗决策自测: 通过 " + pass + "  失败 " + fail);
 process.exit(fail ? 1 : 0);

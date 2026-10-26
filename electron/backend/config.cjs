@@ -142,16 +142,10 @@ function defaultConfig() {
     },
     // 后台与调度
     schedule: {
-      minimizeToTray: true, // 关窗缩到托盘
-      // 全局快捷键：唤起/释放主窗口。默认 Alt+`（两键），必须是「功能键+字符键」组合
-      // （见 backend/shortcut.cjs）。**不要写 Alt+~** —— ~ 在标准键盘要 Shift，
-      // Electron 会当成三键组合，用户按两键没反应、极易误判为快捷键失效。
-      // 空串 = 不注册快捷键。注册失败（被别的程序占用）时界面会明确提示，不静默换键。
-      shortcutToggle: "Alt+`",
-      // 轻量模式：关窗时销毁窗口（释放整个渲染进程），托盘常驻期间后端照旧跑。
-      // 实测依据：hide() 只是藏窗口，渲染进程仍占 ~298 MB；destroy() 才会让它整只消失。
-      // 仅在 minimizeToTray 开启时有意义（否则关窗本来就销毁窗口）。默认关，与改造前行为一致。
-      lightweightMode: false,
+      // 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务（反代网关）照常运行，
+      // 唤回时重新加载界面；关=关窗即退出应用。实测 hide 不省内存（渲染进程仍占 ~298 MB），
+      // 只有 destroy 才会让它整只消失，故开着时一律销毁而不是隐藏。
+      minimizeToTray: true,
       autoStart: false,     // 开机自启（便携版无效）
     },
     // ===== 反代网关（方案 settings 全量入框架整体设置；端口改动需重启监听，其余热生效） =====
@@ -436,6 +430,12 @@ function loadConfig() {
   // 现在固定为启动即监听（设置页已无对应选项），旧值一律丢弃，改完存盘即不再出现
   if (merged.proxy && "autoStart" in merged.proxy) delete merged.proxy.autoStart;
   if (merged.proxy && "restoreOnLaunch" in merged.proxy) delete merged.proxy.restoreOnLaunch;
+  // 迁移：全局快捷键与轻量模式已从设置页移除（后者由 minimizeToTray 直接决定关窗是否
+  // 销毁界面进程），旧字段一律丢弃，改完存盘即不再出现
+  if (merged.schedule) {
+    delete merged.schedule.shortcutToggle;
+    delete merged.schedule.lightweightMode;
+  }
   // 迁移：旧版「全局定时自动签到」（proxy.checkinAuto / checkinAutoTime）→ 按渠道规则
   // （号池页每个渠道各自设时间与抖动）。只在旧开关确实开着时搬到全部渠道；搬完即删旧字段，
   // 天然防二次搬运——用户之后在号池页手改的规则不会被旧值再覆盖

@@ -33,7 +33,7 @@ function mergeConfigDeep<T>(base: T, patch: unknown): T {
 // 浏览器 mock / 后端加载失败时的兜底默认值；后端权威默认值见 electron/backend/config.cjs
 const defaultConfig: AppConfig = {
   theme: "dark",
-  schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
+  schedule: { minimizeToTray: true, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）
   proxy: {
     port: 9527,

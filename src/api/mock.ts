@@ -28,7 +28,7 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
-    schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: true },
+    schedule: { minimizeToTray: true, autoStart: true },
     proxy: {
       port: 9527,
       bind: "127.0.0.1",

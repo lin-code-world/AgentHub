@@ -48,9 +48,8 @@ declare global {
 }
 
 /** 是否运行在 Electron 桌面端（有 preload 桥）。
- *  export 出去供 UI 判定「桌面专属设置项」：Web/容器端（server/index.cjs）没有窗口
- *  也没有 globalShortcut，全局快捷键、轻量模式之类的设置在那里没有意义，
- *  必须隐藏或置灰，而不是让用户点了没反应。 */
+ *  托盘、原生窗口、开机自启等桌面独占能力在 Web / 容器形态（server/index.cjs）不存在，
+ *  UI 需要据此隐藏或置灰对应入口。 */
 export function isElectron(): boolean {
   return typeof window !== "undefined" && !!window.agenthub;
 }

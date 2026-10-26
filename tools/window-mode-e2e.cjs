@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 轻量模式**运行期**验证：真的起 Electron，走一遍「关窗 → 渲染进程消失 → 唤回 → 位置恢复」。
+// 关窗行为**运行期**验证：真的起 Electron，走一遍「关窗 → 渲染进程消失 → 唤回 → 位置恢复」。
 //
 // 为什么不能只靠单元自测：决策表对了不等于接线对了 —— 真正要证明的是
 //   ① close 事件里 destroy 后渲染进程**确实从进程表里消失**（内存真的还回去了）
@@ -34,7 +34,7 @@ fs.writeFileSync(HARNESS, harnessSource(ROOT, OUTDIR), "utf8");
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE; // 否则 electron.exe 会当纯 node 跑，require("electron") 直接失败
 
-console.log("  起 Electron 跑轻量模式端到端验证…");
+console.log("  起 Electron 跑关窗端到端验证…");
 const r = spawnSync(ELECTRON, [HARNESS, "--user-data-dir=" + path.join(OUTDIR, "udd")], {
   cwd: ROOT,
   env,
@@ -79,27 +79,19 @@ T("E4 唤回后窗口重建成功且渲染进程回来了",
   revived && revived.windowCreated === true && revived.rendererCount >= 1,
   JSON.stringify(revived));
 
-T("E5 唤回后恢复原尺寸（不是回到默认 1280×820）",
-  revived && revived.bounds && revived.bounds.width === revived.expected.width && revived.bounds.height === revived.expected.height,
+T("E5 唤回后恢复原尺寸（不是回到默认 1280×820；±10px 吸收 DPI 取整）",
+  revived && revived.bounds && Math.abs(revived.bounds.width - revived.expected.width) <= 10 && Math.abs(revived.bounds.height - revived.expected.height) <= 10,
   revived ? "期望 " + JSON.stringify(revived.expected) + " 实际 " + JSON.stringify(revived.bounds) : "");
 
 T("E6 唤回后恢复原位置（±2px 容差，避免窗口管理器取整差异）",
   revived && revived.bounds && Math.abs(revived.bounds.x - revived.expected.x) <= 2 && Math.abs(revived.bounds.y - revived.expected.y) <= 2,
   revived ? "期望 " + JSON.stringify(revived.expected) + " 实际 " + JSON.stringify(revived.bounds) : "");
 
-T("E7 轻量模式关闭时走 hide（渲染进程保留）—— 老行为未被破坏",
-  rows.some((x) => x.label === "hide-mode-keeps-renderer" && x.rendererCount >= 1),
-  JSON.stringify(byLabel("hide-mode-keeps-renderer")));
-
-T("E8 未开托盘常驻时关窗也释放（minimizeToTray=false 语义不变）",
-  rows.some((x) => x.label === "no-tray-releases" && x.rendererCount === 0),
-  JSON.stringify(byLabel("no-tray-releases")));
-
-T("E9 越界坐标（模拟拔显示器）恢复时被拉回可见区域",
+T("E7 越界坐标（模拟拔显示器）恢复时被拉回可见区域",
   rows.some((x) => x.label === "offscreen-clamped" && x.visible === true),
   JSON.stringify(byLabel("offscreen-clamped")));
 
-console.log("\n  轻量模式端到端: 通过 " + pass + "  失败 " + fail);
+console.log("\n  关窗端到端: 通过 " + pass + "  失败 " + fail);
 if (r.status !== 0 && fail === 0) console.log("  （Electron 退出码 " + r.status + "，断言全通过）");
 process.exit(fail ? 1 : 0);
 
@@ -139,21 +131,18 @@ function makeWin(bounds) {
   });
 }
 
-/** 复刻 main.cjs 的 close 分支语义 */
+/** 复刻 main.cjs 的 close 分支语义（托盘常驻 → 销毁窗口，应用继续） */
 function wireClose(cfg) {
   win.on("close", (e) => {
     const action = windowMode.decideCloseAction({
       quitting: false,
       minimizeToTray: cfg.minimizeToTray,
-      lightweightMode: cfg.lightweightMode,
     });
     if (action === "quit") return;
     e.preventDefault();
     if (windowMode.releasesRenderer(action)) {
       const w = win; win = null;
       setImmediate(() => { try { w.destroy(); } catch {} });
-    } else {
-      win.hide();
     }
   });
 }
@@ -162,10 +151,10 @@ function wireClose(cfg) {
   await app.whenReady();
   tray = new Tray(nativeImage.createEmpty());
 
-  // ── 场景 A：轻量模式开 → 关窗应销毁渲染进程 ──
+  // ── 场景 A：托盘常驻 → 关窗应销毁渲染进程 ──
   const dataDir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ah-e2e-state-"));
   await makeWin({ x: 120, y: 90, width: 1100, height: 700 });
-  wireClose({ minimizeToTray: true, lightweightMode: true });
+  wireClose({ minimizeToTray: true });
   await sleep(1200);
   const before = rendererCount();
   win.close();
@@ -194,24 +183,6 @@ function wireClose(cfg) {
   });
   win.destroy(); win = null;
   await sleep(1500);
-
-  // ── 场景 C：轻量关 + 托盘常驻 → hide，渲染进程保留（老行为） ──
-  await makeWin({ x: 200, y: 150, width: 1000, height: 660 });
-  wireClose({ minimizeToTray: true, lightweightMode: false });
-  await sleep(1000);
-  win.close();
-  await sleep(1800);
-  emit({ label: "hide-mode-keeps-renderer", rendererCount: rendererCount(), visible: win ? win.isVisible() : null });
-  if (win) { win.destroy(); win = null; }
-  await sleep(1500);
-
-  // ── 场景 D：未开托盘常驻 → 关窗即释放（语义不变） ──
-  await makeWin({ x: 200, y: 150, width: 1000, height: 660 });
-  wireClose({ minimizeToTray: false, lightweightMode: false });
-  await sleep(1000);
-  win.close();
-  await sleep(2200);
-  emit({ label: "no-tray-releases", rendererCount: rendererCount() });
 
   // ── 场景 E：越界坐标（显示器被拔）→ 收敛回可见区域 ──
   const displays = require("electron").screen.getAllDisplays();

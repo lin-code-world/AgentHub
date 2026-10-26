@@ -41,14 +41,9 @@ export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc
 export interface AppConfig {
   theme: Theme;
   schedule: {
+    /** 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务照常运行，唤回时重新加载；
+     *  关=关窗即退出应用。 */
     minimizeToTray: boolean;
-    /** 全局快捷键：唤起/收起主窗口（默认 Alt+`，两键）。必须是「功能键+字符键」组合；
-     *  注意 ~ 会被归一成 `（~ 需要 Shift，实际是三键组合）；空串 = 不注册。
-     *  冲突时弹气泡提示并持续重试，解除后自动恢复。 */
-    shortcutToggle: string;
-    /** 轻量模式：关窗时销毁窗口（释放整个渲染进程），托盘常驻期间后端照旧跑。
-     *  仅在 minimizeToTray 开启时有意义。默认关（与改造前行为一致）。 */
-    lightweightMode: boolean;
     autoStart: boolean;
   };
   /** 反代网关设置（框架整体设置的一部分；端口改动需重启监听，其余热生效） */

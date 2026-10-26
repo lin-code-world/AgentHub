@@ -11,13 +11,16 @@
 // Electron 主进程入口：窗口 / 托盘 / 单实例 / 主题同步 / 全局大小自适应 / 软件自更新
 "use strict";
 const path = require("node:path");
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, nativeTheme, Notification, globalShortcut } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, nativeTheme } = require("electron");
 // userData 路径必须在任何 getPath 调用之前钉死：Electron 进程启动即按 package.json 的 name
 // 算出 userData（本仓库 name=agent-api-gateway），而原先的 app.setName 放在顶层 require 链末尾，
 // 此时 crashReporter.start 早已触发过 getPath，目录已被固化成 %APPDATA%\agent-api-gateway，
 // 与旧版数据 / 纯 Node 自测脚本（config.cjs 回落到 AgentHub）各读一份配置。显式 setPath 消除歧义。
+// 例外：命令行给了 --user-data-dir（E2E / 调试用来隔离实例与单实例锁）时不覆盖，否则隔离失效。
 app.setName("AgentHub");
-app.setPath("userData", path.join(app.getPath("appData"), "AgentHub"));
+if (!process.argv.some((a) => a.startsWith("--user-data-dir"))) {
+  app.setPath("userData", path.join(app.getPath("appData"), "AgentHub"));
+}
 
 // ===== 闪退取证（本地补丁 __agenthubCrashTrace）=====
 // 1.42.0 出现静默退出：Windows 无 Application Error 事件、无 minidump、应用自身零日志，
@@ -126,9 +129,7 @@ const config = require("./backend/config.cjs");
 const ipc = require("./backend/ipc.cjs");
 // 反代网关模块：本地 OpenAI 兼容服务（默认 127.0.0.1:9527），托盘常驻期间持续提供 API
 const proxy = require("./backend/proxy/index.cjs");
-// 全局快捷键：唤起/释放界面。冲突时弹气泡并持续重试（见 backend/shortcut.cjs）
-const shortcut = require("./backend/shortcut.cjs");
-// 轻量模式：关窗决策（纯逻辑，可自测）+ 窗口几何持久化（销毁窗口后重建要回到原位）
+// 关窗决策（纯逻辑，可自测）+ 窗口几何持久化（销毁窗口后唤回重建要回到原位）
 const windowMode = require("./backend/window-mode.cjs");
 const windowState = require("./backend/window-state.cjs");
 // 顶层 require 链完成：此后的未捕获异常可以降级记录，不再按「启动失败」弹窗退出
@@ -295,34 +296,33 @@ function createWindow() {
   mainWindow.on("maximize", schedulePersistBounds);
   mainWindow.on("unmaximize", schedulePersistBounds);
 
-  // 关闭 → 按三态决策：真退出 / 缩到托盘（保留渲染进程）/ 轻量模式（销毁窗口释放渲染进程）
+  // 关闭 → 按配置决定：真退出 / 销毁窗口释放渲染进程（托盘与后台服务继续跑）
   mainWindow.on("close", (e) => {
     const cfg = config.loadConfig();
     const action = windowMode.decideCloseAction({
       quitting,
       minimizeToTray: !!(cfg.schedule && cfg.schedule.minimizeToTray),
-      lightweightMode: !!(cfg.schedule && cfg.schedule.lightweightMode),
     });
-    if (action === "quit") return; // 放行：走正常退出流程
-    e.preventDefault();
-    // 无论藏还是销毁，都先把窗口位置记下来（销毁后再也读不到）
-    persistWindowBounds();
-    if (windowMode.releasesRenderer(action)) {
-      // 轻量模式：销毁窗口 → 渲染进程整只消失（实测省 ~298 MB）。
-      // 主进程/托盘/反代网关都不受影响（它们本就不依赖窗口）。
-      // 用 setImmediate 延到本次 close 事件派发结束之后再 destroy：
-      // 在 close 回调里同步销毁自己属于重入，交给下一轮事件循环更稳。
-      // （destroy() 不会再触发 close，故不会二次进入本分支）
-      __crashLog("lightweight-enter", `渲染进程释放（mode=${cfg.schedule.lightweightMode ? "lightweight" : "no-tray"}）`);
-      const w = mainWindow;
-      mainWindow = null;
-      setImmediate(() => {
-        try { w.destroy(); } catch { /* 已销毁 */ }
-      });
-      refreshTrayMenu();
-    } else {
-      mainWindow.hide();
+    if (action === "quit") {
+      // 未开托盘常驻：关窗即退出应用。window-all-closed 是空实现（托盘常驻形态），
+      // 只放行 close 不会退出，必须显式 quit，否则会留下无窗口的主进程
+      if (!quitting) { quitting = true; app.quit(); }
+      return;
     }
+    e.preventDefault();
+    // 销毁前先把窗口位置记下来（销毁后再也读不到）
+    persistWindowBounds();
+    // 销毁窗口 → 渲染进程整只消失（实测省 ~298 MB）；主进程 / 托盘 / 反代网关都不依赖窗口。
+    // 用 setImmediate 延到本次 close 事件派发结束之后再 destroy：
+    // 在 close 回调里同步销毁自己属于重入，交给下一轮事件循环更稳。
+    // （destroy() 不会再触发 close，故不会二次进入本分支）
+    __crashLog("window-release", "关窗销毁界面进程（托盘与后台服务常驻）");
+    const w = mainWindow;
+    mainWindow = null;
+    setImmediate(() => {
+      try { w.destroy(); } catch { /* 已销毁 */ }
+    });
+    refreshTrayMenu();
   });
 
   mainWindow.on("closed", () => {
@@ -334,96 +334,21 @@ function showWindow() {
   if (!mainWindow) {
     createWindow();
   } else {
-    // 从托盘唤回时窗口可能是隐藏态（hide 模式），先显示再聚焦
+    // 已存在（极少见：关窗销毁后 mainWindow 已置 null，走上面的重建分支）
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
   }
 }
 
-// ===== 全局快捷键：唤起 / 释放界面 =====
-// 全局生效（应用在后台/托盘时也能唤起）。按下时是「开关」语义：
-//   窗口可见   → 隐藏（hide）
-//   窗口不可见 → 显示并聚焦（没有窗口时重建）
-//
-// 收起动作按「轻量模式」开关分派（见 collapseMainWindow）：开启走释放，关闭仅 hide。
-let shortcutRegistrar = null;
-
-/** 按当前配置注册快捷键；配置变更后由 ipc 的 onConfigSaved 钩子再次调用 */
-function setupShortcut() {
-  const cfg = config.loadConfig();
-  const acc = (cfg.schedule && cfg.schedule.shortcutToggle) || "";
-
-  if (!shortcutRegistrar) {
-    shortcutRegistrar = shortcut.createRegistrar({
-      globalShortcut,
-      onTrigger: onShortcutToggle,
-      notify: (title, body) => notify(title, body),
-      log: (kind, detail) => __crashLog(kind, detail),
-    });
-  }
-  const st = shortcutRegistrar.set(acc);
-  if (st.error) __crashLog("shortcut-invalid", String(st.error));
-  return st;
-}
-
-/** 收起主界面：按「轻量模式」开关决定是隐藏还是释放渲染进程。
- *  恒为 hide → 用户开了轻量模式却省不到内存；恒为 destroy → 没开轻量也每次唤回闪黑重建。 */
-function collapseMainWindow(reason) {
-  const cfg = config.loadConfig();
-  const lightOn = !!(cfg.schedule && cfg.schedule.lightweightMode);
-  if (lightOn) {
-    releaseWindowNow(reason);
-    return;
-  }
-  try { mainWindow.hide(); } catch { /* 已销毁：下次唤回会重建 */ }
-  refreshTrayMenu();
-}
-
-/** 快捷键按下：可见则收起界面，不可见则唤回 */
-function onShortcutToggle() {
-  try {
-    const visible = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
-    if (visible) {
-      collapseMainWindow("shortcut");
-    } else {
-      showWindow();
-    }
-  } catch (e) {
-    __crashLog("shortcut-toggle-failed", String((e && e.message) || e));
-  }
-}
-
 // ===== 托盘 =====
 
-/** 托盘菜单（动态构建） */
+/** 托盘菜单（动态构建）：唤起界面 + 退出。关窗已固定销毁窗口，无需「立即释放」入口 */
 function buildTrayMenu() {
-  // 每次构建都读一次配置：托盘开关（轻量模式/托盘常驻）改完要立刻反映，不能缓存
-  const cfg = config.loadConfig();
-  const items = [];
-  // 轻量模式：关窗缩到托盘的用户，托盘是唯一入口，所以开关必须放这里
-  // （设置 · 通用里也有同一个开关，两处写的是同一份配置）
-  const lightOn = !!(cfg.schedule && cfg.schedule.lightweightMode);
-  const trayOn = !!(cfg.schedule && cfg.schedule.minimizeToTray);
-  const hasWindow = !!mainWindow && !mainWindow.isDestroyed();
-  items.push(
+  const items = [
     { label: "显示主界面", click: showWindow },
-    {
-      // 未开托盘常驻时该开关无意义（关窗本来就释放界面）→ 置灰并说明，而不是点了没反应
-      label: lightOn ? "轻量模式：已开启（关窗释放界面）" : "轻量模式：关窗释放界面",
-      type: "checkbox",
-      checked: lightOn,
-      enabled: trayOn,
-      click: () => { toggleLightweightMode(!lightOn); },
-    },
-    {
-      // 手动立即释放：不必真的去关窗（窗口当前可见时也能用）
-      label: hasWindow ? "立即释放界面内存" : "界面已释放（点上方可唤回）",
-      enabled: hasWindow,
-      click: () => { releaseWindowNow("tray-manual"); },
-    },
     { type: "separator" },
     { label: "退出", click: () => { quitting = true; app.quit(); } },
-  );
+  ];
   return Menu.buildFromTemplate(items);
 }
 
@@ -437,58 +362,12 @@ function refreshTrayMenu() {
   }
 }
 
-/** 立即销毁窗口释放渲染进程（托盘「立即释放界面内存」与自动触发共用）。
- *  与关窗路径的区别：不经过 close 事件，供「窗口还开着也想省内存」的场景使用。 */
-function releaseWindowNow(reason) {
-  if (quitting || !mainWindow || mainWindow.isDestroyed()) return false;
-  persistWindowBounds();
-  __crashLog("lightweight-enter", `渲染进程释放（reason=${reason}）`);
-  const w = mainWindow;
-  mainWindow = null;
-  setImmediate(() => {
-    try { w.destroy(); } catch { /* 已销毁 */ }
-  });
-  refreshTrayMenu();
-  return true;
-}
-
-/** 托盘里切换轻量模式：写同一份配置（与设置 · 通用页共用），即时生效 */
-function toggleLightweightMode(next) {
-  try {
-    const cfg = config.loadConfig();
-    cfg.schedule = cfg.schedule || {};
-    cfg.schedule.lightweightMode = !!next;
-    config.saveConfig(cfg);
-    // 托盘直写不经 save_config：ipc 的内存快照与渲染层快照都不会自己更新。
-    // 只作废后端缓存还不够，渲染层旧快照在下次设置页整份保存时会把这里的改动冲掉
-    // （saveConfigFromUI 不保护 schedule 字段），故广播一次让渲染层重拉。
-    ipc.refreshConfigCache();
-    try {
-      const w = mainWindow;
-      if (w && !w.isDestroyed()) w.webContents.send("app:event", { event: "config-changed" });
-    } catch { /* 渲染层不在（界面已释放）时忽略：下次唤回 load() 会读到新值 */ }
-    __crashLog("lightweight-toggle", `lightweightMode=${cfg.schedule.lightweightMode}（来自托盘）`);
-  } catch (e) {
-    __crashLog("lightweight-toggle-failed", String((e && e.message) || e));
-    notify("AgentApiGateway", "轻量模式开关写入失败，请到「设置 · 通用」重试");
-  }
-  refreshTrayMenu();
-}
-
 function createTray() {
   const icon = iconPath("tray.png");
   tray = new Tray(icon.isEmpty() ? iconPath("icon.png") : icon);
   tray.setToolTip("AgentApiGateway · 反代网关");
   refreshTrayMenu();
   tray.on("double-click", showWindow);
-}
-
-// ===== 桌面通知 =====
-
-function notify(title, body) {
-  if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: iconPath("icon.png") });
-  n.show();
 }
 
 // ===== 单实例锁 =====
@@ -533,12 +412,6 @@ if (!gotLock) {
     proxy.boot().catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
     createWindow();
     createTray();
-    // 全局快捷键（默认 Alt+`，两键）：冲突则弹气泡并持续重试，解除后自动恢复。
-    // 设置页改键后经 ipc.onConfigSaved 钩子重新注册，无需重启。
-    ipc.onConfigSaved(() => {
-      try { setupShortcut(); } catch (e) { __crashLog("shortcut-reload-failed", __describe(e)); }
-    });
-    try { setupShortcut(); } catch (e) { __crashLog("shortcut-setup-failed", __describe(e)); }
 
     // 依据配置启用开机自启（便携版不支持：注册的会是临时解压副本路径，退出即失效）。
     // 开关唯一来源是框架配置（设置 · 通用 · 应用行为），用量模块旧配置字段不再参与
@@ -562,8 +435,6 @@ if (!gotLock) {
   app.on("before-quit", () => {
     // 统一收尾：原先两条分支各自重复一遍 stop 调用，新增模块时极易漏改一处
     const cleanup = () => {
-      // 全局快捷键必须显式注销：不注销会让旧键在重启窗口期内处于悬空占用状态
-      try { if (shortcutRegistrar) shortcutRegistrar.stop(); else shortcut.unregisterAll(globalShortcut); } catch { /* 忽略 */ }
       proxy.shutdown();
     };
     quitting = true;

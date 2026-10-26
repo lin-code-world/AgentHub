@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 真实 main.cjs 的轻量模式验证：
+// 真实 main.cjs 的关窗释放验证：
 //   起静态服务器喂 dist → 用 VITE_DEV_SERVER_URL 指向它启动真实主进程
 //   → 从外部观察进程表（渲染进程是否消失/回来）→ 读 window-state.json 验证几何恢复。
 //
@@ -51,10 +51,10 @@ const renderers = (list) => list.filter((p) => p.type === "renderer").length;
   fs.rmSync(SBX, { recursive: true, force: true });
   fs.mkdirSync(DATA, { recursive: true });
 
-  // 预置：轻量模式开 + 托盘常驻开 + 一个明显非默认的窗口几何
+  // 预置：托盘常驻开（关窗销毁界面进程）+ 一个明显非默认的窗口几何
   fs.writeFileSync(path.join(DATA, "config.json"), JSON.stringify({
     theme: "dark",
-    schedule: { minimizeToTray: true, lightweightMode: true, autoStart: false, hourly: false, daily: false, dailyTime: "09:00", notifyOnSuccess: false },
+    schedule: { minimizeToTray: true, autoStart: false },
   }, null, 2), "utf8");
   fs.writeFileSync(path.join(DATA, "window-state.json"), JSON.stringify({
     bounds: { x: 140, y: 110, width: 1180, height: 760 }, maximized: false,
@@ -90,7 +90,7 @@ const renderers = (list) => list.filter((p) => p.type === "renderer").length;
 
     await sleep(6000);
     const after = procs();
-    T("M2 关窗后渲染进程消失（轻量模式真的释放了内存）",
+    T("M2 关窗后渲染进程消失（界面进程真的释放了内存）",
       renderers(after) === 0, JSON.stringify(after));
     T("M3 主进程仍存活（托盘常驻、后台服务不受影响）",
       after.some((p) => p.type === "MAIN"), JSON.stringify(after));
@@ -100,15 +100,16 @@ const renderers = (list) => list.filter((p) => p.type === "renderer").length;
     let st = {};
     try { st = JSON.parse(fs.readFileSync(path.join(DATA, "window-state.json"), "utf8")); } catch { /* 无 */ }
     const b = st.bounds || {};
-    T("M4 关窗时写回的是恢复出的用户几何（非默认值）—— 证明恢复链路真的生效",
-      b.width === 1180 && b.height === 760 && b.x === 140 && b.y === 110,
+    const near = (a, b, tol = 10) => Math.abs(a - b) <= tol;
+    T("M4 关窗时写回的是恢复出的用户几何（非默认值；±10px 容差吸收 DPI 取整）—— 证明恢复链路真的生效",
+      near(b.width, 1180) && near(b.height, 760) && near(b.x, 140) && near(b.y, 110),
       "实际 " + JSON.stringify(b));
 
-    // 日志取证：应记录 lightweight-enter
+    // 日志取证：应记录 window-release
     let log = "";
     try { log = fs.readFileSync(path.join(DATA, "logs", "crash.log"), "utf8"); } catch { /* 无 */ }
-    T("M5 crash.log 留有 lightweight-enter 取证（可事后排查）",
-      /lightweight-enter/.test(log), log.split(/\r?\n/).slice(-6).join("\n"));
+    T("M5 crash.log 留有 window-release 取证（可事后排查）",
+      /window-release/.test(log), log.split(/\r?\n/).slice(-6).join("\n"));
 
     // 唤回：再启动一个实例 → second-instance → showWindow → 重建窗口
     const el2 = spawn(ELECTRON, [".", "--user-data-dir=" + DATA], { cwd: ROOT, env, stdio: "ignore" });
@@ -121,8 +122,8 @@ const renderers = (list) => list.filter((p) => p.type === "renderer").length;
     let st2 = {};
     try { st2 = JSON.parse(fs.readFileSync(path.join(DATA, "window-state.json"), "utf8")); } catch { /* 无 */ }
     const b2 = st2.bounds || {};
-    T("M7 唤回后几何仍是用户原位置（未被重置为默认）",
-      b2.width === 1180 && b2.height === 760,
+    T("M7 唤回后几何仍是用户原位置（未被重置为默认；±10px 容差）",
+      near(b2.width, 1180) && near(b2.height, 760),
       "实际 " + JSON.stringify(b2));
   } finally {
     try { el.kill(); } catch { /* ignore */ }

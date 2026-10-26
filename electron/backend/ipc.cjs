@@ -66,13 +66,6 @@ function handle(fn) {
   };
 }
 
-/** 配置保存后的回调钩子（由 main.cjs 注册）：全局快捷键重新注册等。
- *  方向：main → backend 注册，backend 只在保存时回调，避免 backend 反向依赖主进程。 */
-const configSavedHooks = [];
-function onConfigSaved(fn) {
-  if (typeof fn === "function") configSavedHooks.push(fn);
-}
-
 /** 托盘等 main 侧直写配置后调用：作废内存快照，下一次 load_config 重读磁盘。
  *  不作废的话 C() 会一直返回旧快照（含托盘刚改过的 schedule 字段）。 */
 function refreshConfigCache() {
@@ -107,12 +100,6 @@ function register(ctx) {
     cfg = merged;
     applyNativeTheme(nativeTheme, merged);
     config.applyAutoStart(merged);
-    // 通知主进程侧「配置已保存」：全局快捷键要按新值重新注册。
-    // 为什么不用 ipcMain 反向调用：globalShortcut 只有 main.cjs 持有，
-    // backend 不该反向依赖主进程；用一个注册回调把方向理顺。
-    for (const fn of configSavedHooks) {
-      try { fn(merged); } catch { /* 单个钩子失败不影响保存结果 */ }
-    }
     return r;
   }));
 
@@ -184,4 +171,4 @@ function register(ctx) {
   ipcMain.handle("remote_invoke", handle(({ cmd, args }) => proxyRemote.rpc(cmd, args)));
 }
 
-module.exports = { register, onConfigSaved, refreshConfigCache };
+module.exports = { register, refreshConfigCache };
