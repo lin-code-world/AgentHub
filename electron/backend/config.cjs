@@ -112,16 +112,11 @@ function defaultConfig() {
     fxParticles: false,
     fxPools: false,
     fxCursor: true,
-    // 左栏四大模块的显示顺序（用户在「设置 · 个性化」中调整）
+    // 左栏模块顺序与板块开关（moduleOrder/modules）已随板块机制移除；
+    // 旧配置里的残留字段由 loadConfig 忽略，无需迁移
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    moduleOrder: ["proxy"],
-    // ===== 四大板块启用开关（issue #91 轻量模式）：关闭后左上角置灰不可点、后台完全不运行。
-    // 唯一写入口是 module_toggle IPC（主进程读改写），设置页表单不拥有它
-    modules: {
-      proxy: { enabled: true },
-    },
     update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     // 设备身份段：deviceId/deviceName 是号池同步（poolsync）的本机设备标识来源，
     // 首次使用时惰性生成；endpoint 等旧同步字段仅为老配置迁移保留，不再有同步引擎读取
@@ -245,7 +240,7 @@ function mergeConfig(def, cfg) {
   return out;
 }
 
-/** 模块顺序归一化：非法项剔除，缺失模块按默认顺序补尾 */
+/** 模块顺序归一化：非法项剔除，缺失模块按默认顺序补尾（现仅 proxy，保留函数容错旧配置） */
 function normalizeModuleOrder(order) {
   const known = defaultConfig().moduleOrder;
   const list = (Array.isArray(order) ? order : []).filter((k) => known.includes(k));
@@ -473,14 +468,9 @@ function loadConfig() {
   }
   merged.proxy.checkinAutoRules = normalizeCheckinRules(merged.proxy.checkinAutoRules);
   if (merged.theme !== "dark" && merged.theme !== "light") merged.theme = "dark";
-  merged.moduleOrder = normalizeModuleOrder(merged.moduleOrder);
-  // 模块开关归一化（issue #91）：非法/缺失回 true；modules.* 是唯一事实源
-  merged.modules = merged.modules && typeof merged.modules === "object" ? merged.modules : {};
-  for (const k of ["proxy"]) {
-    const m = merged.modules[k] && typeof merged.modules[k] === "object" ? merged.modules[k] : {};
-    m.enabled = m.enabled !== false;
-    merged.modules[k] = m;
-  }
+  // 旧配置的 moduleOrder/modules（板块排序与开关）已废弃：直接剔除，不再读写
+  delete merged.moduleOrder;
+  delete merged.modules;
   merged.webdav.password = decryptSecret(merged.webdav.password);
   merged.webdavShared = normalizeShared(merged.webdavShared);
   merged.webdavShared.password = decryptSecret(merged.webdavShared.password);
@@ -574,10 +564,6 @@ function saveConfigFromUI(cfg) {
     // 设置页整份提交携带的是启动时的旧快照，不保护会像 issue #90 一样把变更冲回去
     if (disk && Array.isArray(disk.remoteTargets)) next.remoteTargets = disk.remoteTargets;
     if (disk && typeof disk.remoteActiveId === "string") next.remoteActiveId = disk.remoteActiveId;
-    // modules（板块启用开关）同样磁盘优先（issue #91）：唯一写入口是 module_toggle IPC
-    //（主进程读改写），设置页表单不拥有它——否则开关切换后任何整份保存都会把
-    // 渲染层旧快照里的开关状态写回去，重启后开关「自己弹回来」
-    if (disk && disk.modules) next.modules = disk.modules;
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
   return saveConfig(next);
 }

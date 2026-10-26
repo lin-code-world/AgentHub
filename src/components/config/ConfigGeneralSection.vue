@@ -236,82 +236,6 @@ function toggleCursor(v: string | number | boolean | undefined) {
   app.setFxCursor(v === true);
 }
 
-/** 模块顺序上移 / 下移一位（顺序落盘由 store 负责） */
-function move(idx: number, dir: -1 | 1) {
-  const order = app.config.moduleOrder.slice();
-  const to = idx + dir;
-  if (to < 0 || to >= order.length) return;
-  [order[idx], order[to]] = [order[to], order[idx]];
-  app.setModuleOrder(order);
-}
-
-// ===== 板块启停开关（issue #91 轻量模式）：走主进程唯一写入口，切换即停后台设施 =====
-const toggling = ref("");
-const moduleMsg = ref("");
-
-function toggleHint(mod: { key: string; name: string; enabled: boolean }) {
-  if (mod.key === "proxy") {
-    return mod.enabled
-      ? `停用「${mod.name}」：网关服务与额度/签到定时全部停止，正在使用网关（127.0.0.1）的客户端会断开`
-      : `启用「${mod.name}」：重新加载规则与号池库（网关是否自启仍看「记住网关开关」）`;
-  }
-  if (mod.key === "memory") {
-    return mod.enabled
-      ? `停用「${mod.name}」：索引库释放、监听与自动化任务停止，已注入外部 Agent 的记忆 MCP 将不可用`
-      : `启用「${mod.name}」：重新打开索引库与监听，立即恢复`;
-  }
-  return mod.enabled
-    ? `停用「${mod.name}」：定时同步/自动感知停止${mod.key === "usage" ? "、本地用量库释放" : ""}，左上角置灰不可点`
-    : `启用「${mod.name}」：恢复定时能力，立即生效`;
-}
-
-async function toggleModule(mod: { key: string; enabled: boolean }) {
-  if (toggling.value) return;
-  toggling.value = mod.key;
-  moduleMsg.value = "";
-  try {
-    const r = await app.toggleModule(mod.key, !mod.enabled);
-    if (r && r.ok === false) moduleMsg.value = r.message || "切换失败";
-  } catch (e) {
-    moduleMsg.value = String((e as Error).message || e);
-  } finally {
-    toggling.value = "";
-  }
-}
-
-// ===== 模块顺序拖拽排序：拖过哪行实时换位（左栏顺序同步预览），松手统一落盘 =====
-const dragIndex = ref(-1); // 拖动行当前所在下标（随换位实时更新）
-const dragOriginal = ref("");
-
-function onDragStart(i: number, e: DragEvent) {
-  dragIndex.value = i;
-  dragOriginal.value = app.config.moduleOrder.join();
-  if (e.dataTransfer) {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(i));
-  }
-}
-function onDragEnter(i: number) {
-  const from = dragIndex.value;
-  if (from < 0 || from === i) return;
-  const order = app.config.moduleOrder.slice();
-  const [item] = order.splice(from, 1);
-  order.splice(i, 0, item);
-  app.config.moduleOrder = order; // 拖动中只做本地预览，dragend 统一落盘
-  dragIndex.value = i;
-}
-function onDragOver(i: number, e: DragEvent) {
-  if (dragIndex.value < 0) return;
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-}
-function onDragEnd() {
-  if (dragIndex.value >= 0 && dragOriginal.value !== app.config.moduleOrder.join()) {
-    void app.save(); // 顺序已在拖动中写入 config.moduleOrder，这里只补落盘
-  }
-  dragIndex.value = -1;
-}
-
 async function openDataDir() {
   try {
     await api.openDataDir();
@@ -547,48 +471,6 @@ onUnmounted(() => {
     </div>
 
     <div class="card">
-      <div class="set-row set-row-head">
-        <div class="set-info">
-          <div class="set-name">模块顺序</div>
-          <div class="set-desc">左栏模块的显示顺序，按住上下拖动即可换位；右侧开关控制板块启停——停用后左上角置灰不可点，后台完全不运行、不统计（轻量模式）</div>
-        </div>
-      </div>
-      <div class="rows">
-        <div
-          v-for="(mod, i) in app.orderedModules"
-          :key="mod.key"
-          class="row"
-          :class="{ dragging: dragIndex === i }"
-          draggable="true"
-          @dragstart="onDragStart(i, $event)"
-          @dragenter="onDragEnter(i)"
-          @dragover="onDragOver(i, $event)"
-          @dragend="onDragEnd"
-        >
-          <i class="ph ph-dots-six-vertical grip"></i>
-          <span class="num">{{ i + 1 }}</span>
-          <div class="grow"><div class="name">{{ mod.name }}</div></div>
-          <button class="btn btn-ghost" :disabled="i === 0" @click="move(i, -1)">上移</button>
-          <button class="btn btn-ghost" :disabled="i === app.orderedModules.length - 1" @click="move(i, 1)">下移</button>
-          <el-tooltip
-            :content="toggleHint(mod)"
-            placement="top"
-          >
-            <div
-              class="switch"
-              :class="{ on: mod.enabled, busy: toggling === mod.key }"
-              role="switch"
-              :aria-checked="mod.enabled"
-              @click="toggleModule(mod)"
-            ></div>
-          </el-tooltip>
-        </div>
-      </div>
-      <div v-if="moduleMsg" class="set-desc" style="margin-top: 8px; color: var(--err)">{{ moduleMsg }}</div>
-    </div>
-
-    <!-- 应用行为：窗口级设置（原在技能仓库与用量统计的设置里，归位到框架通用设置） -->
-    <div class="card">
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">开机自启</div>
@@ -647,7 +529,7 @@ onUnmounted(() => {
           <div class="set-desc">
             {{
               lightweightDisabledReason ||
-              "点关闭按钮时销毁界面进程，托盘与后台服务（反代网关 / 定时同步 / 记忆中枢）照常运行；实测省约 300 MB 内存，唤回时重新加载界面"
+              "点关闭按钮时销毁界面进程，托盘与后台服务（反代网关）照常运行；实测省约 300 MB 内存，唤回时重新加载界面"
             }}
           </div>
         </div>

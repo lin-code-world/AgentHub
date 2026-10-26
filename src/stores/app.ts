@@ -39,8 +39,6 @@ const defaultConfig: AppConfig = {
   fxParticles: false,
   fxPools: false,
   fxCursor: true,
-  moduleOrder: MODULES.map((m) => m.key),
-  modules: { proxy: { enabled: true } },
   update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
   schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）
@@ -135,14 +133,9 @@ export const useAppStore = defineStore("app", {
   getters: {
     isDark: (s) => s.config.theme === "dark",
     moduleOf: () => (key: ModuleKey): ModuleDef => MODULES.find((m) => m.key === key) || MODULES[0],
-    /** 左栏模块列表：用户自定义顺序优先，缺失模块按内置默认补尾；
-     *  附 enabled 标志（issue #91）：关闭的板块左上角置灰不可点；
-     *  Web 托管形态按服务端能力清单裁剪（容器版只有 proxy），桌面全量 */
-    orderedModules(s): (ModuleDef & { enabled: boolean })[] {
-      const byKey = new Map(MODULES.map((m) => [m.key, m]));
-      return s.config.moduleOrder.map((k) => byKey.get(k)).filter((m): m is ModuleDef => !!m)
-        .filter((m) => moduleEnabled(m.key))
-        .map((m) => ({ ...m, enabled: !s.config.modules?.[m.key] || s.config.modules[m.key].enabled !== false }));
+    /** 左栏模块列表：Web 托管形态按服务端能力清单裁剪（容器版只有 proxy），桌面全量 */
+    orderedModules(): ModuleDef[] {
+      return MODULES.filter((m) => moduleEnabled(m.key));
     },
     /** 当前模块的子页面：全量返回（MODULES 是唯一事实源） */
     pagesOf(s): PageDef[] {
@@ -154,16 +147,6 @@ export const useAppStore = defineStore("app", {
     },
   },
   actions: {
-    /** 板块开关切换（issue #91）：走主进程唯一写入口，成功后同步内存态供 UI 即时置灰。
-     *  必须是 action 不能是 getter——Pinia getter 会被立即求值，函数值会被提前调用炸掉 */
-    async toggleModule(key: string, enabled: boolean) {
-      const r = await api.moduleToggle(key, enabled);
-      if (r && r.ok) {
-        const mods = this.config.modules as Record<string, { enabled: boolean }> | undefined;
-        if (mods && mods[key]) mods[key].enabled = enabled;
-      }
-      return r;
-    },
     async load() {
       try {
         // 深合并而非 Object.assign（浅合并会把 proxy 等嵌套对象整体替换，后端一旦缺字段即白屏）
@@ -172,15 +155,14 @@ export const useAppStore = defineStore("app", {
       } catch {
         this.config = JSON.parse(JSON.stringify(defaultConfig));
       }
-      // 启动默认板块：左栏模块自定义排序的第一个【已启用】板块（关闭的板块置灰不可选），
-      // 页面取其第一个子页；全部未启用时回落第一个（后端 module_toggle 有「至少留一个」守卫）
-      const first = this.orderedModules.find((m) => m.enabled) || this.orderedModules[0];
+      // 启动默认板块：左栏第一个板块，页面取其第一个子页
+      const first = this.orderedModules[0];
       if (first) {
         this.activeModule = first.key;
         this.activePage = first.pages[0].id;
       }
       // 恢复上次停留的页面（轻量模式销毁界面后唤回时，用户应回到原处而不是默认页）。
-      // 只在模块与页面都仍然合法时恢复 —— 记忆页签白名单会变、模块顺序也可能被改过，
+      // 只在模块与页面都仍然合法时恢复 —— 模块集合可能随版本变化，
       // 失效就静默回落到上面的默认位置。
       const mirrored = readMirroredPage();
       if (mirrored) {
@@ -315,8 +297,6 @@ export const useAppStore = defineStore("app", {
     selectModule(key: ModuleKey) {
       this.settingsOpen = false;
       this.pageBeforeConfig = "";
-      // 已停用的板块置灰不可点（issue #91）：入口拦在切换处，避免渲染层绕过
-      if (this.config.modules?.[key] && this.config.modules[key].enabled === false) return;
       if (this.activeModule === key) return;
       this.activeModule = key;
       this.activePage = this.moduleOf(key).pages[0].id;
@@ -324,12 +304,6 @@ export const useAppStore = defineStore("app", {
     setPage(id: string) {
       this.settingsOpen = false;
       this.activePage = id;
-    },
-    /** 模块排序：采用「设置 · 个性化」里算好的完整顺序并落盘 */
-    async setModuleOrder(order: ModuleKey[]) {
-      if (order.join() === this.config.moduleOrder.join()) return;
-      this.config.moduleOrder = order;
-      await this.save();
     },
     /** 拉一次更新状态维护红点（启动兜底；此后由 App.vue 的 update:event 回流实时增减） */
     async refreshUpdateStatus() {

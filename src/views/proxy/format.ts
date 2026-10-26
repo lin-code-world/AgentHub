@@ -248,7 +248,7 @@ export function capabilityNames(m: { capabilities?: { images?: boolean; reasonin
 
 /**
  * 上下文长度 → 紧凑显示（K/M）。
- * 记忆中枢的模型行也要用同一套缩写，实现已提到 utils/format.ts（此处转出保持既有引用不变）。
+ * 实现在 utils/format.ts，此处转出保持既有引用不变。
  */
 export { fmtCtx } from "../../utils/format";
 

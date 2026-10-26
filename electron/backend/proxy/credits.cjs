@@ -221,7 +221,7 @@ function startScheduler(getIntervalMin) {
     // 唤醒守卫（见 backend/wakeGuard.cjs）：
     //   B. 先做时间跳跃检测——不依赖电源事件的兜底（必须**先于** A 判定调用）
     //   A. 静默窗内跳过本轮：睡眠期间 setTimeout 不触发，唤醒后本 tick 立刻到期；
-    //      若此时开跑，会与签到、记忆中枢任务在同一刻收敛。
+    //      若此时开跑，会与签到任务在同一刻收敛。
     // 跳过的仅是**本轮**——照常排下一轮，不影响正常节奏。
     wakeGuard.noteTick("credits-refresh", intervalMs());
     if (!wakeGuard.periodicAllowed()) {

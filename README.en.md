@@ -2,24 +2,21 @@
   <img src="./logo.png" alt="AgentHub Logo" width="128" />
 </p>
 
-# AgentHub — Agent Control Center
+# AgentHub — Proxy Gateway
 
 <p align="center">
   <a href="./README.md">简体中文</a> · <a href="./README.en.md">English</a>
 </p>
 
-> Four things — skills, usage, quota and memory — pulled into one Windows desktop app.
+> Turn subscription quota into a standard API any client can call.
 
-AgentHub is a locally-run control center (Electron + Vue 3 + TypeScript). It ships no model of its own; it simply takes what is scattered across your AI coding tools and puts it under one roof: duplicate skill installs, where this month's tokens actually went, whether your subscription quota can be used by other clients, and agents that never remember your project. Those four problems map to the four sections below.
+AgentHub is a locally-run reverse-proxy gateway (Electron + Vue 3 + TypeScript). It ships no model of its own: it wraps the subscription quota of AI coding tools already logged in on this machine into an OpenAI-compatible API, with pool failover, scheduled check-ins and usage stats.
 
-It comes in two forms: the **Windows desktop app** (all four sections, see [Windows download & install](#windows-download--install)) and the **Docker image** (proxy gateway only, meant to run on a server, see [Docker download & install](#docker-download--install)).
+It comes in two forms: the **Windows desktop app** (gateway with a full GUI, see [Windows download & install](#windows-download--install)) and the **Docker image** (headless, meant to run on a server, see [Docker download & install](#docker-download--install)).
 
-| Section | In one line | Who it's for |
+| Capability | In one line | Who it's for |
 | --- | --- | --- |
-| **Skill Library** | Collect every tool's skills into one central library, maintain once, mount back everywhere | People running Codex / Claude Code / ZCode / Cursor side by side |
-| **Usage Stats** | Aggregate token usage and cost from 21 data sources, sliced by day / project / model | Anyone who wants to know what this month actually cost |
 | **Proxy Gateway** | Wrap the subscription quota already logged in on this machine into a standard API any client can call | People with subscription quota (Trae / WorkBuddy / Raccoon / ModelScope / ZCode / Qoder / Cline and 14 channels in total) who want other software to use it |
-| **Memory Hub** | A local Markdown memory store plus an MCP server, so agents remember your project and preferences | Anyone tired of re-explaining context in every new session |
 
 ---
 
@@ -37,10 +34,7 @@ Full details are in [SPONSOR.md](./SPONSOR.md).
 
 - [Windows download & install](#windows-download--install)
 - [Docker download & install](#docker-download--install)
-- [Section 1: Skill Library](#section-1-skill-library)
-- [Section 2: Usage Stats](#section-2-usage-stats)
-- [Section 3: Proxy Gateway](#section-3-proxy-gateway)
-- [Section 4: Memory Hub](#section-4-memory-hub)
+- [Proxy Gateway](#proxy-gateway)
 - [FAQ](#faq)
 - [Development & self-test](#development--self-test)
 - [Disclaimer](#disclaimer)
@@ -106,63 +100,7 @@ Ports, backup, key rotation, deploying WebDAV on the same host and troubleshooti
 
 ---
 
-## Section 1: Skill Library
-
-### The problem
-
-You installed the same skill separately in Codex, Claude Code, ZCode and Cursor, and changing one leaves three stale copies. The Skill Library collects every tool's skill directory into one central repository and mounts it back to each tool: maintain in the center, and one update takes effect everywhere.
-
-### Pages
-
-| Page | What it does |
-| --- | --- |
-| Dashboard | Overview of the central library and each tool's connection: how many skills collected, mount health, orphan directories |
-| Central library | Skill list and details; inspect / collect / mount one by one, repair broken mounts in one click |
-| Dedupe & conflicts | Lists differences when the same skill differs across tools, and lets you decide which copy wins; also decides where a tool's link should point when it points somewhere else |
-| Sync center | Scan preview → confirm and run → view report, all in one pass: what to collect, what to mount, what needs a decision |
-| WebDAV sync | Cross-device sync of the central repository (server configured in Settings · WebDAV sync) |
-
-### How to use
-
-1. Open **Skill Library · Dashboard** and confirm your tools are detected (ZCode / Codex / Claude Code / Antigravity / the generic `~/.agents` are built in; other tools are suggested from local directories)
-2. Go to **Sync center**, run a scan first — previews write nothing, so you can see what will be collected and where it will be mounted
-3. Run it. Skills are mounted back from the central repository as junctions, so they take almost no extra space
-4. When you add or change a skill somewhere, run the sync center again; conflicts land in **Dedupe & conflicts** for you to decide
-5. Multiple machines: fill in the WebDAV server under **Settings · WebDAV sync**, then run the **WebDAV sync** page once to push the central repository across
-
----
-
-## Section 2: Usage Stats
-
-### The problem
-
-Usage is scattered across each tool's own local database, and nobody tells you what the month cost in total. Usage Stats reads **local client data files** directly, normalises 21 sources onto one schema, and gives you totals, trends, cost and cross-device comparison.
-
-### Supported sources (21)
-
-ZCode, SenseTime Raccoon, Xiaomi MiMo, Codex, DeepSeek Harness, WorkBuddy, WorkBuddy AI, Reasonix, CodeBuddy, Qoder, Qoder CN, Antigravity, Antigravity IDE, Antigravity legacy recovery, Trae, Trae CN, TRAE SOLO, TRAE SOLO CN, OpenSquilla, Grok, AutoClaw.
-
-Under **Configure · Usage stats** you can toggle each source and point it at a custom data directory — sources you never installed are skipped silently.
-
-### Pages
-
-| Page | What it does |
-| --- | --- |
-| Overview | KPI cards, yearly heatmap, usage trend (hourly for today), and per-machine breakdown |
-| Records | Filter by source / model / project, page through entries, export to CSV |
-| Cost | Cost converted from model prices; configure prices under Billing rules first |
-| Billing rules | Model price table, remote price sources, model alias merging (variant names billed at the target price) |
-| Sync log | Time, window, row count and result of every sync — the first place to look when something is off |
-
-### Sync cadence
-
-- Local collection: every **30 minutes** (fixed, no toggle)
-- Cross-device sync: configured under **Settings · Sync schedule**, either hourly or once a day, and can be triggered manually at any time
-- WebDAV is optional: without it the app runs in local mode and only counts this machine
-
----
-
-## Section 3: Proxy Gateway
+## Proxy Gateway
 
 > The core section of the project: wrap the subscription quota **already logged in on this machine** into a standard API, so any client that supports a custom endpoint can call it.
 >
@@ -331,44 +269,6 @@ The **Pool sync** page packs accounts and credentials (AES-256-GCM with the shar
 
 ---
 
-## Section 4: Memory Hub
-
-### The problem
-
-Every new agent session forgets your project background, technical decisions and past mistakes. The Memory Hub keeps a local **Markdown memory store**, distils facts worth keeping from conversations, and exposes them to agents over **MCP** — your memory stays a pile of local, readable, diffable md files.
-
-The default store lives in `~/AgentHub/memory`: `projects/<project>/l1/<agent>/<date>.md` holds raw facts, `projects/<project>/l2/...` holds distilled summaries, decisions and knowledge.
-
-### Pages
-
-| Page | What it does |
-| --- | --- |
-| Dashboard | Total memories, growth trend, distribution across projects and agents |
-| Browse | Four views — list / heatmap / pending / trash; the three kinds of entries needing a human decision are handled under Pending |
-| Projects | Per-project summaries and provenance; rename or merge projects |
-| Profile | Preferences and persona distilled from long-term records |
-| Agent access | One-click MCP and instruction-block injection for each agent, with three-level verification |
-| Search & index | Full-text search (Chinese bigram tokenisation + synonym expansion), index status and self-healing |
-| Automation | Nine background tasks: toggles, cadence, run-now and history |
-| Import & dedupe | Import memories from each tool's conversation history, merge duplicates |
-| WebDAV sync | Cross-device sync of the memory store |
-
-### How to use
-
-1. **Connect an agent**: open **Agent access**, find your agent (ZCode, Codex CLI, WorkBuddy, Claude Code, DeepSeek Harness, Trae Solo, Cursor and the generic `~/.agents` are built in) and click inject. It does two things: adds an MCP launch entry to the agent config, and writes a controlled block into its instruction file (`AGENTS.md` / `CLAUDE.md` etc.). Both are backed up first, and uninstalling removes only its own parts
-2. **Verify**: the three-level check on the card confirms in order "config entry present → the bridge can actually launch and list tools → this agent has really called it". Only a heartbeat at level three proves it is in use
-3. **Import history**: open **Import & dedupe** to bring existing conversation history in as base material (Codex, ZCode, WorkBuddy and others are supported), with a dry-run preview first
-4. **Turn on automation**: open **Automation** and enable what you need. The nine tasks fall into two groups:
-   - Local algorithms: project grouping suggestions, index self-healing (no tokens)
-   - Model-based: structured extraction, summaries, auto-tagging, staleness decisions, L2 distillation, dedupe merging, persona / preference profiling
-5. **Give memory tasks a model**: choose the model source on the Memory Hub config page — your own API, or the **AgentHub gateway already set up in this section** — and configure a fallback chain
-
-### Pending inbox
-
-After automation runs, three kinds of conclusions do not take effect immediately but queue for your confirmation: **staleness decisions** (does a new fact supersede an old one), **project grouping suggestions** and **dedupe merge suggestions**. They live under **Browse → Pending**; accept or reject one by one, each with a recommendation, or accept all recommendations at once.
-
----
-
 ## FAQ
 
 **Q: A client cannot connect to the gateway.**
@@ -393,7 +293,7 @@ Yes: the app closes the client, writes the login state and reopens it (which is 
 Account tokens are encrypted with Windows DPAPI before touching disk and stay in the main process, never exposed to the renderer; gateway API keys are stored as SHA-256 hashes only (the full key is kept in a separate encrypted envelope so you can view it). Requests only go to the official endpoints of the services you use and to the WebDAV server you configure — never through a third-party server.
 
 **Q: Is a lot of functionality unavailable without WebDAV?**
-No. Usage Stats falls back to local mode automatically, and the single-machine features of the Skill Library, Proxy Gateway and Memory Hub all work. WebDAV is only for sharing across machines.
+No. Pool sync is only for sharing the pool across machines; every single-machine gateway feature works without it.
 
 **Q: When does scheduled check-in run?**
 Off by default. Once enabled it runs every channel at the configured time (09:00 by default, changeable) and records results per channel, so each channel keeps its own history.
@@ -430,7 +330,7 @@ Qoder-specific self-tests (offline, no network, no quota consumed; credential an
 
 ```bash
 ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-qoder-adapter-selftest.cjs      # adapter pure functions + SSE envelope decoding
-ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-qoder-integration-selftest.cjs  # daily claim (stub) + memory hub adapter
+ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-qoder-integration-selftest.cjs  # daily claim (stub)
 ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-qoder-selftest.cjs              # credential decryption + wasm signer
 ```
 
@@ -440,17 +340,10 @@ Cline dual-channel self-test (offline + local fake upstream, no network, no quot
 ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-cline-selftest.cjs   # protocol assertions + fake-upstream end-to-end
 ```
 
-Skill Library self-test (plain Node, builds a sandbox in a temp directory, never touches the real home, no network):
+Docker-form closure check (catches a shrunken COPY early):
 
 ```bash
-node scripts/test-skills-diff-link.cjs    # abnormal link targets: detection + relink / adopt + no recurrence after a decision
-```
-
-Memory Hub verification entry points:
-
-```bash
-npm run verify:memory                                             # static checks: IPC plumbing / config tiers / terminology / navigation / structure
-node tools/memory-runtime-path-selftest.cjs                       # bridge runtime discovery: per-platform layouts + case sensitivity + offline errors
+node tools/gateway-closure-check.cjs   # counts the gateway's runtime dependency closure (floor 108)
 ```
 
 Code layout:
@@ -458,13 +351,11 @@ Code layout:
 ```
 electron/            main process
   backend/
-    adapter-*.cjs    usage data source adapters
     proxy/           proxy gateway (store / adapters / pool / server / hot-reload rules / IDE switching)
       protocols/     inbound and outbound protocol faces (openai-out / anthropic-in+out / responses-in+out)
-    memory/          memory hub (store / index / search / access / automation / import)
   main.cjs           app entry (window / tray / updates)
 src/                 renderer (Vue 3)
-  views/             pages for the four sections
+  views/proxy/       proxy gateway pages
   components/        shared components (sidebar / tabs / config center)
 ```
 
@@ -478,7 +369,7 @@ The gateway's protocol details come from reverse-engineering the official client
 
 ### 1. For learning and research only
 
-This is a practice project for studying **HTTP reverse proxying, SSE streaming passthrough, multi-upstream protocol adaptation, local credential management, cross-tool skill directory management and Electron desktop packaging**. It is for personal learning and research only and is not an official product of any company.
+This is a practice project for studying **HTTP reverse proxying, SSE streaming passthrough, multi-upstream protocol adaptation, local credential management and Electron desktop packaging**. It is for personal learning and research only and is not an official product of any company.
 
 The project is **not affiliated with** any of the following companies or their products, and has not received their authorisation, endorsement, sponsorship or backing:
 

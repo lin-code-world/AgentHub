@@ -9,7 +9,7 @@
  * ============================================================
  */
 // 浏览器 mock：dev:web 纯前端预览用；配置落 localStorage，语义与主进程 config.cjs 对齐
-// 技能仓库命令返回贴真实的样例数据（打包产物走不到这里）；未覆盖的命令返回 null 让页面降级
+// mock：浏览器预览与打包产物之外的开发态兜底；未覆盖的命令返回 null 让页面降级
 import type { AppConfig, UpdateStatus } from "../types";
 import { MODULES } from "../types";
 
@@ -27,12 +27,10 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
-    modules: { proxy: { enabled: true } },
     fx: true,
     fxParticles: false,
     fxPools: false,
     fxCursor: true,
-    moduleOrder: MODULES.map((m) => m.key),
     update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: true },
     proxy: {
@@ -75,11 +73,7 @@ function read(): AppConfig {
     const saved = JSON.parse(localStorage.getItem(KEY) || "");
     if (!saved || typeof saved !== "object") return def;
     const theme = saved.theme === "light" ? "light" : "dark";
-    const order = (Array.isArray(saved.moduleOrder) ? saved.moduleOrder : []).filter((k: string) =>
-      def.moduleOrder.includes(k as AppConfig["moduleOrder"][number])
-    );
-    for (const k of def.moduleOrder) if (!order.includes(k)) order.push(k);
-    return { ...def, ...saved, theme, moduleOrder: order };
+    return { ...def, ...saved, theme };
   } catch {
     return def;
   }
@@ -915,8 +909,6 @@ export const mock = {
         return { ok: true, message: "已保存" };
       case "webdav_shared_clear":
         return { ok: true, message: "已清除统一服务器配置" };
-      case "module_toggle":
-        return { ok: true, message: args?.enabled ? "已启用" : "已停用" };
       case "webdav_shared_test":
         return { ok: true, message: "连接成功 · 218ms", latencyMs: 218 };
       case "proxy_poolsync_status":

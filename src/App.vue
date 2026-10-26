@@ -111,7 +111,7 @@ function bindPointer() {
   const onMove = (e: MouseEvent) => {
     mx = e.clientX;
     my = e.clientY;
-    // 记忆中枢的玻璃卡片（mem-card/mem-kpi/mem-tile）与用量统计卡片共用同一套聚光委托
+    // 记忆中枢的玻璃卡片类名已随模块移除；聚光委托只服务框架卡片与 KPI
     hotEl = (e.target as HTMLElement)?.closest?.(SPOT_TARGETS) as HTMLElement | null;
     if (!raf) raf = requestAnimationFrame(tick);
   };

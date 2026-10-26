@@ -160,7 +160,7 @@ onUnmounted(() => {
     <div class="cfg-sec-head">
       <div>
         <div class="cfg-sec-title">WebDAV 同步</div>
-        <div class="cfg-sec-sub">统一服务器 · 模块根目录 · 快捷同步（四个模块共用这一台服务器）。技能仓库的「中央仓库同步」运行器在「技能仓库 · WebDAV 同步」页。</div>
+        <div class="cfg-sec-sub">统一服务器 · 号池根目录 · 快捷同步（号池同步用这一台服务器）</div>
       </div>
       <div class="cfg-sec-actions">
         <el-tag :type="configured ? 'success' : 'info'" effect="plain" round>
@@ -181,7 +181,7 @@ onUnmounted(() => {
         <div class="setting-group" style="margin-bottom: 0">
           <div class="sg-title" style="margin-bottom: 12px">
             统一 WebDAV 服务器
-            <span class="sg-hint">用量统计 / 反代网关两套同步共用 · 密码经系统密钥加密保存，界面只显示掩码</span>
+            <span class="sg-hint">服务器凭据一套通用 · 密码经系统密钥加密保存，界面只显示掩码</span>
           </div>
           <div class="form-grid">
             <div class="form-field full">

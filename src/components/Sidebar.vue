@@ -30,15 +30,9 @@ const scheduleProxyRefresh = coalesceAsync(() => Promise.all([refreshProxyMeta()
 
 // 版本号从主进程取（浏览器预览时 mock 返回 0.1.0）
 const version = ref("v0.1.0");
-// 板块启用态（issue #91）：停用板块的统计 IPC 一律不打（后台已停，打了也没意义）
-function modOn(k: string) {
-  const mods = app.config.modules as Partial<Record<string, { enabled: boolean }>> | undefined;
-  const m = mods?.[k];
-  return !m || m.enabled !== false;
-}
-function refreshStatsForEnabled(only?: string) {
-  const want = (k: string) => (only ? only === k : true);
-  if (want("proxy") && modOn("proxy")) { refreshProxyMeta(); refreshChannels(); }
+function refreshStatsForEnabled() {
+  refreshProxyMeta();
+  refreshChannels();
 }
 /** 侧栏 GitHub 入口：交由主进程 shell.openExternal 用默认浏览器打开仓库 */
 function openRepo() {
@@ -54,12 +48,7 @@ onMounted(async () => {
   // 网关启停/号池同步都经 app:event 广播：侧栏卡片只订阅不轮询。
   // 原来只在切模块时刷一次，本模块内点「启动服务」后卡片会一直停在「网关未启动」
   offProxyEvent = api.onUpdateEvent((e) => {
-    const p = e as { event?: string; type?: string; module?: string; enabled?: boolean };
-    // 板块开关切换（issue #91）：启用时补一轮该板块统计，停用时不动（卡片由置灰态呈现）
-    if (p.event === "module-toggled") {
-      if (p.enabled) refreshStatsForEnabled(p.module);
-      return;
-    }
+    const p = e as { event?: string; type?: string };
     if (p.event === "proxy" && (p.type === "status" || p.type === "poolsync" || p.type === "credits")) {
       scheduleProxyRefresh();
       return;
@@ -164,11 +153,9 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
           v-for="mod in app.orderedModules"
           :key="mod.key"
           class="module-card"
-          :class="{ active: app.activeModule === mod.key, disabled: !mod.enabled }"
-          :aria-disabled="!mod.enabled"
+          :class="{ active: app.activeModule === mod.key }"
           @click="app.selectModule(mod.key)"
         >
-          <span v-if="!mod.enabled" class="mc-off">已停用</span>
           <span class="mc-state" :class="MODULE_META[mod.key].level === 'warn' ? 'st-warn' : 'st-ok'">
             <i class="mc-dot"></i>{{ MODULE_META[mod.key].state }}
           </span>
@@ -771,11 +758,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .ov-dot.off {
   background: var(--text-3);
   box-shadow: none;
-}
-/* 记忆中枢概况里的「需注意」圆点（待处理项 / 索引不一致） */
-.ov-dot.warn-dot {
-  background: var(--warn);
-  box-shadow: 0 0 6px var(--warn);
 }
 .ov-dot::after {
   content: "";

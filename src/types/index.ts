@@ -16,7 +16,7 @@ export type Theme = "dark" | "light";
 export interface PageDef {
   id: string;
   name: string;
-  /** 右侧计数徽标：静态兜底值，技能仓库的待裁决徽标由 store 实时计算覆盖 */
+  /** 右侧计数徽标：静态兜底值 */
   badge?: string;
 }
 
@@ -53,10 +53,6 @@ export interface AppConfig {
   /** 个性化鼠标样式（界面动效的子开关，默认开启）：液滴光标 + 点击涟漪；
       关闭后恢复系统指针，业务逻辑不受影响 */
   fxCursor: boolean;
-  moduleOrder: ModuleKey[];
-  /** 四大板块启用开关（issue #91）：关闭后左上角置灰不可点、后台完全不运行；
-      唯一写入口是 module_toggle IPC，这里的值只作展示同步 */
-  modules: Record<ModuleKey, { enabled: boolean }>;
   /** 软件更新：channel 更新通道；autoCheck 定时自动检查开关；notifiedVersion 由主进程维护（前端只读回传） */
   update: UpdateConfig;
   schedule: {

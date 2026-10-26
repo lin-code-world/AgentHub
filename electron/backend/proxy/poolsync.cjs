@@ -9,7 +9,7 @@
  * ============================================================
  */
 // 反代网关 · 号池 WebDAV 同步引擎：多设备共享号池（账号 + 凭据）
-// 远端布局（root 默认 /agenthub-proxy，与技能仓库 /agent-skills、用量统计 /dosage-sync 同盘隔离）：
+// 远端布局（root 默认 /agenthub-proxy，网盘上独立目录隔离）：
 //   pool/devices/<deviceId>.json     设备档案
 //   pool/archives/<deviceId>.zip     该设备号池快照：accounts.json 经 AES-256-GCM 加密后打成 zip
 //   pool/tombstones.json             删除墓碑（accountKey → 删除时间），传播「移除账号」
@@ -142,7 +142,7 @@ function configured() {
   return !!(w.endpoint && w.username && w.password);
 }
 
-/** 本机设备身份：复用框架 webdav.deviceId/deviceName（与技能仓库同一台设备同一个 id） */
+/** 本机设备身份：复用框架 webdav.deviceId/deviceName（同一台设备同一个 id） */
 function deviceId() {
   return config.loadConfig().webdav.deviceId;
 }
@@ -672,12 +672,12 @@ async function run(opts) {
   if (!uploadOnly && String(w.passphrase).length < 8) {
     oplog.log("warn", "号池同步", "号池压缩包加密口令不足 8 位：短口令在远端可被离线爆破，建议改用更长密码或设置独立加密口令");
   }
-  // 远端同步跨模块互斥（issue #92）：技能/用量/记忆同步进行中时跳过本轮
-  if (!webdav.tryBeginSync("proxy")) throw new Error("其他模块的远端同步正在进行，本轮已跳过");
+  // 远端同步互斥：其他远端同步进行中时跳过本轮
+  if (!webdav.tryBeginSync("proxy")) throw new Error("其他远端同步正在进行，本轮已跳过");
 
   // 占锁与收尾必须同处一个保护块（审查加固）：原先 state/cancelSignal/deviceId 等初始化
   // 位于 try 之外，一旦其中任何一步抛错，finally 里的 webdav.endSync() 不会执行，
-  // 全局同步槽位（syncRunTag）将永久被占，技能/用量/号池/记忆四个模块的同步入口
+  // 全局同步槽位（syncRunTag）将永久被占，所有同步入口
   // 全部被拒直到重启应用。当前这些调用在现有实现下不抛，但结构上必须收紧。
   try {
     state = { ...state, running: true, stage: "connect", detail: "", lastError: "", percent: 0, channel };

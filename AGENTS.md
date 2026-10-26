@@ -1,8 +1,9 @@
 # AGENTS.md
 
-AgentHub：Windows 桌面应用（Electron + Vue 3 + TS），四大板块（技能仓库 / 用量统计 / 反代网关 / 记忆中枢）。本仓库 fork
-自上游 https://github.com/HUIdada1/AgentHub.git（origin 为 lin-code-world/AgentHub）。仓库语言为中文：提交信息、注释、文档一律简体中文，提交信息用
-conventional 前缀（`feat(gateway): …` / `fix(memory): …`）。
+AgentHub：Windows 桌面应用（Electron + Vue 3 + TS），反代网关（多渠道 AI 上游的反向代理与号池管理）。本仓库 fork
+自上游 https://github.com/HUIdada1/AgentHub.git（origin 为 lin-code-world/AgentHub），已移除上游的技能仓库 / 用量统计 /
+记忆中枢三大板块，只保留反代网关。仓库语言为中文：提交信息、注释、文档一律简体中文，提交信息用
+conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 分支策略
 
@@ -16,9 +17,9 @@ conventional 前缀（`feat(gateway): …` / `fix(memory): …`）。
 
 ## 架构
 
-- `electron/` 主进程，全部 `.cjs`（CommonJS）：`main.cjs` 应用入口；`preload.cjs` IPC 白名单桥；`backend/adapter-*.cjs`
-  各用量数据源适配器；`backend/proxy/` 反代网关核心；`backend/memory/` 记忆中枢。
-- `src/` 渲染层（Vue 3 `<script setup lang="ts">`）：`views/` 四大板块页面，`api/ipc.ts` 统一 IPC 封装。
+- `electron/` 主进程，全部 `.cjs`（CommonJS）：`main.cjs` 应用入口；`preload.cjs` IPC 白名单桥；`backend/proxy/`
+  反代网关核心；`backend/config.cjs` 全局配置；`backend/webdav.cjs`/`s3.cjs` 号池同步的共享传输层。
+- `src/` 渲染层（Vue 3 `<script setup lang="ts">`）：`views/proxy/` 网关页面，`api/ipc.ts` 统一 IPC 封装。
 - `gateway/` Docker headless 形态：独立 package.json（依赖 `node:sqlite`，需 Node >= 22.5）。入口 `gateway/src/index.cjs` 复用
   `proxy/index.cjs` 的 `boot()`，只处理形态差异（监听覆盖、管理 REST API、停机序列）。
 
@@ -51,8 +52,8 @@ conventional 前缀（`feat(gateway): …` / `fix(memory): …`）。
   `scripts/dev-anthropic-in-test.cjs`、`scripts/dev-responses-in-test.cjs`。
 - 需要 Electron 运行时的脚本用仓库自带二进制跑：
   `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-smoke.cjs`（全链路含假上游）。
-- 记忆中枢静态校验：`npm run verify:memory`。
-- 沙箱约定（gateway-ci 同款）：跑核心自测时把 `AGENTHUB_DATA_DIR` 与 `AGENT_SKILLS_HOME` 指向临时目录；自测脚本不得读写真实用户数据。
+- Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 108，防 COPY 缩水）。
+- 沙箱约定（gateway-ci 同款）：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
 
 ## 环境与发布
 

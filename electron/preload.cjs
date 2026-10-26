@@ -119,13 +119,11 @@ const ALLOWED_COMMANDS = new Set([
   // ===== 反代网关：生态接入（CC Switch） =====
   "proxy_ccswitch_status",
   "proxy_ccswitch_register",
-  // ===== 统一 WebDAV（设置 · 数据存储：共享服务器 + 三模块根目录） =====
+  // ===== 统一 WebDAV（设置 · 数据存储：共享服务器 + 号池根目录） =====
   "webdav_shared_get",
   "webdav_shared_save",
   "webdav_shared_test",
   "webdav_shared_clear",
-  // ===== 四大板块启用开关（issue #91） =====
-  "module_toggle",
   // ===== 远程网关（桌面连远程 Docker 版）=====
   "remote_targets_list",
   "remote_targets_save",
