@@ -23,41 +23,6 @@ import { toast } from "../utils/toast";
 const app = useAppStore();
 const scrollEl = ref<HTMLElement | null>(null);
 
-// ===== 网关服务开关（常驻导航栏右侧）：状态 / 启停 / 端口号展示 =====
-const gwRunning = ref(false);
-const gwBusy = ref(false);
-
-async function refreshGw() {
-  try {
-    const s = await api.proxyStatus();
-    gwRunning.value = !!s.running;
-  } catch { /* 浏览器预览走 mock / 拉不到保留旧值 */ }
-}
-
-async function toggleGw() {
-  if (gwBusy.value) return;
-  gwBusy.value = true;
-  const wasRunning = gwRunning.value;
-  // 乐观更新先行：开关立即切到目标态（后端 stop/start 同步翻转 running，
-  // 返回即代表已生效）；真实状态随后由 proxy status 事件回流纠偏
-  gwRunning.value = !wasRunning;
-  try {
-    const r = wasRunning ? await api.proxyStop() : await api.proxyStart();
-    if (r && (r as { ok?: boolean }).ok === false) {
-      gwRunning.value = wasRunning; // 后端拒绝：回弹
-      toast.error((r as { message?: string }).message || "操作失败");
-    } else {
-      app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
-      toast.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
-    }
-  } catch (e) {
-    gwRunning.value = wasRunning; // 调用异常：回弹
-    toast.error(String((e as Error).message || e));
-  } finally {
-    gwBusy.value = false;
-  }
-}
-
 /** 页签待处理红点：当前无动态数据源（原记忆中枢红点已随模块移除），保留结构备用 */
 function pendingCount(pageId: string): number {
   return 0;
@@ -106,15 +71,7 @@ async function onRemoteCommand(cmd: string | number) {
   }
 }
 
-onMounted(() => {
-  updateFades();
-  refreshGw();
-  // 网关状态变化（本页开关 / 后端自启）经事件回流，开关即时跟上
-  api.onUpdateEvent((e) => {
-    const p = e as { event?: string; type?: string };
-    if (p.event === "proxy" && p.type === "status") refreshGw();
-  });
-});
+onMounted(updateFades);
 </script>
 
 <template>
@@ -158,20 +115,6 @@ onMounted(() => {
         </el-dropdown-menu>
       </template>
     </el-dropdown>
-    <!-- 网关服务开关 + 端口号：常驻在配置入口左边，不随 tab 条横向滚动 -->
-    <div class="gw-ctl">
-      <span class="gw-label">网关端口</span>
-      <span class="gw-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">{{ app.config.proxy.port }}</span>
-      <div
-        class="switch gw-switch"
-        :class="{ on: gwRunning, busy: gwBusy }"
-        role="switch"
-        :aria-checked="gwRunning"
-        @click="toggleGw()"
-      >
-        <span class="gw-switch-text">{{ gwRunning ? "服务开" : "服务关" }}</span>
-      </div>
-    </div>
     <!-- 右侧常驻入口：普通态进配置页，配置态「完成」回到来时页面；不随 tab 条横向滚动 -->
     <button v-if="app.activePage === 'config'" class="tab tab-config active" @click="app.closeModuleConfig()">
       <i class="ph ph-check"></i>完成
@@ -293,62 +236,6 @@ onMounted(() => {
 }
 .tab-remote.remote-on {
   color: var(--accent-strong);
-}
-
-/* 网关服务开关 + 端口号：常驻在配置入口左边，不随 tab 条横向滚动 */
-.gw-ctl {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0 6px 2px;
-  padding: 0 12px;
-  border-left: 1px solid var(--line);
-}
-.gw-label {
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-.gw-port {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-3);
-  cursor: default;
-}
-/* 加宽的带文案开关：关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左
-   （scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px） */
-.gw-switch {
-  width: 64px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0 5px;
-  box-sizing: border-box;
-}
-.gw-switch.on {
-  justify-content: flex-start;
-}
-.gw-switch.on::after {
-  transform: translateX(44px);
-}
-.gw-switch-text {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-3);
-  user-select: none;
-  line-height: 1;
-}
-.gw-switch.on .gw-switch-text {
-  color: #06130b;
-}
-.gw-ctl .switch {
-  flex-shrink: 0;
-}
-.gw-ctl .switch.busy {
-  opacity: 0.5;
-  pointer-events: none;
 }
 
 /* 右侧常驻入口：不随 tab 条横向滚动，左边留一道分隔线 */

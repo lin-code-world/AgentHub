@@ -19,10 +19,35 @@ import { isUnusableChannel } from "../views/proxy/channelHealth";
 import type { ModuleKey } from "../types";
 import * as api from "../api/ipc";
 import { coalesceAsync } from "../utils/timing";
+import { toast } from "../utils/toast";
 import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
 import logoUrl from "../assets/logo.png";
 
 const app = useAppStore();
+const gwBusy = ref(false);
+
+/** 网关服务开关（覆盖在反代网关卡右上角）：启停 + 状态经 proxy status 事件回流 */
+async function toggleGw() {
+  if (gwBusy.value) return;
+  gwBusy.value = true;
+  const wasRunning = proxyRunning.value;
+  proxyRunning.value = !wasRunning; // 乐观更新先行，失败回弹
+  try {
+    const r = wasRunning ? await api.proxyStop() : await api.proxyStart();
+    if (r && (r as { ok?: boolean }).ok === false) {
+      proxyRunning.value = wasRunning;
+      toast.error((r as { message?: string }).message || "操作失败");
+    } else {
+      app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
+      toast.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
+    }
+  } catch (e) {
+    proxyRunning.value = wasRunning;
+    toast.error(String((e as Error).message || e));
+  } finally {
+    gwBusy.value = false;
+  }
+}
 
 // 事件合流：poolsync/credits 事件密集到达时，
 // 侧栏卡片的刷新被合并成有节制的几次，不再逐事件打 IPC（事件风暴 → IPC 风暴）
@@ -73,12 +98,10 @@ async function refreshProxyMeta() {
   }
 }
 
-// ===== 模块卡片的运行状态与统计（全部真实数据，无 mock） =====
-const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "warn"; stats: { v: string; label: string; unit?: string }[] }>>(() => {
+// ===== 模块卡片的统计（全部真实数据，无 mock）；开关状态由覆盖在卡片右上角的 switch 表达 =====
+const MODULE_META = computed<Record<ModuleKey, { stats: { v: string; label: string; unit?: string }[] }>>(() => {
   return {
     proxy: {
-      state: proxyRunning.value ? "网关运行中" : "网关未启动",
-      level: proxyRunning.value ? "ok" : "warn",
       stats: [
         { v: String(app.config.proxy.port), label: "端口" },
         { v: String(proxyKeyCount.value), label: "Key", unit: "个" },
@@ -145,9 +168,18 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
           :class="{ active: app.activeModule === mod.key }"
           @click="app.selectModule(mod.key)"
         >
-          <span class="mc-state" :class="MODULE_META[mod.key].level === 'warn' ? 'st-warn' : 'st-ok'">
-            <i class="mc-dot"></i>{{ MODULE_META[mod.key].state }}
-          </span>
+          <!-- 网关服务开关：覆盖在反代网关卡右上角（stop 与卡片点击互不影响） -->
+          <div
+            v-if="mod.key === 'proxy'"
+            class="switch mc-gw-switch"
+            :class="{ on: proxyRunning, busy: gwBusy }"
+            role="switch"
+            :aria-checked="proxyRunning"
+            :title="proxyRunning ? '点击停止网关服务' : '点击启动网关服务'"
+            @click.stop="toggleGw()"
+          >
+            <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
+          </div>
           <div class="mc-top">
             <div class="mc-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="MODULE_ICONS[mod.key]"></svg>
@@ -298,7 +330,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   border-radius: var(--r-ctl);
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.025);
-  padding: 10px 11px 9px;
+  padding: 14px 14px 12px;
   cursor: pointer;
   position: relative;
   transition: background 0.2s var(--ease), border-color 0.2s, transform 0.15s;
@@ -441,7 +473,42 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   flex-wrap: wrap; /* 挤不下时「上游启闭」按钮换行右对齐，数字不被压缩 */
   align-items: flex-end;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 10px;
+}
+/* 网关服务开关：覆盖在反代网关卡右上角（原 mc-state 状态位），不触发卡片切换
+   加宽的带文案开关（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+   关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
+.mc-gw-switch {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 5px;
+  box-sizing: border-box;
+  z-index: 2;
+}
+.mc-gw-switch.on {
+  justify-content: flex-start;
+}
+.mc-gw-switch.on::after {
+  transform: translateX(44px);
+}
+.mc-gw-switch-text {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  user-select: none;
+  line-height: 1;
+}
+.mc-gw-switch.on .mc-gw-switch-text {
+  color: #06130b;
+}
+.mc-gw-switch.busy {
+  opacity: 0.5;
+  pointer-events: none;
 }
 .mc-stat b {
   font-family: var(--font-mono);
@@ -486,60 +553,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   border-color: var(--accent-strong);
   background: var(--accent-dim);
 }
-.mc-state {
-  position: absolute;
-  right: 10px;
-  top: 11px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 9px;
-  font-family: var(--font-mono);
-  padding: 2px 6px;
-  border-radius: var(--r-pill);
-}
-/* 状态圆点：带一圈持续荡开的涟漪（warn 时跟随警示色） */
-.mc-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 6px currentColor;
-  position: relative;
-  flex-shrink: 0;
-}
-.mc-dot::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  border: 1px solid currentColor;
-  opacity: 0;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .mc-dot::after {
-    animation: mcDotRipple 2.4s var(--ease) infinite;
-  }
-  @keyframes mcDotRipple {
-    from {
-      transform: scale(1);
-      opacity: 0.7;
-    }
-    to {
-      transform: scale(3);
-      opacity: 0;
-    }
-  }
-}
-.st-ok {
-  color: var(--accent-strong);
-  background: var(--accent-dim);
-}
-.st-warn {
-  color: var(--warn);
-  background: var(--warn-dim);
-}
-
 /* 左下角全局操作条（概况卡底部，常驻可见） */
 .side-foot {
   margin-top: 8px;
