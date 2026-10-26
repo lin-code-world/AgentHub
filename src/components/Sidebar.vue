@@ -119,7 +119,11 @@ type ProxyChannelRow = {
 };
 const channels = ref<ProxyChannelRow[]>([]);
 async function refreshChannels() {
-  channels.value = (await api.proxyPool().catch(() => channels.value)) || [];
+  // 后端抛错时 ipc.cjs 的 handle 会收口成 { ok:false, message }（不是 rejected）——
+  // 不做数组兜底的话这个对象会污染 channels，之后 visibleChannels 的 filter 每次渲染都抛错，
+  // 整个侧栏的 DOM 更新从此卡死（开关切换等一切状态变化在界面上失效）。空数组走空态文案。
+  const rows = await api.proxyPool().catch(() => null);
+  channels.value = Array.isArray(rows) ? rows : [];
 }
 // 死渠道（有号已过期 且 在线余额合计 0）不占侧栏那一行：它们不可用却和可用渠道长得一样，
 // 渠道一多就把真正要看的挤下去。判据落在 channelHealth.ts 里，理由是那条规则错了会静默藏号。
