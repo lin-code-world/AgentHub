@@ -12,6 +12,12 @@
 "use strict";
 const path = require("node:path");
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, nativeTheme, Notification, globalShortcut } = require("electron");
+// userData 路径必须在任何 getPath 调用之前钉死：Electron 进程启动即按 package.json 的 name
+// 算出 userData（本仓库 name=agent-api-gateway），而原先的 app.setName 放在顶层 require 链末尾，
+// 此时 crashReporter.start 早已触发过 getPath，目录已被固化成 %APPDATA%\agent-api-gateway，
+// 与旧版数据 / 纯 Node 自测脚本（config.cjs 回落到 AgentHub）各读一份配置。显式 setPath 消除歧义。
+app.setName("AgentHub");
+app.setPath("userData", path.join(app.getPath("appData"), "AgentHub"));
 
 // ===== 闪退取证（本地补丁 __agenthubCrashTrace）=====
 // 1.42.0 出现静默退出：Windows 无 Application Error 事件、无 minidump、应用自身零日志，
@@ -31,7 +37,9 @@ function memUsage() {
   return `rss=${Math.round(m.rss / MB)}MB heap=${Math.round(m.heapUsed / MB)}MB ext=${Math.round(m.external / MB)}MB`;
 }
 function crashLogFile() {
-  return path.join(process.env.APPDATA || app.getPath("appData"), "AgentHub", "logs", "crash.log");
+  // 与 backend/crashlog.cjs 的落盘目录一致（userData 已在文件顶部钉死为 %APPDATA%\AgentHub），
+  // 此前这里写死 %APPDATA%\AgentHub，name 变更后实际日志落在别的目录，弹窗提示会指错文件
+  try { return path.join(app.getPath("userData"), "logs", "crash.log"); } catch { return path.join(process.env.APPDATA || "", "AgentHub", "logs", "crash.log"); }
 }
 function __crashLog(kind, detail) {
   if (__crashCount > 50) return;
@@ -127,9 +135,6 @@ const windowState = require("./backend/window-state.cjs");
 bootPhase = "ready";
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || "http://localhost:1420";
-
-// 目录名用 productName 大小写（userData = %APPDATA%\AgentHub），与安装名/任务栏一致
-app.setName("AgentHub");
 
 let mainWindow = null;
 let tray = null;
@@ -392,6 +397,8 @@ function onShortcutToggle() {
 
 /** 托盘菜单（动态构建） */
 function buildTrayMenu() {
+  // 每次构建都读一次配置：托盘开关（轻量模式/托盘常驻）改完要立刻反映，不能缓存
+  const cfg = config.loadConfig();
   const items = [];
   // 轻量模式：关窗缩到托盘的用户，托盘是唯一入口，所以开关必须放这里
   // （设置 · 通用里也有同一个开关，两处写的是同一份配置）
