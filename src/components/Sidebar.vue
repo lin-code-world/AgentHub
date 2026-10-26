@@ -28,19 +28,12 @@ const app = useAppStore();
 // 侧栏卡片的刷新被合并成有节制的几次，不再逐事件打 IPC（事件风暴 → IPC 风暴）
 const scheduleProxyRefresh = coalesceAsync(() => Promise.all([refreshProxyMeta(), refreshChannels()]), 800);
 
-// 版本号从主进程取（浏览器预览时 mock 返回 0.1.0）
-const version = ref("v0.1.0");
 function refreshStatsForEnabled() {
   refreshProxyMeta();
   refreshChannels();
 }
 onMounted(async () => {
   refreshStatsForEnabled();
-  try {
-    version.value = "v" + (await api.getAppVersion());
-  } catch {
-    /* 取不到就用默认 */
-  }
   // 网关启停/号池同步都经 app:event 广播：侧栏卡片只订阅不轮询。
   // 原来只在切模块时刷一次，本模块内点「启动服务」后卡片会一直停在「网关未启动」
   offProxyEvent = api.onUpdateEvent((e) => {
@@ -137,10 +130,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
     <!-- 上卡片：品牌 + 模块切换 -->
     <div class="side glass">
       <div class="brand">
-        <img class="brand-mark" :src="logoUrl" alt="AgentHub" />
+        <img class="brand-mark" :src="logoUrl" alt="AgentApiGateway" />
         <div class="brand-txt">
-          <div class="brand-name">AgentHub</div>
-          <div class="brand-sub">Agent中控台</div>
+          <div class="brand-name">AgentApiGateway</div>
+          <div class="brand-sub">反代网关</div>
         </div>
       </div>
 
@@ -215,12 +208,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 
       <!-- 左下角全局操作：版本 / 署名 / 亮暗 / 设置 -->
       <div class="side-foot">
-        <div class="foot-meta">
-          <div class="foot-ver">{{ version }}</div>
-          <el-tooltip content="作者" placement="top">
-            <div class="foot-author"><i class="ph ph-user"></i><b>沐晖</b></div>
-          </el-tooltip>
-        </div>
         <el-tooltip content="切换亮暗主题" placement="top">
           <button class="btn btn-ghost" @click="app.toggleTheme()">
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>

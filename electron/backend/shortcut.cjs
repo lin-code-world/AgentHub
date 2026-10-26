@@ -229,7 +229,7 @@ function createRegistrar(deps) {
         notifiedConflict = false;
         d.log && d.log("shortcut-recovered", r.accelerator);
         // 恢复也提示一次：用户才知道快捷键又能用了
-        try { d.notify && d.notify("AgentHub 快捷键已恢复", `${r.accelerator} 已可正常使用`); } catch { /* 通知失败忽略 */ }
+        try { d.notify && d.notify("AgentApiGateway 快捷键已恢复", `${r.accelerator} 已可正常使用`); } catch { /* 通知失败忽略 */ }
       }
       return status();
     }
@@ -245,7 +245,7 @@ function createRegistrar(deps) {
       d.log && d.log("shortcut-conflict", `${want} ${r.message || ""}`);
       try {
         d.notify && d.notify(
-          "AgentHub 快捷键冲突",
+          "AgentApiGateway 快捷键冲突",
           `${want} 已被其它程序占用，快捷键暂不可用；该程序释放后会自动恢复`
         );
       } catch { /* 通知失败不影响重试 */ }

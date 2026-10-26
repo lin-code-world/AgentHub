@@ -1,7 +1,7 @@
 {
-  "name": "agenthub",
-  "version": "1.82.2",
-  "description": "AgentHub —— 反代网关：多渠道 AI 上游的反向代理与号池管理",
+  "name": "agent-api-gateway",
+  "version": "1.0.0",
+  "description": "AgentApiGateway —— 反代网关：多渠道 AI 上游的反向代理与号池管理",
   "author": "沐晖",
   "type": "module",
   "main": "electron/main.cjs",
@@ -38,8 +38,8 @@
     "node": ">=18"
   },
   "build": {
-    "appId": "com.huidada1.agenthub",
-    "productName": "AgentHub",
+    "appId": "com.huidada1.agentapigateway",
+    "productName": "AgentApiGateway",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release",
@@ -84,7 +84,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AgentHub"
+      "shortcutName": "AgentApiGateway"
     }
   }
 }

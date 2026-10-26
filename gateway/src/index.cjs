@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// AgentHub 反代网关 · Docker headless 形态入口
+// AgentApiGateway 反代网关 · Docker headless 形态入口
 //
 // 装配复用 proxy/index.cjs 的 boot()（规则/数据库/额度刷新/真实签到 tick/号池同步/
 // deviceMid 自愈/锚点兜底），桌面版日后新增装配项这里自动继承；本入口只处理形态差异：
@@ -33,7 +33,7 @@ process.env.AGENTHUB_DATA_DIR = process.env.AGENTHUB_DATA_DIR || path.join(proce
 // 容器里没有 safeStorage，凭据加密唯一来源是 AGENTHUB_SECRET_KEY；未设置又未显式放行时
 // 拒绝启动，比"静默明文落库"更早暴露问题（逃生门只给本地调试）
 if (!process.env.AGENTHUB_SECRET_KEY && process.env.AGENTHUB_ALLOW_PLAINTEXT !== "1") {
-  console.error("[AgentHub Gateway] 拒绝启动：未设置 AGENTHUB_SECRET_KEY，凭据无法加密落盘。");
+  console.error("[AgentApiGateway] 拒绝启动：未设置 AGENTHUB_SECRET_KEY，凭据无法加密落盘。");
   console.error("  生产部署：AGENTHUB_SECRET_KEY=$(openssl rand -base64 32)");
   console.error("  仅本地调试需要明文：设 AGENTHUB_ALLOW_PLAINTEXT=1");
   process.exit(1);
@@ -107,7 +107,7 @@ function acquireLock() {
           alive = e.code !== "ESRCH"; // 除"不存在"外一律按存活保守处理：误接管=双写，代价最大
         }
         if (alive) {
-          console.error(`[AgentHub Gateway] 拒绝启动：数据目录已被本机 pid ${pid} 占用（${file}）`);
+          console.error(`[AgentApiGateway] 拒绝启动：数据目录已被本机 pid ${pid} 占用（${file}）`);
           process.exit(1);
         }
       }
@@ -122,9 +122,9 @@ function acquireLock() {
 
 async function main() {
   lockFile = acquireLock();
-  console.log(`[AgentHub Gateway] 启动中 platform=${platform.form()} version=${platform.version()}`);
-  console.log(`[AgentHub Gateway] 数据目录 ${process.env.AGENTHUB_DATA_DIR}`);
-  console.log(`[AgentHub Gateway] 凭据加密 ${process.env.AGENTHUB_SECRET_KEY ? "AES-256-GCM (AGENTHUB_SECRET_KEY)" : "无（AGENTHUB_ALLOW_PLAINTEXT=1 已放行明文）"}`);
+  console.log(`[AgentApiGateway] 启动中 platform=${platform.form()} version=${platform.version()}`);
+  console.log(`[AgentApiGateway] 数据目录 ${process.env.AGENTHUB_DATA_DIR}`);
+  console.log(`[AgentApiGateway] 凭据加密 ${process.env.AGENTHUB_SECRET_KEY ? "AES-256-GCM (AGENTHUB_SECRET_KEY)" : "无（AGENTHUB_ALLOW_PLAINTEXT=1 已放行明文）"}`);
 
   // 首启修正自己的 config：server 由本入口显式启动（restoreOnLaunch 保持 false，避免
   // boot() 拿磁盘旧端口抢先监听）；qoder 双区需要本机客户端 wasm 签名，容器里必然失败
@@ -140,13 +140,13 @@ async function main() {
 
   const started = await server.start(gatewaySettings);
   if (!started.ok) {
-    console.error("[AgentHub Gateway] 反代网关启动失败:", started.message);
+    console.error("[AgentApiGateway] 反代网关启动失败:", started.message);
     process.exit(1);
   }
-  console.log(`✅ [AgentHub Gateway] 反代网关已监听 ${BIND}:${PORT}/v1（chat/completions · messages · responses · models）`);
+  console.log(`✅ [AgentApiGateway] 反代网关已监听 ${BIND}:${PORT}/v1（chat/completions · messages · responses · models）`);
 
   adminServer = startAdmin();
-  console.log(`✅ [AgentHub Gateway] 管理 API 已监听 ${ADMIN_BIND}:${ADMIN_PORT}（${ADMIN_TOKEN ? "Bearer token 鉴权" : "未设 token，仅回环可达"}）`);
+  console.log(`✅ [AgentApiGateway] 管理 API 已监听 ${ADMIN_BIND}:${ADMIN_PORT}（${ADMIN_TOKEN ? "Bearer token 鉴权" : "未设 token，仅回环可达"}）`);
 }
 
 // ===== 管理 API =====
@@ -399,13 +399,13 @@ function registerEventRoutes(app) {
 function registerUiRoutes(app) {
   const indexFile = path.join(UI_DIR, "index.html");
   if (!fs.existsSync(indexFile)) {
-    console.log(`[AgentHub Gateway] 未内置 Web UI（${UI_DIR}/index.html 不存在），仅提供管理 API`);
+    console.log(`[AgentApiGateway] 未内置 Web UI（${UI_DIR}/index.html 不存在），仅提供管理 API`);
     return;
   }
   app.use(express.static(UI_DIR, { index: false }));
   // SPA 入口兜底：非 /api 的 GET 一律回 index.html（前端暂无路由库，保住未来加路由不被 404）
   app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(indexFile));
-  console.log(`[AgentHub Gateway] Web UI 已挂载：${UI_DIR}`);
+  console.log(`[AgentApiGateway] Web UI 已挂载：${UI_DIR}`);
 }
 
 function startAdmin() {
@@ -423,7 +423,7 @@ function startAdmin() {
   const srv = app.listen(ADMIN_PORT, ADMIN_BIND);
   // 监听失败必须显式收口：否则 unhandled 'error' 直接崩掉整个进程（含在跑的反代网关）
   srv.on("error", (e) => {
-    console.error(`[AgentHub Gateway] 管理 API 监听 ${ADMIN_BIND}:${ADMIN_PORT} 失败:`, e.message);
+    console.error(`[AgentApiGateway] 管理 API 监听 ${ADMIN_BIND}:${ADMIN_PORT} 失败:`, e.message);
     process.exit(1);
   });
   return srv;
@@ -434,13 +434,13 @@ let stopping = false;
 async function shutdown(signal) {
   if (stopping) return; // 幂等闸：重复信号不重入（最终由 docker 的 kill 超时兜底）
   stopping = true;
-  console.log(`[AgentHub Gateway] 收到 ${signal}，开始停机…`);
+  console.log(`[AgentApiGateway] 收到 ${signal}，开始停机…`);
   try { if (adminServer) adminServer.close(); } catch { /* 已关 */ }
   for (const c of sseClients) { try { c.end(); } catch { /* 已断 */ } } // 主动收掉长连接，停机不留悬挂
   try { proxyIndex.stopTimers(); } catch { /* 未装配 */ }
   try { await poolsync.cancel(); } catch { /* 在途同步收尾 */ }
   const drained = await server.drainAndStop({ timeoutMs: DRAIN_TIMEOUT_MS });
-  console.log(`[AgentHub Gateway] 反代网关已停（在途 ${drained.active}，${drained.drained ? "已排空" : "超时强断"}）`);
+  console.log(`[AgentApiGateway] 反代网关已停（在途 ${drained.active}，${drained.drained ? "已排空" : "超时强断"}）`);
   try { store.close(); } catch { /* 句柄随进程退出 */ }
   if (lockFile) { try { fs.unlinkSync(lockFile); } catch { /* 已清 */ } }
   process.exit(0);
@@ -449,6 +449,6 @@ process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
 process.on("SIGINT", () => { void shutdown("SIGINT"); });
 
 main().catch((e) => {
-  console.error("[AgentHub Gateway] 启动失败:", (e && e.stack) || e);
+  console.error("[AgentApiGateway] 启动失败:", (e && e.stack) || e);
   process.exit(1);
 });

@@ -44,7 +44,7 @@ async function submit() {
 <template>
   <div class="login-wrap">
     <form class="login-card" @submit.prevent="submit">
-      <div class="login-title">AgentHub 网关控制台</div>
+      <div class="login-title">AgentApiGateway 网关控制台</div>
       <div class="login-sub">输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）</div>
       <input
         v-model="token"

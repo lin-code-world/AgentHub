@@ -1,6 +1,6 @@
-# AgentHub 反代网关 · Docker 部署指南
+# AgentApiGateway 反代网关 · Docker 部署指南
 
-把 AgentHub 的反代网关跑在容器里：与桌面版共享同一份渠道代码，7×24 无人值守转发
+把 AgentApiGateway 的反代网关跑在容器里：与桌面版共享同一份渠道代码，7×24 无人值守转发
 OpenAI / Anthropic / Responses 三协议，自带 Web 控制台与管理 REST API。
 
 ---

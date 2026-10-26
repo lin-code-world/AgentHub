@@ -1,6 +1,6 @@
 # AGENTS.md
 
-AgentHub：Windows 桌面应用（Electron + Vue 3 + TS），反代网关（多渠道 AI 上游的反向代理与号池管理）。本仓库 fork
+AgentApiGateway：Windows 桌面应用（Electron + Vue 3 + TS），反代网关（多渠道 AI 上游的反向代理与号池管理）。本仓库 fork
 自上游 https://github.com/HUIdada1/AgentHub.git（origin 为 lin-code-world/AgentHub），已移除上游的技能仓库 / 用量统计 /
 记忆中枢三大板块，只保留反代网关。仓库语言为中文：提交信息、注释、文档一律简体中文，提交信息用
 conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
@@ -56,7 +56,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 ## 环境与发布
 
 - 本地打包 exe：`npm run electron:build`（类型检查 + 前端构建 + electron-builder）→ `release/` 下出
-  `AgentHub-Setup-x.y.z.exe`（NSIS 安装版，`win.target` 只配了 nsis），版本号取 package.json 的 `version`；
+  `AgentApiGateway-Setup-x.y.z.exe`（NSIS 安装版，`win.target` 只配了 nsis），版本号取 package.json 的 `version`；
   `npm run electron:pack` 只出未打包目录（`--dir`）。
 - `.npmrc` 指向 npmmirror 的 Electron 与 electron-builder 二进制镜像；二进制下载失败（镜像未同步）时临时移除 `.npmrc` 重试。
 - Docker 构建的 context 是仓库根：排除规则在根 `.dockerignore`，`gateway/` 下同名文件对它无效。

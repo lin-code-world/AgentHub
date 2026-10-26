@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="./logo.png" alt="AgentHub Logo" width="128" />
+  <img src="./logo.png" alt="AgentApiGateway Logo" width="128" />
 </p>
 
-# AgentHub — Proxy Gateway
+# AgentApiGateway — Proxy Gateway
 
 <p align="center">
   <a href="./README.md">简体中文</a> · <a href="./README.en.md">English</a>
@@ -10,7 +10,7 @@
 
 > Turn subscription quota into a standard API any client can call.
 
-AgentHub is a locally-run reverse-proxy gateway (Electron + Vue 3 + TypeScript). It ships no model of its own: it wraps the subscription quota of AI coding tools already logged in on this machine into an OpenAI-compatible API, with pool failover, scheduled check-ins and usage stats.
+AgentApiGateway is a locally-run reverse-proxy gateway (Electron + Vue 3 + TypeScript). It ships no model of its own: it wraps the subscription quota of AI coding tools already logged in on this machine into an OpenAI-compatible API, with pool failover, scheduled check-ins and usage stats.
 
 It comes in two forms: the **Windows desktop app** (gateway with a full GUI, see [Windows download & install](#windows-download--install)) and the **Docker image** (headless, meant to run on a server, see [Docker download & install](#docker-download--install)).
 
@@ -46,8 +46,8 @@ Full details are in [SPONSOR.md](./SPONSOR.md).
 ### Installer
 
 1. Open the [Releases page](https://github.com/HUIdada1/AgentHub/releases/latest)
-2. Download `AgentHub-Setup-x.y.z.exe`
-3. Double-click to install. You can change the install directory; the installer creates an "AgentHub" shortcut on the desktop and in the Start menu
+2. Download `AgentApiGateway-Setup-x.y.z.exe`
+3. Double-click to install. You can change the install directory; the installer creates an "AgentApiGateway" shortcut on the desktop and in the Start menu
 4. After launch the app stays in the system tray — closing the window does not exit. Double-click the tray icon to bring the window back; the right-click menu lets you pause sync and check today's usage
 
 ### Requirements
@@ -58,7 +58,7 @@ Full details are in [SPONSOR.md](./SPONSOR.md).
 
 ### Data, updates and backup
 
-- All configuration and data live in `%APPDATA%\AgentHub`; uninstalling does not remove it
+- All configuration and data live in `%APPDATA%\AgentApiGateway`; uninstalling does not remove it
 - Auto-update: checks GitHub Releases **once an hour** by default. When a new version appears, a red dot shows on the settings gear in the sidebar and on the update button in Settings · General. You can turn the check off in Settings · General
 - The bottom-left "Settings" holds global options (General / WebDAV sync / Sync schedule / Data & backup). Each section also has its own "Configure" button in the top-right corner
 
@@ -71,7 +71,7 @@ The Docker image contains **only the proxy gateway** (no skills / usage / memory
 Prerequisites: Docker 20.10+ with Compose v2, a Linux server with 1 core and 512 MB RAM to start.
 
 ```bash
-git clone https://github.com/HUIdada1/AgentHub.git && cd AgentHub
+git clone https://github.com/HUIdada1/AgentHub.git && cd AgentApiGateway
 
 # Credential encryption key — keep it safe: once lost, encrypted credentials cannot be recovered
 export AGENTHUB_SECRET_KEY=$(openssl rand -base64 32)
@@ -143,7 +143,7 @@ Each channel's pool, check-in and policies are fully independent: switch channel
 
 > **Two notes on the Qoder channels**
 >
-> - **Inference depends on a locally installed Qoder client**: each request's signature headers and body encoding are produced at runtime by a wasm module bundled with the client and cannot be constructed by hand. AgentHub extracts that capability from the installed client on first use and caches it per version (rebuilt automatically after a client upgrade, no reinstall of AgentHub needed). So **credentials alone, without the client installed, put the account in the pool but cannot send requests** — keep the client installed; the default location, the launcher's default path and custom install paths are all detected.
+> - **Inference depends on a locally installed Qoder client**: each request's signature headers and body encoding are produced at runtime by a wasm module bundled with the client and cannot be constructed by hand. AgentApiGateway extracts that capability from the installed client on first use and caches it per version (rebuilt automatically after a client upgrade, no reinstall of AgentApiGateway needed). So **credentials alone, without the client installed, put the account in the pool but cannot send requests** — keep the client installed; the default location, the launcher's default path and custom install paths are all detected.
 > - **Daily credits**: the button on the pool page is "Claim credits" (100 per day, refreshed at 10:00 UTC+8, valid for 30 days, repeated clicks count as already claimed). The claim endpoint requires the client's own risk-control identity, so the client must be installed. The international free tier excludes DeepSeek / GLM Flash models; a subscription is required to use them.
 
 ### Pages
@@ -162,7 +162,7 @@ Each channel's pool, check-in and policies are fully independent: switch channel
 
 #### Step 0: prepare an upstream account
 
-Install and log in to at least one upstream client with your own account (any of Trae SOLO CN / WorkBuddy / SenseTime Raccoon / ZCode / Qoder). If you already logged in on this machine, step 2 can import from local software directly — no re-login. Qoder keeps its credentials in an encrypted envelope, and AgentHub can read that too (same Windows user as the client).
+Install and log in to at least one upstream client with your own account (any of Trae SOLO CN / WorkBuddy / SenseTime Raccoon / ZCode / Qoder). If you already logged in on this machine, step 2 can import from local software directly — no re-login. Qoder keeps its credentials in an encrypted envelope, and AgentApiGateway can read that too (same Windows user as the client).
 
 #### Step 1: start the gateway
 
@@ -181,7 +181,7 @@ Open **Proxy Gateway · Pool**, pick a channel at the top, then click **Add acco
 1. **OAuth login** (recommended) — jumps to the official auth page and adds the account automatically, no token typing:
    - Trae SOLO CN: redirects to a local loopback address; if the browser stops on the callback page, paste the whole address bar into the input as a fallback
    - WorkBuddy (both editions): the app polls locally after login, nothing to paste
-   - SenseTime Raccoon: the auth window opens inside AgentHub and the code is captured directly; if blocked, paste `office-raccoon://auth/callback?code=…`
+   - SenseTime Raccoon: the auth window opens inside AgentApiGateway and the code is captured directly; if blocked, paste `office-raccoon://auth/callback?code=…`
    - ZCode: opens the Z.ai auth page and adds the account after login; the plan is initialised in the background over a few dozen seconds and the coding-plan API key is resolved
    - Qoder (both editions): opens the official login page (qoder.cn / qoder.com), polls every second and retrieves the device credential pair — **no client install, no callback pasting**
    - LobsterAI (Youdao): opens the official login page (lobsterai.youdao.com) and returns to a local loopback callback; **no client install**; paste the address bar if the browser does not come back (callbacks are still accepted after the 3-minute timeout)
@@ -281,10 +281,10 @@ Yes. Change the bind address to `0.0.0.0` under **Configure · Proxy gateway**, 
 Trae's local login state is a ByteCrypto encrypted envelope bound to a device key; a valid file cannot be built externally. The app says so instead of damaging your login state.
 
 **Q: What should I watch with multiple Raccoon accounts?**
-Add them all through AgentHub's **OAuth login**. **Do not click "Log out" in the desktop Raccoon app** — SenseTime's server revokes the old credentials, which invalidates the accounts in your pool.
+Add them all through AgentApiGateway's **OAuth login**. **Do not click "Log out" in the desktop Raccoon app** — SenseTime's server revokes the old credentials, which invalidates the accounts in your pool.
 
 **Q: After syncing the pool to a second machine over WebDAV, a Raccoon account shows "needs re-login".**
-No re-login needed; let it recover. Raccoon's refresh token rotates on every use (each refresh on machine one invalidates the synced copy). Since v1.68.1, a rejected refresh automatically fetches the latest credentials from the other device and retries, and the first machine pushes its fresh copy immediately after its next refresh — so **keep both machines on, with network and WebDAV working, and wait one quota refresh cycle (30 minutes by default)**. Log the same account in only once inside AgentHub: **do not log in again on the second machine via OAuth or the client** — that creates a second session and the server kicks one out, including the first machine. When it really drops, the account bubble explains why (server rejection / concurrent refresh / suspected login elsewhere).
+No re-login needed; let it recover. Raccoon's refresh token rotates on every use (each refresh on machine one invalidates the synced copy). Since v1.68.1, a rejected refresh automatically fetches the latest credentials from the other device and retries, and the first machine pushes its fresh copy immediately after its next refresh — so **keep both machines on, with network and WebDAV working, and wait one quota refresh cycle (30 minutes by default)**. Log the same account in only once inside AgentApiGateway: **do not log in again on the second machine via OAuth or the client** — that creates a second session and the server kicks one out, including the first machine. When it really drops, the account bubble explains why (server rejection / concurrent refresh / suspected login elsewhere).
 
 **Q: Does "Switch to IDE" interrupt the client I'm using?**
 Yes: the app closes the client, writes the login state and reopens it (which is why it always asks first). Save your work before clicking.
@@ -406,7 +406,7 @@ The project reads and writes credentials (accessToken / refreshToken etc.) and l
 - Binding the service to `0.0.0.0` exposes it to every device on the subnet; assess the risk and set key quotas and rate limits
 - "Switch to IDE" closes and rewrites the local client's login state; save your work first
 - Any loss caused by leaked credentials, a shared device, misconfiguration or mistakes **is borne by the user; the author accepts no responsibility**
-- Uninstalling **does not delete** `%APPDATA%\AgentHub`; remove that directory yourself if you want a clean wipe
+- Uninstalling **does not delete** `%APPDATA%\AgentApiGateway`; remove that directory yourself if you want a clean wipe
 
 ### 5. No warranty and rights notice
 

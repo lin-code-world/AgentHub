@@ -62,7 +62,7 @@ process.on("uncaughtException", (e) => {
   // 避免用户看到「双击没反应/一闪而过」却拿不到任何信息。
   if (bootPhase === "requires") {
     try {
-      require("electron").dialog.showErrorBox("AgentHub 启动失败", `原生组件加载失败：${(e && e.message) || e}\n日志：${crashLogFile()}`);
+      require("electron").dialog.showErrorBox("AgentApiGateway 启动失败", `原生组件加载失败：${(e && e.message) || e}\n日志：${crashLogFile()}`);
     } catch { /* 无 GUI 时只退出 */ }
     app.exit(1);
   }
@@ -241,7 +241,7 @@ function createWindow() {
     y: clamped.y,
     minWidth: 920,
     minHeight: 640,
-    title: "AgentHub",
+    title: "AgentApiGateway",
     icon: iconPath("icon.png"),
     autoHideMenuBar: true,
     // 窗口画布底色随当前主题：写死深色时，浅色主题下窗口重建会先铺黑底再被首帧覆盖 → 闪黑 ✗
@@ -425,7 +425,7 @@ function refreshTrayMenu() {
   if (tray) {
     try {
       const hasWindow = !!mainWindow && !mainWindow.isDestroyed();
-      tray.setToolTip(hasWindow ? "AgentHub · Agent中控台" : "AgentHub · 界面已释放（点此唤回）");
+      tray.setToolTip(hasWindow ? "AgentApiGateway · 反代网关" : "AgentApiGateway · 界面已释放（点此唤回）");
     } catch { /* 托盘不可用时忽略 */ }
   }
 }
@@ -463,7 +463,7 @@ function toggleLightweightMode(next) {
     __crashLog("lightweight-toggle", `lightweightMode=${cfg.schedule.lightweightMode}（来自托盘）`);
   } catch (e) {
     __crashLog("lightweight-toggle-failed", String((e && e.message) || e));
-    notify("AgentHub", "轻量模式开关写入失败，请到「设置 · 通用」重试");
+    notify("AgentApiGateway", "轻量模式开关写入失败，请到「设置 · 通用」重试");
   }
   refreshTrayMenu();
 }
@@ -471,7 +471,7 @@ function toggleLightweightMode(next) {
 function createTray() {
   const icon = iconPath("tray.png");
   tray = new Tray(icon.isEmpty() ? iconPath("icon.png") : icon);
-  tray.setToolTip("AgentHub · Agent中控台");
+  tray.setToolTip("AgentApiGateway · 反代网关");
   refreshTrayMenu();
   tray.on("double-click", showWindow);
 }
@@ -547,7 +547,7 @@ if (!gotLock) {
     __crashLog("whenReady-failed", __describe(e));
     // 没有窗口时继续活着就是「无窗口僵尸」；明确告知原因并退出。已有窗口则弹窗提示后保留。
     try {
-      require("electron").dialog.showErrorBox("AgentHub 启动异常", `初始化失败：${(e && e.message) || e}\n日志：${crashLogFile()}`);
+      require("electron").dialog.showErrorBox("AgentApiGateway 启动异常", `初始化失败：${(e && e.message) || e}\n日志：${crashLogFile()}`);
     } catch { /* 无 GUI */ }
     if (!mainWindow) app.exit(1);
   });

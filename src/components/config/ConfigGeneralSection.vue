@@ -84,7 +84,7 @@ const DISCLAIMER: { h: string; p: string[] }[] = [
   {
     h: "一、软件性质与用途",
     p: [
-      "AgentHub（以下简称「本软件」）是由作者「沐晖」开发并免费提供的开源工具，仅供技术交流、学习研究与个人合法使用。本软件不构成任何商业产品、服务或承诺，作者不提供任何形式的担保、技术支持义务或质量保证。",
+      "AgentApiGateway（以下简称「本软件」）是由作者「沐晖」开发并免费提供的开源工具，仅供技术交流、学习研究与个人合法使用。本软件不构成任何商业产品、服务或承诺，作者不提供任何形式的担保、技术支持义务或质量保证。",
       "你在下载、安装、复制、修改或使用的任一时刻，即视为已阅读、理解并自愿接受本声明的全部内容；如不同意，请立即停止使用并删除本软件。",
     ],
   },
@@ -239,7 +239,7 @@ onMounted(() => {
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">开机自启</div>
-          <div class="set-desc">{{ isPortable ? "便携版不支持开机自启（注册的会是临时副本）" : "登录 Windows 后自动运行 AgentHub，改动即时生效" }}</div>
+          <div class="set-desc">{{ isPortable ? "便携版不支持开机自启（注册的会是临时副本）" : "登录 Windows 后自动运行 AgentApiGateway，改动即时生效" }}</div>
         </div>
         <el-tooltip :content="'便携版不支持开机自启'" :disabled="!isPortable" placement="top">
           <div
@@ -344,7 +344,7 @@ onMounted(() => {
           <h3>{{ sec.h }}</h3>
           <p v-for="(p, i) in sec.p" :key="i">{{ p }}</p>
         </section>
-        <div class="dc-foot">—— 作者：沐晖 · AgentHub</div>
+        <div class="dc-foot">—— 作者：沐晖 · AgentApiGateway</div>
       </div>
       <template #footer>
         <button class="btn btn-cta" @click="disclaimerOpen = false">我已知晓</button>

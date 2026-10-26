@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 沐晖制作：AgentHub 反代网关入口（纯静态界面，无装饰动效） -->
+<!-- 沐晖制作：AgentApiGateway 反代网关入口（纯静态界面，无装饰动效） -->
 <script setup lang="ts">
 import zhCn from "element-plus/es/locale/lang/zh-cn";
 import { ElConfigProvider } from "element-plus";

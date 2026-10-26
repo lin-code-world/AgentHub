@@ -1,7 +1,7 @@
 {
-  "name": "agenthub-gateway",
+  "name": "agent-api-gateway",
   "version": "0.0.0-private",
-  "description": "AgentHub 反代网关 · Docker headless 形态（版本号以仓库根 package.json 为准）",
+  "description": "AgentApiGateway 反代网关 · Docker headless 形态（版本号以仓库根 package.json 为准）",
   "private": true,
   "main": "src/index.cjs",
   "scripts": {

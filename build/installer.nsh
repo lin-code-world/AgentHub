@@ -1,4 +1,4 @@
-; AgentHub 自定义 NSIS 钩子（经 electron-builder nsis.include 注入）
+; AgentApiGateway 自定义 NSIS 钩子（经 electron-builder nsis.include 注入）
 ; customCheckAppRunning：更新/卸载前把握着主程序 exe 的进程强杀掉，并等到镜像锁放开。
 ;
 ; 为什么不能沿用安装器的默认实现：记忆中枢的 MCP 桥由外部客户端（zcode/codex）以
@@ -31,7 +31,7 @@
   Push $7
   Push $8
   IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 AgentHubProbeDone
-  DetailPrint `Closing running AgentHub processes (including MCP bridge)...`
+  DetailPrint `Closing running AgentApiGateway processes (including MCP bridge)...`
   System::Call 'kernel32::GetTickCount() i.r7'
   AgentHubProbeKill:
     nsExec::Exec `taskkill /F /T /IM "${APP_EXECUTABLE_FILENAME}"`
