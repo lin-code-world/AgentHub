@@ -352,7 +352,7 @@ onUnmounted(() => {
       <!-- 用量占比 TOP：维度 × 排序双切换，含请求/响应 token 分列 -->
       <div class="card anim" style="margin-top: 12px">
         <div class="card-title">
-          用量占比 TOP
+          用量占比 TOP 10
           <div class="chips" style="margin-left: 8px">
             <button v-for="d in DIMS" :key="d.value" class="chip" :class="{ active: dim === d.value }" @click="dim = d.value">{{ d.label }}</button>
           </div>
@@ -360,7 +360,6 @@ onUnmounted(() => {
             <button class="chip" :class="{ active: topBy === 'req' }" @click="topBy = 'req'">按请求</button>
             <button class="chip" :class="{ active: topBy === 'tokens' }" @click="topBy = 'tokens'">按 Token</button>
           </div>
-          <span class="right">TOP 10</span>
         </div>
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
@@ -369,9 +368,9 @@ onUnmounted(() => {
                 <th>{{ dimLabel }}</th>
                 <th style="width: 32%">占比（{{ topBy === "tokens" ? "Token" : "请求" }}）</th>
                 <th>请求</th>
-                <th>请求 Tok</th>
-                <th>响应 Tok</th>
-                <th>总 Tok</th>
+                <th>总 Token</th>
+                <th>请求 Token</th>
+                <th>响应 Token</th>
                 <th>成功率</th>
                 <th>平均 TTFT</th>
               </tr>
@@ -384,9 +383,9 @@ onUnmounted(() => {
                   </div>
                 </td>
                 <td class="mono">{{ fmtInt(r.req) }}</td>
+                <td class="mono">{{ fmtK(r.tokens) }}</td>
                 <td class="mono">{{ fmtK(r.promptTokens) }}</td>
                 <td class="mono">{{ fmtK(r.completionTokens) }}</td>
-                <td class="mono">{{ fmtK(r.tokens) }}</td>
                 <td class="mono" :class="rateCls(r.successRate)">{{ r.successRate.toFixed(1) }}%</td>
                 <td class="mono">{{ fmtMs(r.ttftAvg) }}</td>
               </tr>
@@ -401,7 +400,7 @@ onUnmounted(() => {
       <!-- 各 Key 用量：一眼看出哪把 Key 在烧 Token，点「筛选」直接下钻到明细 -->
       <div class="card anim" style="margin-top: 12px">
         <div class="card-title">
-          各 Key 用量 <span class="right">按总 Token 倒序 · 共 {{ keyRows.length }} 把</span>
+          各 Key 用量 <span class="right">按总 Token 倒序 · 共 {{ keyRows.length }} 个</span>
         </div>
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
@@ -409,9 +408,9 @@ onUnmounted(() => {
               <tr>
                 <th>Key</th>
                 <th>请求</th>
-                <th>请求 Tok</th>
-                <th>响应 Tok</th>
-                <th>总 Tok</th>
+                <th>总 Token</th>
+                <th>请求 Token</th>
+                <th>响应 Token</th>
                 <th>成功率</th>
                 <th>平均 TTFT</th>
                 <th>最近使用</th>
@@ -420,9 +419,9 @@ onUnmounted(() => {
               <tr v-for="k in keyRows" :key="k.keyId">
                 <td>{{ k.name || "（未命名）" }}</td>
                 <td class="mono">{{ fmtInt(k.req) }}</td>
+                <td class="mono">{{ fmtK(k.tokens) }}</td>
                 <td class="mono">{{ fmtK(k.promptTokens) }}</td>
                 <td class="mono">{{ fmtK(k.completionTokens) }}</td>
-                <td class="mono">{{ fmtK(k.tokens) }}</td>
                 <td class="mono" :class="rateCls(k.successRate)">{{ k.successRate.toFixed(1) }}%</td>
                 <td class="mono">{{ fmtMs(k.ttftAvg) }}</td>
                 <td class="mono">{{ fmtAgo(k.lastTs) }}</td>
