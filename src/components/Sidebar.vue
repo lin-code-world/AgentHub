@@ -137,11 +137,6 @@ const fmtDay = (ts: number) => {
 // 上游启闭弹窗（渠道级开关：关闭的渠道在反代网关全部页面动态隐藏）
 const upOpen = ref(false);
 
-// 模块图标（线稿 path，复刻 design.html）
-const MODULE_ICONS: Record<ModuleKey, string> = {
-  proxy: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>',
-};
-
 // ===== 下卡片：模块总览概况（标题 / 提示全部接真实统计） =====
 const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(() => ({
   proxy: { title: "渠道额度", hint: visibleChannels.value.length ? `${visibleChannels.value.length} 个渠道` : "渠道" },
@@ -179,23 +174,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
             @click.stop="toggleGw()"
           >
             <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
-          </div>
-          <div class="mc-top">
-            <div class="mc-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" v-html="MODULE_ICONS[mod.key]"></svg>
-            </div>
-            <div class="mc-name">{{ mod.name }}</div>
-            <el-tooltip
-              v-if="mod.key === 'proxy'"
-              placement="right-start"
-              :show-after="120"
-              popper-class="glass-popper qa-tip"
-            >
-              <template #content>
-                本反向代理网关仅作技术测试用途。上游站点监控策略严格，服务存在更新滞后、随时失效、访问不稳定等情况，不保证持续可用，请谨慎使用，请勿用于违规场景。
-              </template>
-              <i class="mc-qa ph ph-question" @click.stop></i>
-            </el-tooltip>
           </div>
           <div class="mc-stats">
             <div v-for="s in MODULE_META[mod.key].stats" :key="s.label" class="mc-stat">
@@ -409,63 +387,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
     50% {
       opacity: 0.55;
     }
-  }
-}
-.mc-top {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.mc-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-sm);
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-2);
-  transition: all 0.2s;
-}
-:root[data-theme="light"] .mc-icon {
-  background: rgba(15, 23, 42, 0.05);
-}
-.module-card.active .mc-icon {
-  background: var(--accent-dim);
-  color: var(--accent);
-}
-.module-card:hover .mc-icon {
-  transform: scale(1.06);
-}
-.mc-icon svg {
-  width: 13px;
-  height: 13px;
-}
-.mc-name {
-  font-weight: 600;
-  font-size: 12.5px;
-}
-/* 反代网关免责问号：红色的问号小图标，缓慢呼吸式闪动提醒，悬停停住并高亮（弹层样式见 element.css 的 .qa-tip） */
-.mc-qa {
-  font-size: 12px;
-  color: var(--danger, #f26d6d);
-  cursor: help;
-  flex-shrink: 0;
-  margin-left: -3px;
-  animation: mc-qa-blink 2.6s ease-in-out infinite;
-}
-.mc-qa:hover {
-  animation-play-state: paused;
-  opacity: 1;
-  color: #ff4d4f;
-}
-@keyframes mc-qa-blink {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
   }
 }
 .mc-stats {
