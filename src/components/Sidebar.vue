@@ -511,12 +511,9 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   padding: 10px 4px 2px;
   display: flex;
   align-items: center;
+  justify-content: flex-end; /* 全部操作按钮居右 */
   gap: 6px;
   flex-shrink: 0;
-}
-.foot-meta {
-  line-height: 1.4;
-  flex: 1;
 }
 .foot-ver {
   font-family: var(--font-mono);
