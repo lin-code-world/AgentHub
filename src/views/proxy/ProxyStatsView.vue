@@ -489,7 +489,6 @@ onUnmounted(() => {
       <div ref="detailRef" class="card anim" style="margin-top: 12px">
         <div class="card-title">
           请求明细
-          <span class="right">{{ fmtInt(detail?.total || 0) }} 条 · 第 {{ page }}/{{ totalPages }} 页</span>
         </div>
         <div class="detail-filters">
           <el-select v-model="filters.key" placeholder="全部 Key" clearable class="f-el-select"
@@ -551,6 +550,7 @@ onUnmounted(() => {
         </div>
         <div class="pager">
           <button class="btn btn-sm" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+          <span class="pager-info">{{ fmtInt(detail?.total || 0) }} 条 · 第 {{ page }}/{{ totalPages }} 页</span>
           <button class="btn btn-sm" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
         </div>
       </div>
@@ -708,8 +708,13 @@ onUnmounted(() => {
 
 .pager {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
+}
+.pager-info {
+  font-size: 11px;
+  color: var(--text-3);
 }
 </style>
