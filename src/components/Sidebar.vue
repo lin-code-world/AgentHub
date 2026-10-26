@@ -163,21 +163,24 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
           :class="{ active: app.activeModule === mod.key }"
           @click="app.selectModule(mod.key)"
         >
-          <!-- 网关服务开关：覆盖在反代网关卡右上角（stop 与卡片点击互不影响） -->
-          <div
-            v-if="mod.key === 'proxy'"
-            class="switch mc-gw-switch"
-            :class="{ on: proxyRunning, busy: gwBusy }"
-            role="switch"
-            :aria-checked="proxyRunning"
-            :title="proxyRunning ? '点击停止网关服务' : '点击启动网关服务'"
-            @click.stop="toggleGw()"
-          >
-            <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
-          </div>
           <div class="mc-stats">
             <div v-for="s in MODULE_META[mod.key].stats" :key="s.label" class="mc-stat">
               <b>{{ s.v }}<span v-if="s.unit" class="mc-unit">{{ s.unit }}</span></b><span>{{ s.label }}</span>
+            </div>
+          </div>
+          <!-- 服务开关 + 上游启闭：同一行两端对齐 -->
+          <div class="mc-actions">
+            <!-- 网关服务开关（stop 与卡片点击互不影响） -->
+            <div
+              v-if="mod.key === 'proxy'"
+              class="switch mc-gw-switch"
+              :class="{ on: proxyRunning, busy: gwBusy }"
+              role="switch"
+              :aria-checked="proxyRunning"
+              :title="proxyRunning ? '点击停止网关服务' : '点击启动网关服务'"
+              @click.stop="toggleGw()"
+            >
+              <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
             </div>
             <!-- 上游启闭（仅反代网关卡）：渠道级开关入口，弹窗内各渠道图标 + 名称 + 开关 -->
             <el-tooltip v-if="mod.key === 'proxy'" content="上游启闭：控制各渠道在反代网关中的启用与可见" placement="top">
@@ -389,27 +392,29 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
     }
   }
 }
-/* ===== 反代网关卡内容区：网格布局（顶部让位给右上角覆盖的服务开关）=====
-   第一行三列等宽：数字基线对齐、标签基线对齐；第二行「上游启闭」跨全列右对齐 */
+/* ===== 反代网关卡内容区：三列统计 + 底部操作行（服务开关 | 上游启闭）===== */
 .mc-stats {
-  margin-top: 40px; /* 顶部让位：卡片 padding 14 + 开关 22 + 4 间隙 */
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
-/* 网关服务开关：覆盖在卡片右上角（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+/* 底部操作行：服务开关靠左、上游启闭靠右，同一行两端对齐 */
+.mc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+}
+/* 网关服务开关（文档流内，操作行左侧；scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
    关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
 .mc-gw-switch {
-  position: absolute;
-  top: 14px;
-  right: 14px;
   width: 64px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   padding: 0 5px;
   box-sizing: border-box;
-  z-index: 2;
 }
 .mc-gw-switch.on {
   justify-content: flex-start;
@@ -466,10 +471,8 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   line-height: 1.2;
   color: var(--text-3);
 }
-/* 上游启闭小按钮（仅反代网关卡）：独占第二行右对齐（与开关右缘对齐），绿色描边常态 */
+/* 上游启闭小按钮（仅反代网关卡）：操作行内靠右，绿色描边常态，悬停点亮加深 */
 .mc-up-btn {
-  grid-column: 1 / -1;
-  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 4px;
