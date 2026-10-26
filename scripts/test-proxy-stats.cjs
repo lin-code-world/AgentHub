@@ -13,7 +13,7 @@
 // 跑法：node scripts/test-proxy-stats.cjs
 //   （store.cjs 优先用 node:sqlite；老版本 node 没有它时用
 //     ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe scripts/test-proxy-stats.cjs）
-// 纯临时沙箱（APPDATA / AGENT_SKILLS_HOME 指到 mkdtemp），不碰真实 stats.db、不联网、不起窗口。
+// 纯临时沙箱（APPDATA 指到 mkdtemp），不碰真实 stats.db、不联网、不起窗口。
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -22,7 +22,6 @@ const path = require("node:path");
 const ROOT = path.join(__dirname, "..");
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-stats-"));
 process.env.APPDATA = path.join(WORK, "appdata");
-process.env.AGENT_SKILLS_HOME = path.join(WORK, "hub");
 fs.mkdirSync(process.env.APPDATA, { recursive: true });
 
 const store = require(path.join(ROOT, "electron", "backend", "proxy", "store.cjs"));
@@ -46,10 +45,11 @@ ok(missing.length === 0, `新增聚合面全部导出（缺：${missing.join(" "
 if (missing.length) { console.log("\nFAIL 统计自测：导出缺失，后续断言无从谈起"); process.exit(1); }
 
 const DAY = 86400000;
-const NOW = Date.now();
+// 夹具的「现在」固定为今天 13:00：数据落在今天中午 12:00 的桶里，而各区间右端点都取 NOW。
+// 若用 Date.now()，中午 12 点之前跑这份自测时 T0 会落在 [*, NOW] 之外，KPI/序列断言随机全 0
+const NOW = (() => { const d = new Date(); d.setHours(13, 0, 0, 0); return d.getTime(); })();
 const dayStart = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
-// 数据落在「今天中午」，避免断言随当前时刻漂移；「今天」区间到 NOW 为止
-const T0 = dayStart(NOW) + 12 * 3600000;
+const T0 = NOW - 3600000; // 今天 12:00（断言「中午那个小时桶」依赖它）
 const TODAY_FROM = dayStart(NOW);
 const TODAY_TO = NOW;
 

@@ -324,26 +324,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   position: relative;
   transition: background 0.2s var(--ease), border-color 0.2s, transform 0.15s;
 }
-/* 已停用板块（issue #91）：低对比置灰、禁用指针交互反馈，右上角「已停用」角标 */
-.module-card.disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  filter: grayscale(0.6);
-}
-.module-card.disabled:hover { background: rgba(255, 255, 255, 0.025); }
-.module-card.disabled:active { transform: none; }
-.module-card.disabled::after { display: none; }
-.mc-off {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font-size: 10px;
-  line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
-  border-radius: 4px;
-  padding: 2px 5px;
-}
 :root[data-theme="light"] .module-card {
   background: rgba(15, 23, 42, 0.02);
 }

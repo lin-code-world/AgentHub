@@ -18,7 +18,6 @@ const path = require("node:path");
 
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "ah-crypto-"));
 process.env.AGENTHUB_DATA_DIR = SANDBOX;
-process.env.AGENT_SKILLS_HOME = path.join(SANDBOX, "skills");
 process.env.AGENTHUB_SECRET_KEY = "selftest-secret-key-please-rotate";
 
 let pass = 0, fail = 0; const bad = [];

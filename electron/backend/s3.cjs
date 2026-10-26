@@ -9,7 +9,7 @@
  * ============================================================
  */
 // S3 兼容对象存储传输层（issue #89）：与 webdav.cjs 同一组「按路径的文件级原语」，
-// 供 webdav.cjs 按 cfg.__s3 分派——四个同步引擎（技能/用量/号池/记忆）零改动。
+// 供 webdav.cjs 按 cfg.__s3 分派——上层同步引擎（号池）零改动。
 // 零 npm 依赖：AWS SigV4 手写签名（node:crypto），阿里云 OSS / 腾讯云 COS /
 // Cloudflare R2 / MinIO / 群晖等 S3 兼容服务均可直连。
 // 语义映射：list→ListObjectsV2（Delimiter=/ 判目录 + 自动翻页）、get/getText→GET object

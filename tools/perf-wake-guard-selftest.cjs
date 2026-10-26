@@ -11,7 +11,7 @@
 // 休眠唤醒守卫自测（离线，无网络、无 GUI、不读用户数据）
 //
 // 背景（2026-10-06 实测定位）：机器 03:38:42 进 Modern Standby，09:04:08 唤醒；
-// 定时器睡眠期间不触发、唤醒即到期 → 签到 + 额度刷新 + 记忆中枢任务在同一刻收敛，
+// 定时器睡眠期间不触发、唤醒即到期 → 签到 + 额度刷新在同一刻收敛，
 // 用户感知「唤醒后卡了一会」。实测排除单点重活（JSON.parse 1.4ms / 全池 DPAPI 0.7ms）。
 //
 // 跑法：ELECTRON_RUN_AS_NODE=1 electron tools/perf-wake-guard-selftest.cjs
@@ -21,7 +21,7 @@ const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert");
 
-// 隔离数据目录：本自测不碰真实号池/记忆库（store.open 会建库，指向沙箱）
+// 隔离数据目录：本自测不碰真实号池（store.open 会建库，指向沙箱）
 process.env.AGENTHUB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "wakeguard-selftest-"));
 
 const wakeGuard = require("../electron/backend/wakeGuard.cjs");
@@ -119,8 +119,8 @@ async function T(name, fn) {
     assert.ok(/require\("\.\.\/wakeGuard\.cjs"\)/.test(src), "index.cjs 应 require wakeGuard");
   });
 
-  // ===== T8 接线：额度刷新与记忆中枢的周期 tick 都过守卫，且仍排下一轮 =====
-  await T("T8 接线：credits 与 memory scheduler 的 tick 均过守卫且不丢调度", () => {
+  // ===== T8 接线：额度刷新的周期 tick 过守卫，且仍排下一轮 =====
+  await T("T8 接线：credits tick 过守卫且不丢调度", () => {
     const c = read("electron/backend/proxy/credits.cjs");
     assert.ok(/require\("\.\.\/wakeGuard\.cjs"\)/.test(c), "credits.cjs 应 require wakeGuard");
     assert.ok(/wakeGuard\.periodicAllowed\(\)/.test(c), "credits tick 应判断静默窗");

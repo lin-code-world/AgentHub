@@ -121,7 +121,7 @@ function defaultConfig() {
       deviceId: "",     // 首次使用时惰性生成
       deviceName: "",   // 默认取计算机名
     },
-    // ===== 全项目统一的 WebDAV 服务器（号池同步与记忆中枢共用一套凭据，
+    // ===== 全项目统一的 WebDAV / S3 服务器（号池同步用，
     // 各模块根目录隔离互不冲突；远端数据布局与格式保持不变） =====
     // type="s3" 时 endpoint/username/password 复用为 S3 兼容 API 地址 / AccessKeyId / SecretKey
     //（配 s3.bucket/region/pathStyle），同步引擎经 moduleWebdav 的 __s3 标记零改动走 S3 传输

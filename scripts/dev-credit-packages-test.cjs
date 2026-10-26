@@ -30,7 +30,6 @@ const path = require("node:path");
 const ROOT = path.join(__dirname, "..");
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-credpkg-"));
 process.env.APPDATA = path.join(WORK, "appdata");
-process.env.AGENT_SKILLS_HOME = path.join(WORK, "hub");
 fs.mkdirSync(process.env.APPDATA, { recursive: true });
 
 const util = require(path.join(ROOT, "electron", "backend", "proxy", "util.cjs"));

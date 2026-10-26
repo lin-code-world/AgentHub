@@ -66,9 +66,9 @@ const defaultConfig: AppConfig = {
   },
 };
 
-// ===== 界面位置镜像（轻量模式必需）=====
-// 轻量模式关窗时会销毁整个渲染进程，Pinia 里的 activeModule/activePage 随之丢失。
-// 若不落盘，用户每次唤回界面都会回到默认页 —— 等于轻量化把"我刚才在看哪"清一次。
+// ===== 界面位置镜像（关窗销毁渲染进程所必需）=====
+// 关窗会销毁整个渲染进程，Pinia 里的 activeModule/activePage 随之丢失。
+// 若不落盘，用户每次唤回界面都会回到默认页 —— 等于每次关窗都把"我刚才在看哪"清一次。
 // 用 localStorage 而非新增 IPC：渲染层自己记住即可，
 // 不必让主进程参与，Web/容器端（NAS）也不受影响。
 const PAGE_MIRROR_KEY = "agenthub.lastPage";
@@ -146,7 +146,7 @@ export const useAppStore = defineStore("app", {
         this.activeModule = first.key;
         this.activePage = first.pages[0].id;
       }
-      // 恢复上次停留的页面（轻量模式销毁界面后唤回时，用户应回到原处而不是默认页）。
+      // 恢复上次停留的页面（关窗销毁界面后唤回时，用户应回到原处而不是默认页）。
       // 只在模块与页面都仍然合法时恢复 —— 模块集合可能随版本变化，
       // 失效就静默回落到上面的默认位置。
       const mirrored = readMirroredPage();
@@ -185,7 +185,7 @@ export const useAppStore = defineStore("app", {
       this.applyTheme(theme);
       this.save();
     },
-    /** 把当前停留位置写进 localStorage 镜像（轻量模式销毁界面后唤回时据此恢复）。
+    /** 把当前停留位置写进 localStorage 镜像（关窗销毁界面后唤回时据此恢复）。
      *  由 App.vue 的「loaded + 当前位置」watcher 调用，故只在配置加载完成、位置已定后记录。 */
     mirrorActivePage() {
       mirrorPage(this.activeModule, this.activePage);

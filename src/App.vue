@@ -60,7 +60,7 @@ watch(
   ([loaded, k]) => {
     if (loaded) {
       visited.value[k] = true;
-      // 同一处顺带镜像「上次停留的页面」：轻量模式销毁界面后唤回时据此回到原处
+      // 同一处顺带镜像「上次停留的页面」：关窗销毁界面后唤回时据此回到原处
       // （loaded 翻真前的默认值不记，否则会把恢复出来的真实位置冲掉）
       app.mirrorActivePage();
     }

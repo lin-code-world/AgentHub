@@ -158,7 +158,7 @@ function iconPath(name) {
  *
  *  同时同步**窗口画布底色**：BrowserWindow 的 backgroundColor 是窗口在页面首帧渲染出来
  *  之前铺的底色。此前写死为深色 #0a0c0f ✗ —— 浅色主题下每次窗口重建都会先铺黑底、
- *  再被首帧覆盖 → **闪黑** ✗。而本 PR 的轻量模式恰恰会**销毁窗口**，
+ *  再被首帧覆盖 → **闪黑** ✗。而关窗现在固定销毁窗口，
  *  用户下次唤回必然走 createWindow() 重建 → 该闪烁会被明显放大 ✓ 故一并修掉。
  *  与 src/styles/global.css 的 --bg 取值一致：dark #0a0c0f / light #f4f6f9。
  *  setBackgroundColor 对已存在窗口即时生效；窗口不存在（已释放）时由 createWindow
@@ -181,7 +181,7 @@ const DESIGN_WIDTH = 1280;
 const ZOOM_MIN = 0.7;
 const ZOOM_MAX = 1.25;
 
-// ===== 轻量模式：窗口几何的读写 =====
+// ===== 窗口几何的读写（关窗销毁窗口后唤回重建用） =====
 // 销毁窗口会丢掉窗口摆放，重建时若不还原，用户每次点托盘「显示主界面」都会
 // 得到一个居中大窗 —— 所以位置/尺寸/最大化必须落盘（见 backend/window-state.cjs）。
 // 越界收敛交给 clampBounds：显示器被拔掉后旧坐标会落在不存在的屏上（窗口"打开但看不见"）。
@@ -251,7 +251,7 @@ function createWindow() {
     icon: iconPath("icon.png"),
     autoHideMenuBar: true,
     // 窗口画布底色随当前主题：写死深色时，浅色主题下窗口重建会先铺黑底再被首帧覆盖 → 闪黑 ✗
-    // （轻量模式会销毁窗口，唤回即重建，故这里必须按主题取色）
+    // （关窗会销毁窗口，唤回即重建，故这里必须按主题取色）
     // 取值与 src/styles/global.css 的 --bg 对齐：dark #0a0c0f / light #f4f6f9。
     backgroundColor: WINDOW_BG[config.loadConfig().theme === "light" ? "light" : "dark"],
     // 先隐藏，等页面渲染出首帧再显示：窗口出现时内容已就绪，避免空壳闪烁

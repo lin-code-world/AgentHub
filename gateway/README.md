@@ -145,7 +145,6 @@ gateway-data/
 ├── config.json     网关配置（WebDAV 凭据以 enc:v2: 密文存储）
 ├── proxy/
 │   ├── stats.db    号池 / Key / 用量（WAL 模式）
-│   ├── netproxy.json  网络代理出口池（密码以 enc:v2: 密文存储）
 │   └── rules/     渠道规则
 └── gateway.lock    单实例锁（进程退出自动清理；强杀残留会被下次启动接管）
 ```

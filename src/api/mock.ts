@@ -315,7 +315,7 @@ const PROXY_TREND = Array.from({ length: 7 }, (_, i) => {
   return { day: d.toISOString().slice(0, 10), req: [186, 242, 210, 305, 268, 391, 681][i], tokens: [42, 55, 48, 71, 60, 88, 156][i] * 1000 };
 });
 
-// ===== 预览用：区间化统计总览（与真实后端契约一致，见《反代网关-用量统计增强方案.md》§4.2） =====
+// ===== 预览用：区间化统计总览（与真实后端契约一致） =====
 /** 富字段排行行：由「请求数 + 总 Token」派生出输入/输出/缓存与成功率，形状与后端 statsTopRich 对齐。
  *  id 是分组身份：channel/model 就是值本身，key/account 是 key_id/account_id（名字可改、可能撞名，
  *  列表 v-for 绑的是它），所以这里允许单独指定，缺省才回落成 name */

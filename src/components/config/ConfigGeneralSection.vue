@@ -125,10 +125,4 @@ async function openDataDir() {
   padding-bottom: 2px;
   border-bottom: none;
 }
-
-/* 板块启停开关：切换进行中半透明防连点 */
-.switch.busy {
-  opacity: 0.5;
-  pointer-events: none;
-}
 </style>

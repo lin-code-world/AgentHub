@@ -18,7 +18,6 @@ const path = require("node:path");
 
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "ah-cmdtable-"));
 process.env.AGENTHUB_DATA_DIR = SANDBOX;
-process.env.AGENT_SKILLS_HOME = path.join(SANDBOX, "skills");
 
 let pass = 0, fail = 0; const bad = [];
 function ok(name, cond, extra) {
@@ -38,7 +37,9 @@ const allowBlock = preloadSrc.slice(preloadSrc.indexOf("const ALLOWED_COMMANDS")
 const allowed = new Set([...allowBlock.matchAll(/"(proxy_[a-z_]+)"/g)].map((m) => m[1]));
 
 function diff(a, b) {
-  const bs = b instanceof Set ? b : new Set(b); // 兼容 Map.keys() 等迭代器入参
+  // Map 要取 keys()：直接 new Set(map) 得到的是 [key, fn] 条目对，has(字符串) 永远 false，
+  // 会把 a 的全部元素误报成"仅 a 有"（READ 断言曾因此全军覆没）
+  const bs = b instanceof Set ? b : new Set(b instanceof Map ? b.keys() : b);
   return [...a].filter((x) => !bs.has(x));
 }
 
