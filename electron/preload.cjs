@@ -92,13 +92,6 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_oplog_list",
   "proxy_oplog_ops",
   "proxy_oplog_export",
-  // ===== 反代网关：网络代理（出口池） =====
-  "proxy_netproxy_list",
-  "proxy_netproxy_save",
-  "proxy_netproxy_remove",
-  "proxy_netproxy_toggle",
-  "proxy_netproxy_test",
-  "proxy_netproxy_settings",
   "proxy_rules_list",
   "proxy_open_rules_dir",
   "proxy_open_data_dir",

@@ -27,7 +27,6 @@ import ProxyStatsView from "./views/proxy/ProxyStatsView.vue";
 import ProxyPoolSyncView from "./views/proxy/ProxyPoolSyncView.vue";
 import ProxyCcSwitchView from "./views/proxy/ProxyCcSwitchView.vue";
 import ProxyLogView from "./views/proxy/ProxyLogView.vue";
-import ProxyNetworkView from "./views/proxy/ProxyNetworkView.vue";
 import * as api from "./api/ipc";
 
 const app = useAppStore();
@@ -92,7 +91,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
         <ProxyPoolSyncView v-if="seen('proxy', 'poolsync')" v-show="on('proxy', 'poolsync')" />
         <ProxyCcSwitchView v-if="seen('proxy', 'ccswitch')" v-show="on('proxy', 'ccswitch')" />
         <ProxyLogView v-if="seen('proxy', 'proxylog')" v-show="on('proxy', 'proxylog')" />
-        <ProxyNetworkView v-if="seen('proxy', 'netproxy')" v-show="on('proxy', 'netproxy')" />
         <!-- 各模块的配置页：右上「配置」按钮切换到这里的页面（page + cfg-body 组合出页壳与留白）；
              配置页内部的二级子板块 tab 由各 section 自己渲染 -->
         <div v-if="seen('proxy', 'config')" v-show="on('proxy', 'config')" class="page cfg-body">

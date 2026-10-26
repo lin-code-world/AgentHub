@@ -18,7 +18,6 @@ import type {
   ProxyCheckinRow, CcSwitchStatus, CcSwitchRegisterResult, CcSwitchAppType, ZcodeDeviceStatusResult, ZcodeClaimModeResult,
   ProxyProvider, ProxyProviderKind, ProxyProviderModel, ProxyProviderTestResult,
   ProxyOpLogList,
-  ProxyNetProxyList, ProxyNetProxyItem, ProxyNetProxyTest, ProxyNetProxyMode,
 } from "../types";
 
 export type {
@@ -28,7 +27,6 @@ export type {
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
   ProxyAccountStatus, ProxyEvent, ProxyCheckinRow, CcSwitchStatus, CcSwitchRegisterResult,
   ProxyOpLogList, ProxyOpLogRow,
-  ProxyNetProxyList, ProxyNetProxyItem, ProxyNetProxyTest, ProxyNetProxyMode,
 } from "../types";
 
 import { mock } from "./mock";
@@ -431,36 +429,6 @@ export const proxyOpLogExport = (filter: Omit<ProxyOpLogFilter, "limit" | "offse
   call<{ ok: boolean; path?: string; count?: number; message?: string }>("proxy_oplog_export", filter as Record<string, unknown>);
 export const proxyRulesList = () => call<ProxyRuleFile[]>("proxy_rules_list");
 
-// ===== 反代网关：网络代理（「网络代理」页签，出口池） =====
-export interface ProxyNetProxyDraft {
-  /** 带 id 即编辑；密码留空表示不改（clearPassword 才清空） */
-  id?: string;
-  name: string;
-  protocol: "http" | "socks5";
-  host: string;
-  port: number;
-  username?: string;
-  password?: string;
-  clearPassword?: boolean;
-  enabled?: boolean;
-}
-export const proxyNetproxyList = () => call<ProxyNetProxyList>("proxy_netproxy_list");
-export const proxyNetproxySave = (draft: ProxyNetProxyDraft) =>
-  call<{ ok: boolean; item: ProxyNetProxyItem }>("proxy_netproxy_save", draft as unknown as Record<string, unknown>);
-export const proxyNetproxyRemove = (id: string) => call<{ ok: boolean }>("proxy_netproxy_remove", { id });
-export const proxyNetproxyToggle = (id: string, enabled: boolean) =>
-  call<{ ok: boolean; item: ProxyNetProxyItem }>("proxy_netproxy_toggle", { id, enabled });
-/** 测已存条目（结果落进条目）；传 draft 则测未保存的表单（不落盘）。
- *  看门狗传 0：出口测试的时长由后端的「测试超时」决定（默认 15s，最长 120s），
- *  比渲染层 45s 默认看门狗更长——套默认值会把「慢出口」误报成「主进程卡住」。 */
-export const proxyNetproxyTest = (args: { id?: string; draft?: Omit<ProxyNetProxyDraft, "id" | "clearPassword"> }) =>
-  call<ProxyNetProxyTest & { ok: boolean }>("proxy_netproxy_test", args as unknown as Record<string, unknown>, 0);
-export const proxyNetproxySaveSettings = (args: {
-  mode?: ProxyNetProxyMode;
-  fixedId?: string;
-  testUrl?: string;
-  timeoutMs?: number;
-}) => call<ProxyNetProxyList>("proxy_netproxy_settings", args as Record<string, unknown>);
 export const proxyOpenRulesDir = () => call<{ ok: boolean }>("proxy_open_rules_dir");
 export const proxyOpenDataDir = () => call<{ ok: boolean }>("proxy_open_data_dir");
 export const proxyVaultStatus = () => call<{ encrypted: boolean; driver: string; dataDir: string }>("proxy_vault_status");
