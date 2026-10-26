@@ -207,7 +207,6 @@ async function race(mode) {
     const root = path.join(__dirname, "..");
     const expect = [
       ["electron/backend/config.cjs", "设置落盘"],
-      ["electron/backend/hub.cjs", "中央仓库台账（两个安装共享 ~/.agent_skills）"],
       ["electron/backend/sync-config.cjs", "用量同步配置（~/.Dosage_sync，不受多实例隔离）"],
       ["electron/backend/sync.cjs", "备份压缩包（目录用户可自定义）"],
       ["electron/backend/window-state.cjs", "窗口状态"],
@@ -219,7 +218,7 @@ async function race(mode) {
     ];
     // 期望的那一句用字符串拼接出来，不写正则：转义层数一多，判据自己先错
     const baseOf = {
-      "electron/backend/config.cjs": "p", "electron/backend/hub.cjs": "p",
+      "electron/backend/config.cjs": "p",
       "electron/backend/sync-config.cjs": "p", "electron/backend/sync.cjs": "target",
       "electron/backend/window-state.cjs": "p", "electron/backend/memory/httpapi.cjs": "this.runtimeFile",
       "electron/backend/memory/index.cjs": "file", "electron/backend/proxy/ideswitch.cjs": "file",
@@ -228,7 +227,9 @@ async function race(mode) {
     for (const [rel, label] of expect) {
       const src = fs.readFileSync(path.join(root, rel), "utf8");
       const mid = rel.endsWith("qoderAuth.cjs") ? "}.agenthub.tmp.${" : "}.tmp.${";
-      const want = "const tmp = `${" + baseOf[rel] + mid + "process.pid}`";
+      // qoderSigner 的签名器缓存带 .mjs 后缀（worker-*.mjs），判据按实际形态拼
+      const tail = rel.endsWith("qoderSigner.cjs") ? "}.mjs`" : "}`";
+      const want = "const tmp = `${" + baseOf[rel] + mid + "process.pid" + tail;
       ok(src.includes(want), `⑤ ${rel}（${label}）必须写成 ${want}`);
     }
     // 正对照的反面：本仓原有的四处不能被这次改动弄坏

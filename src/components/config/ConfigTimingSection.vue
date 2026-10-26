@@ -22,7 +22,7 @@ const app = useAppStore();
 const syncApp = useSyncStore();
 const mem = useMemoryStore();
 
-const tab = ref<"usage" | "memory" | "skills" | "proxy">("usage");
+const tab = ref<"usage" | "memory" | "proxy">("usage");
 
 const ready = ref(false);
 const saveState = ref("");
@@ -56,12 +56,6 @@ async function saveMemory(entries: Record<string, unknown>) {
   }
 }
 
-function setWatchInterval(v: number) {
-  if (!Number.isFinite(v)) return;
-  app.config.watch.intervalSeconds = Math.min(600, Math.max(5, Math.round(v)));
-  void saveFramework();
-}
-
 function setMemInterval(v: number) {
   if (!Number.isFinite(v)) return;
   void saveMemory({ "sync.intervalMin": Math.min(1440, Math.max(5, Math.round(v))) });
@@ -92,7 +86,6 @@ onMounted(async () => {
     <div class="cfg-subtabs">
       <button class="cfg-subtab" :class="{ active: tab === 'usage' }" @click="tab = 'usage'"><i class="ph ph-chart-bar"></i>用量统计</button>
       <button class="cfg-subtab" :class="{ active: tab === 'memory' }" @click="tab = 'memory'"><i class="ph ph-brain"></i>记忆中枢</button>
-      <button class="cfg-subtab" :class="{ active: tab === 'skills' }" @click="tab = 'skills'"><i class="ph ph-puzzle-piece"></i>技能仓库</button>
       <button class="cfg-subtab" :class="{ active: tab === 'proxy' }" @click="tab = 'proxy'"><i class="ph ph-plugs-connected"></i>反代网关</button>
     </div>
 
@@ -144,46 +137,6 @@ onMounted(async () => {
         <div class="tg-ctl">
           <input type="number" class="f-input" style="width: 90px" min="5" max="1440" :value="Number(mem.cfg('sync.intervalMin', 60))" @change="setMemInterval(Number(($event.target as HTMLInputElement).value))" />
           <span class="tg-unit">分钟</span>
-        </div>
-      </div>
-    </template>
-
-    <template v-else-if="tab === 'skills'">
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">每小时自动同步（WebDAV）</div>
-          <div class="s-desc">开启后每小时把本机技能与中央仓库互相同步一次</div>
-        </div>
-        <div class="switch" :class="{ on: app.config.schedule.hourly }" role="switch" :aria-checked="app.config.schedule.hourly" @click="app.config.schedule.hourly = !app.config.schedule.hourly; saveFramework()"></div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">每天定时同步（WebDAV）</div>
-          <div class="s-desc">每天到点同步一次；错过时刻（关机/睡眠）当天内补跑</div>
-        </div>
-        <div class="tg-ctl">
-          <input v-if="app.config.schedule.daily" type="time" class="f-input" style="width: 110px" v-model="app.config.schedule.dailyTime" @change="saveFramework" />
-          <div class="switch" :class="{ on: app.config.schedule.daily }" role="switch" :aria-checked="app.config.schedule.daily" @click="app.config.schedule.daily = !app.config.schedule.daily; saveFramework()"></div>
-        </div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">同步成功也弹系统通知</div>
-          <div class="s-desc">失败始终会提醒；开启后成功也通知一次</div>
-        </div>
-        <div class="switch" :class="{ on: app.config.schedule.notifyOnSuccess }" role="switch" :aria-checked="app.config.schedule.notifyOnSuccess" @click="app.config.schedule.notifyOnSuccess = !app.config.schedule.notifyOnSuccess; saveFramework()"></div>
-      </div>
-      <div class="switch-row">
-        <div class="s-left">
-          <div class="s-title">本地目录自动感知</div>
-          <div class="s-desc">按周期快照各工具技能目录，有新技能且零冲突时自动收纳</div>
-        </div>
-        <div class="tg-ctl">
-          <template v-if="app.config.watch.enabled">
-            <input type="number" class="f-input" style="width: 90px" min="5" max="600" :value="app.config.watch.intervalSeconds" @change="setWatchInterval(Number(($event.target as HTMLInputElement).value))" />
-            <span class="tg-unit">秒</span>
-          </template>
-          <div class="switch" :class="{ on: app.config.watch.enabled }" role="switch" :aria-checked="app.config.watch.enabled" @click="app.config.watch.enabled = !app.config.watch.enabled; saveFramework()"></div>
         </div>
       </div>
     </template>

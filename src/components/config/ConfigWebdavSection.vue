@@ -8,36 +8,23 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置弹窗 · WebDAV 同步：统一服务器 + 模块根目录/预设/电脑名 + 反代号池同步
-     技能仓库的「中央仓库同步」运行器（进度/日志/设备/报告）不在弹窗里：
-     移到了技能仓库模块顶部「WebDAV 同步」页（views/skills/SkillsWebdavView.vue） -->
+<!-- 设置弹窗 · WebDAV 同步：统一服务器 + 模块根目录/预设/电脑名 + 反代号池同步 -->
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import * as api from "../../api/ipc";
-import { webdavStatus, webdavSync, onUpdateEvent, type WebDavStatus } from "../../api/ipc";
+import { onUpdateEvent } from "../../api/ipc";
 import { useAppStore } from "../../stores/app";
 import { useSyncStore } from "../../stores/sync";
 
 const app = useAppStore();
 const syncApp = useSyncStore();
 
-// 连接状态只用来在页头显示「已连接就绪 / 未配置」（运行器在技能仓库 · WebDAV 同步页）
-const status = ref<WebDavStatus | null>(null);
-const configured = computed(() => !!status.value?.configured);
-
-// 每次激活都重拉状态与共享配置（服务器配置在本页改，改完主进程即时生效）
+// 每次激活都重拉共享配置（服务器配置在本页改，改完主进程即时生效）
 const active = computed(() => app.settingsOpen && app.settingsTab === "webdav");
 watch(active, (v) => { if (v) loadPage(); }, { immediate: true });
 
-async function refreshStatus() {
-  try {
-    status.value = await webdavStatus();
-  } catch { /* 保留旧值 */ }
-}
-
-// 激活即加载：状态 / 共享配置 / 四个板块各自的同步状态
+// 激活即加载：共享配置 / 各板块各自的同步状态
 async function loadPage() {
-  await refreshStatus();
   loadShared();
   refreshPoolsync();
   refreshMemSync();
@@ -53,12 +40,14 @@ const shared = ref<api.SharedWebdavConfig>({
   password: "",
   encryptionPassphrase: "",
   s3: { bucket: "", region: "", pathStyle: false },
-  roots: { skills: "/agent-skills", usage: "/dosage-sync", proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
+  roots: { usage: "/dosage-sync", proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
 });
 const sharedTestResult = ref<{ ok: boolean; message: string } | null>(null);
 const sharedSaveMsg = ref("");
 const sharedTesting = ref(false);
 const sharedSaving = ref(false);
+/** 共享服务器是否已配置（各板块同步状态行的就绪判定） */
+const configured = computed(() => !!(shared.value.endpoint && shared.value.username && shared.value.password));
 
 // 密码框防误触：显示的是掩码，任何编辑（哪怕只删一个字符）都先清空，避免残缺掩码被当新密码落盘
 function onSharedPasswordInput() {
@@ -85,13 +74,12 @@ async function saveShared() {
   sharedSaving.value = true;
   try {
     const r = await api.webdavSharedSave(shared.value);
-    sharedSaveMsg.value = r?.ok ? "已保存，四个模块的同步即刻生效" : r?.message || "保存失败";
+    sharedSaveMsg.value = r?.ok ? "已保存，各模块的同步即刻生效" : r?.message || "保存失败";
     if (r?.ok) {
       // 回读掩码态（密码不回显明文）；用量模块内存配置的服务器字段也要刷新
       await loadShared();
       await syncApp.reloadConfig().catch(() => {});
       refreshPoolsync();
-      await refreshStatus();
     }
   } catch (e) {
     sharedSaveMsg.value = String((e as Error).message || e);
@@ -101,7 +89,7 @@ async function saveShared() {
 }
 // 显式清除（后端唯一允许清掉已存密码的入口；后台保存遇空密码会保留密文，防解密失败被覆盖）
 async function clearShared() {
-  if (!window.confirm("确定清除统一 WebDAV 服务器配置吗？\n\n地址、账号、密码与四个模块根目录将全部清空，四个模块的跨设备同步会立即停用（本机数据不受影响）。")) return;
+  if (!window.confirm("确定清除统一 WebDAV 服务器配置吗？\n\n地址、账号、密码与各模块根目录将全部清空，各模块的跨设备同步会立即停用（本机数据不受影响）。")) return;
   sharedSaveMsg.value = "";
   try {
     const r = await api.webdavSharedClear();
@@ -110,7 +98,6 @@ async function clearShared() {
       await loadShared();
       await syncApp.reloadConfig().catch(() => {});
       refreshPoolsync();
-      await refreshStatus();
     }
   } catch (e) {
     sharedSaveMsg.value = String((e as Error).message || e);
@@ -149,20 +136,6 @@ const usageRunning = computed(() => syncApp.syncing || !!syncApp.sync?.running);
 const usageLastSyncAt = computed(() => syncApp.sync?.lastSyncAt ?? 0);
 function runUsageSync() {
   void syncApp.startSync();
-}
-
-// ---- 技能仓库同步（中央库跨设备同步；进度事件 event:"webdav"） ----
-const skillsRunning = computed(() => !!status.value?.running);
-const skillsMsg = ref("");
-async function runSkillsSync() {
-  skillsMsg.value = "";
-  try {
-    const r = await webdavSync();
-    if (r && !r.ok) skillsMsg.value = r.message || "启动失败";
-    else await refreshStatus();
-  } catch (e) {
-    skillsMsg.value = String((e as Error).message || e);
-  }
 }
 
 // ---- 反代网关号池同步（压缩包用 WebDAV 密码加密；进度走 app:event 推送） ----
@@ -230,7 +203,7 @@ function gotoSharedForm() {
   document.getElementById("shared-webdav-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-// 四个板块的同步进度事件合流：号池（proxy/poolsync）、技能（webdav）、记忆（memory/sync）；
+// 各板块的同步进度事件合流：号池（proxy/poolsync）、记忆（memory/sync）；
 // 运行中就地更新运行态，结束时回读完整状态（拿 lastSyncAt / lastError / 摘要）
 onMounted(() => {
   offEvents = onUpdateEvent((e) => {
@@ -239,12 +212,6 @@ onMounted(() => {
       poolsync.value.running = !!p.running;
       if (p.stage) poolsync.value.stage = p.stage;
       poolsync.value.detail = p.detail || "";
-    }
-    if (p?.event === "webdav" && status.value) {
-      status.value.running = !!p.running;
-      if (p.stage) status.value.stage = p.stage as WebDavStatus["stage"];
-      status.value.detail = p.detail || "";
-      if (!p.running) refreshStatus();
     }
     if (p?.event === "memory" && p?.type === "sync" && memSync.value) {
       memSync.value.running = !!p.running;
@@ -272,18 +239,18 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="sk-note warn" v-if="status && !configured">
+    <div class="sk-note warn" v-if="!configured">
       <i class="ph ph-cloud-slash"></i>
       <div>还没配置 WebDAV 服务器。在下方「统一 WebDAV 服务器」填好地址、账号与应用密码并保存，即可开始跨设备同步。</div>
     </div>
 
-    <!-- 统一 WebDAV 服务器：四个模块共用这一套凭据，根目录各自隔离 -->
+    <!-- 统一 WebDAV 服务器：各模块共用这一套凭据，根目录各自隔离 -->
     <div class="sync-scope" style="display:flex; flex-direction:column; gap:12px">
       <div class="card" id="shared-webdav-card" style="padding: 16px 18px">
         <div class="setting-group" style="margin-bottom: 0">
           <div class="sg-title" style="margin-bottom: 12px">
             统一 WebDAV 服务器
-            <span class="sg-hint">技能仓库 / 用量统计 / 反代网关三套同步共用 · 密码经系统密钥加密保存，界面只显示掩码</span>
+            <span class="sg-hint">用量统计 / 反代网关两套同步共用 · 密码经系统密钥加密保存，界面只显示掩码</span>
           </div>
           <div class="form-grid">
             <div class="form-field full">
@@ -336,7 +303,6 @@ onUnmounted(() => {
             <span class="sg-hint">三个模块在同一网盘上的隔离目录 · 改根目录 = 换一个全新数据位置（旧数据不搬）</span>
           </div>
           <div class="form-grid">
-            <div class="form-field"><label>技能仓库（存量默认 /agent-skills）</label><input class="f-input mono" v-model="shared.roots.skills" placeholder="/agent-skills" /></div>
             <div class="form-field"><label>用量统计（存量默认 /dosage-sync）</label><input class="f-input mono" v-model="shared.roots.usage" placeholder="/dosage-sync" /></div>
             <div class="form-field"><label>反代网关号池（默认 /agenthub-proxy）</label><input class="f-input mono" v-model="shared.roots.proxy" placeholder="/agenthub-proxy" /></div>
             <div class="form-field"><label>记忆中枢（默认 /agenthub-memory）</label><input class="f-input mono" v-model="shared.roots.memory" placeholder="/agenthub-memory" /></div>
@@ -376,24 +342,6 @@ onUnmounted(() => {
           <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0">
             <button v-if="!configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
             <button v-else class="btn-outline" :disabled="usageRunning" @click="runUsageSync">{{ usageRunning ? "同步中…" : "立即同步" }}</button>
-          </div>
-        </div>
-
-        <!-- 技能仓库 -->
-        <div class="switch-row" style="align-items: flex-start">
-          <div class="s-left">
-            <div class="s-title">技能同步</div>
-            <div class="s-desc">中央技能库跨设备同步：下载别人的更新、推送本机变更并合并台账 · 根目录 {{ shared.roots.skills || "/agent-skills" }}</div>
-            <div class="s-desc" style="margin-top: 2px">
-              <span :style="{ color: configured ? 'var(--ok)' : 'var(--warn)' }">{{ configured ? "已就绪" : "未配置" }}</span>
-              <template v-if="configured && status?.lastSyncAt"> · 上次同步 {{ fmtAgoVal(status.lastSyncAt) }}</template>
-            </div>
-            <div class="s-desc" v-if="status?.lastError" :style="{ color: 'var(--err)' }">上次失败：{{ status.lastError }}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px; flex-shrink: 0">
-            <span v-if="skillsMsg" class="hint">{{ skillsMsg }}</span>
-            <button v-if="!configured" class="btn-outline" @click="gotoSharedForm">去配置</button>
-            <button v-else class="btn-outline" :disabled="skillsRunning" @click="runSkillsSync">{{ skillsRunning ? "同步中…" : "立即同步" }}</button>
           </div>
         </div>
 

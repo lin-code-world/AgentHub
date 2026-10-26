@@ -20,8 +20,6 @@ const ALLOWED_COMMANDS = new Set([
   "get_app_version",
   "get_data_dir",
   "open_data_dir",
-  "get_hub_dir",
-  "open_hub_dir",
   "browse_dir",
   // ===== 软件更新 =====
   "get_is_portable",
@@ -33,41 +31,6 @@ const ALLOWED_COMMANDS = new Set([
   "open_repo_page",
   // 设置 · 反馈与需求：系统浏览器打开本仓库的 issue 表单
   "open_external_url",
-  // ===== 技能仓库：WebDAV =====
-  "webdav_test",
-  "webdav_sync",
-  "webdav_cancel",
-  "webdav_status",
-  "webdav_logs",
-  "webdav_devices",
-  // ===== 技能仓库：工具适配器 =====
-  "list_tools",
-  "skills_side_stats",
-  "probe_agents",
-  "remove_tool",
-  // ===== 技能仓库：总览 / 技能库 =====
-  "get_overview",
-  "list_skills",
-  "get_skill",
-  // ===== 技能仓库：同步 / 报告 =====
-  "sync_plan",
-  "sync_execute",
-  "list_reports",
-  "read_report",
-  "open_report",
-  // ===== 技能仓库：冲突 / 挂载 / 回收站 / 自动感知 =====
-  "list_conflicts",
-  "get_conflict_diff",
-  "resolve_conflict",
-  "dismiss_conflict",
-  "toggle_mount",
-  "repair_mounts",
-  "trash_list",
-  "trash_restore",
-  "trash_purge",
-  "remove_skill",
-  "watch_status",
-  "adopt_hub_skill",
   // ===== 用量同步（原「用量记录同步」；与框架冲突的 4 个命令加 sync_ 前缀） =====
   "sync_load_config",
   "sync_save_config",

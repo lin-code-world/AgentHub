@@ -8,10 +8,9 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 配置读写（Node 主进程侧）：框架配置（主题 / 模块顺序）与技能仓库配置（工具 / WebDAV / 调度）
+// 配置读写（Node 主进程侧）：框架配置（主题 / 模块顺序）与统一 WebDAV / 反代网关配置
 // 统一落在 Windows 惯例的用户应用数据目录（Electron userData = %APPDATA%\AgentHub），
 // 深合并默认值，临时文件原子落盘；WebDAV 密码用系统级密钥加密存储。
-// AGENT_SKILLS_HOME 环境变量可把中央技能仓库指到临时目录（自测脚本用），默认 ~/.agent_skills
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -98,22 +97,6 @@ function dataDir() {
   return dir;
 }
 
-/** 中央技能仓库目录：真身 skills / reports / .trash 与 manifest.json 都在这里。
- *  与 Agent_skills 共用同一份中央仓库，装了两个应用也指向同一批真身 */
-function hubDir() {
-  const custom = process.env.AGENT_SKILLS_HOME;
-  if (custom && custom.trim()) return path.resolve(custom.trim());
-  return path.join(os.homedir(), ".agent_skills");
-}
-
-function ensureHub() {
-  const root = hubDir();
-  for (const sub of ["skills", "reports", ".trash"]) {
-    fs.mkdirSync(path.join(root, sub), { recursive: true });
-  }
-  return root;
-}
-
 /** 配置文件路径 */
 function configPath() {
   return path.join(dataDir(), "config.json");
@@ -133,33 +116,18 @@ function defaultConfig() {
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    moduleOrder: ["skills", "sync", "proxy", "memory"],
+    moduleOrder: ["sync", "proxy", "memory"],
     // ===== 四大板块启用开关（issue #91 轻量模式）：关闭后左上角置灰不可点、后台完全不运行。
     // 唯一写入口是 module_toggle IPC（主进程读改写），设置页表单不拥有它；
     // 记忆中枢旧版 memory.enabled=false 由 loadConfig 迁移到这里，旧字段保留但不再被读取
     modules: {
-      skills: { enabled: true },
       sync: { enabled: true },  // 用量统计（键名与 moduleOrder/前端 ModuleKey 对齐）
       proxy: { enabled: true },
       memory: { enabled: true },
     },
-    // ===== 技能仓库 =====
-    // 各工具候选路径按顺序探测，取第一个存在的
-    tools: {
-      zcode: { enabled: true, paths: [".zcode/skills"] },
-      codex: { enabled: true, paths: [".codex/skills"] },
-      claude: { enabled: true, paths: [".claude/skills"] },
-      antigravity: { enabled: true, paths: [".gemini/antigravity/skills", ".gemini/config/skills"] },
-      agents: { enabled: true, paths: [".agents/skills"] },
-    },
-    customDirs: [],
-    mountMode: "junction", // copy 是兜底
-    l3: { enabled: false, threshold: 0.85 },
-    trashDays: 7,
     update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
-    // WebDAV 跨设备同步（password 落盘是密文，内存里是明文）
-    // 注意：技能仓库的服务器凭据已并入 webdavShared，此段仅为兼容旧配置保留读取，
-    // 实际生效的是 webdavShared.endpoint/username/password + webdavShared.roots.skills
+    // 设备身份段：deviceId/deviceName 是号池同步（poolsync）的本机设备标识来源，
+    // 首次使用时惰性生成；endpoint 等旧同步字段仅为老配置迁移保留，不再有同步引擎读取
     webdav: {
       endpoint: "",
       username: "",
@@ -168,10 +136,10 @@ function defaultConfig() {
       deviceId: "",     // 首次使用时惰性生成
       deviceName: "",   // 默认取计算机名
     },
-    // ===== 全项目统一的 WebDAV 服务器（技能仓库 / 用量统计 / 反代网关 / 记忆中枢共用一套凭据，
+    // ===== 全项目统一的 WebDAV 服务器（号池同步与记忆中枢共用一套凭据，
     // 各模块根目录隔离互不冲突；远端数据布局与格式保持不变） =====
     // type="s3" 时 endpoint/username/password 复用为 S3 兼容 API 地址 / AccessKeyId / SecretKey
-    //（配 s3.bucket/region/pathStyle），四个同步引擎经 moduleWebdav 的 __s3 标记零改动走 S3 传输
+    //（配 s3.bucket/region/pathStyle），同步引擎经 moduleWebdav 的 __s3 标记零改动走 S3 传输
     webdavShared: {
       type: "webdav",     // webdav | s3
       endpoint: "",
@@ -184,7 +152,6 @@ function defaultConfig() {
         pathStyle: false, // true = path-style（MinIO/R2/OSS 等）；false = 虚拟主机式（AWS）
       },
       roots: {
-        skills: "/agent-skills",   // 技能仓库中央仓库同步根目录（存量数据位置，勿改默认）
         usage: "/dosage-sync",     // 用量统计同步根目录（存量数据位置，勿改默认）
         proxy: "/agenthub-proxy",  // 反代网关号池同步根目录
         memory: "/agenthub-memory", // 记忆中枢同步根目录
@@ -208,15 +175,6 @@ function defaultConfig() {
       // 仅在 minimizeToTray 开启时有意义（否则关窗本来就销毁窗口）。默认关，与改造前行为一致。
       lightweightMode: false,
       autoStart: false,     // 开机自启（便携版无效）
-      hourly: false,        // 每小时自动同步
-      daily: false,         // 每天定时同步
-      dailyTime: "09:00",
-      notifyOnSuccess: false, // 同步成功也通知（失败总通知）
-    },
-    // 自动感知：后台按周期快照各工具技能目录，有新技能且零冲突才自动收纳，有冲突只提醒
-    watch: {
-      enabled: true,
-      intervalSeconds: 15, // 扫描周期（秒），设置 · 同步时间 可改
     },
     // ===== 反代网关（方案 settings 全量入框架整体设置；端口改动需重启监听，其余热生效） =====
     proxy: {
@@ -364,7 +322,6 @@ function normalizeShared(s) {
       pathStyle: s3.pathStyle === true,
     },
     roots: {
-      skills: normRoot(roots.skills, def.roots.skills),
       usage: normRoot(roots.usage, def.roots.usage),
       proxy: normRoot(roots.proxy, def.roots.proxy),
       memory: normRoot(roots.memory, def.roots.memory),
@@ -390,13 +347,12 @@ function loadSharedWebdav() {
     sharedBusy = true;
     try {
       let dirty = false;
-      // 旧框架配置（技能仓库首次配置的凭据）
+      // 旧框架配置（首次配置的凭据，迁移后号池同步直接可用）
       const oldFw = cfg.webdav || {};
       if (oldFw.endpoint && String(oldFw.endpoint).trim()) {
         s.endpoint = String(oldFw.endpoint).trim();
         s.username = String(oldFw.username || "");
         s.password = String(oldFw.password || "");
-        if (oldFw.root && String(oldFw.root).trim()) s.roots.skills = normalizeShared({ roots: { skills: oldFw.root } }).roots.skills;
         dirty = true;
       }
       // 旧用量模块配置（~/.Dosage_sync/config.json）
@@ -556,7 +512,7 @@ function loadConfig() {
   // 模块开关归一化（issue #91）：非法/缺失回 true；旧版「记忆中枢已关闭」（memory.enabled=false）
   // 一次性迁移进 modules.memory.enabled，此后 modules.* 是唯一事实源
   merged.modules = merged.modules && typeof merged.modules === "object" ? merged.modules : {};
-  for (const k of ["skills", "sync", "proxy", "memory"]) {
+  for (const k of ["sync", "proxy", "memory"]) {
     const m = merged.modules[k] && typeof merged.modules[k] === "object" ? merged.modules[k] : {};
     m.enabled = m.enabled !== false;
     merged.modules[k] = m;
@@ -575,41 +531,10 @@ function loadConfig() {
   return merged;
 }
 
-// 保存前校验工具适配器：id 合法、自定义工具必须有名字、候选路径不许落进中央仓库（自己扫自己）
-function validateToolConfig(cfg) {
-  const { isBuiltinId, expandPath } = require("./adapter.cjs");
-  const hub = path.resolve(hubDir());
-  const errors = [];
-  const pathOk = (p) => {
-    if (typeof p !== "string" || !p.trim()) return true; // 空白交给探测层报"未命中"
-    const abs = expandPath(p).toLowerCase();
-    return abs !== hub.toLowerCase() && !abs.startsWith(hub.toLowerCase() + path.sep);
-  };
-  for (const [id, t] of Object.entries(cfg.tools || {})) {
-    if (!isBuiltinId(id) && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) errors.push(`工具 id "${id}" 不合法（小写字母数字开头，可含 -_，最长 32 位）`);
-    if (!t || typeof t !== "object" || Array.isArray(t)) { errors.push(`工具 ${id} 的配置损坏`); continue; }
-    if (!isBuiltinId(id) && !String(t.name || "").trim()) errors.push(`工具 ${id} 缺显示名`);
-    for (const p of t.paths || []) {
-      if (!pathOk(p)) errors.push(`工具 ${id} 的候选路径指向中央仓库内部，会自己扫自己`);
-    }
-  }
-  for (const p of cfg.customDirs || []) {
-    if (!pathOk(p)) errors.push(`自定义目录 ${p} 指向中央仓库内部，会自己扫自己`);
-  }
-  return errors;
-}
-
 /** 保存配置（先写临时文件再原子替换，写一半断电不留半个 JSON）。
  *  opts.forceClearSharedSecrets：显式清除意图（clearSharedWebdav / 表单清空加密口令）——
  *  绕过下述解密失败保留规则；后台读改写保存绝不传它 */
 function saveConfig(cfg, opts = {}) {
-  const errors = validateToolConfig(cfg);
-  if (errors.length) {
-    const e = new Error("配置校验未通过：" + errors.slice(0, 3).join("；"));
-    e.toolErrors = errors;
-    throw e;
-  }
-  ensureHub();
   const p = configPath();
   const disk = JSON.parse(JSON.stringify(cfg));
   disk.webdav.password = encryptSecret(disk.webdav.password);
@@ -721,7 +646,7 @@ function applyAutoStart(cfg) {
 }
 
 module.exports = {
-  dataDir, configPath, hubDir, ensureHub, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
+  dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
   getUpdateNotified, setUpdateNotified, isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   loadSharedWebdav, saveSharedWebdav, clearSharedWebdav, maskedSharedWebdav, moduleWebdav, sharedEncryptionPassphrase, PASSWORD_MASK,
   normalizeHm, normalizeJitter,

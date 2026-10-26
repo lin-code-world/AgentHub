@@ -11,9 +11,7 @@
 // IPC 封装：Electron 环境下通过 preload 桥接调用主进程；浏览器环境（npm run dev:web 预览 UI）
 // 回退到本地 mock。命令清单与 electron/preload.cjs 白名单、backend/ipc.cjs 一一对应
 import type {
-  AppConfig, SkillRow, SkillDetail, Overview, SyncPlan, SyncResult, ConflictItem, ConflictDiff,
-  ReportRow, ToolRow, TrashRow, UpdateStatus, ProbeRow, RemoveToolPlan,
-  WebDavStatus, RemoteDevice, WebDavLog, HubExtraRow, WatchStatus,
+  AppConfig, UpdateStatus,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
@@ -27,9 +25,7 @@ import type {
 } from "../types";
 
 export type {
-  AppConfig, SkillRow, SkillDetail, Overview, SyncPlan, SyncResult, ConflictItem, ConflictDiff,
-  ReportRow, ToolRow, TrashRow, UpdateStatus, UpdateEvent, ProbeRow, RemoveToolPlan,
-  WebDavStatus, RemoteDevice, WebDavLog, WebDavEvent, HubExtraRow, WatchStatus,
+  AppConfig, UpdateStatus, UpdateEvent,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
@@ -170,18 +166,6 @@ export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | un
   return undefined;
 }
 
-// ===== 技能仓库：WebDAV 跨设备同步 =====
-// webdavTest 表单直传 {endpoint, username, password, root}（统一服务器 + 根目录，密码可为掩码）；
-// 兼容旧调用：传完整 AppConfig 时取 webdav 段
-export const webdavTest = (config?: AppConfig | { endpoint: string; username: string; password: string; root: string }) =>
-  call<{ ok: boolean; message: string; latencyMs?: number }>("webdav_test", config ? { config: JSON.parse(JSON.stringify(config)) } : {});
-// 整目录 WebDAV 传输：长任务，主进程有进度事件 + webdavCancel 托底
-export const webdavSync = () => call<{ ok: boolean; message?: string }>("webdav_sync", {}, 0);
-export const webdavCancel = () => call<{ ok: boolean }>("webdav_cancel");
-export const webdavStatus = () => call<WebDavStatus>("webdav_status");
-export const webdavLogs = () => call<WebDavLog[]>("webdav_logs");
-export const webdavDevices = () => call<{ devices: RemoteDevice[]; error?: string }>("webdav_devices");
-
 // ===== 统一 WebDAV（设置 · 数据存储）：一套服务器凭据 + 四模块根目录 =====
 export interface SharedWebdavConfig {
   /** 存储类型：webdav（默认）| s3（S3 兼容对象存储：OSS/COS/R2/MinIO 等） */
@@ -193,7 +177,7 @@ export interface SharedWebdavConfig {
   /** 号池压缩包加密口令（掩码态；空 = 沿用 password） */
   encryptionPassphrase: string;
   s3: { bucket: string; region: string; pathStyle: boolean };
-  roots: { skills: string; usage: string; proxy: string; memory: string };
+  roots: { usage: string; proxy: string; memory: string };
 }
 export const webdavSharedGet = () => call<SharedWebdavConfig>("webdav_shared_get");
 export const webdavSharedSave = (cfg: SharedWebdavConfig) =>
@@ -232,55 +216,6 @@ export const proxyPoolsyncRun = (channel?: ProxyChannelId | "") =>
     0
   );
 export const proxyPoolsyncCancel = () => call<{ ok: boolean }>("proxy_poolsync_cancel");
-
-// ===== 技能仓库：工具适配器 =====
-export const listTools = () => call<ToolRow[]>("list_tools");
-/** 左栏模块卡片轻量统计（不做全量哈希，切模块即可调） */
-export interface SkillsSideStats {
-  skillCount: number;
-  pendingConflicts: number;
-  toolCount: number;
-  mountOk: number;
-  mountTotal: number;
-  tools: { id: string; name: string; dir: string; skillCount: number }[];
-}
-export const skillsSideStats = () => call<SkillsSideStats>("skills_side_stats");
-export const probeAgents = () => call<ProbeRow[]>("probe_agents");
-export const removeTool = (id: string, confirm?: boolean) =>
-  call<{ ok: boolean; message?: string; builtin?: boolean; mounts?: { skill: string; path: string }[]; sourceCount?: number; openConflicts?: number; unmounted?: number }>("remove_tool", { id, confirm: !!confirm });
-
-// ===== 技能仓库：总览 / 技能库 / 详情 =====
-export const getOverview = () => call<Overview>("get_overview");
-export const listSkills = () => call<SkillRow[]>("list_skills");
-export const getSkill = (name: string) => call<SkillDetail | null>("get_skill", { name });
-
-// ===== 技能仓库：同步 / 报告 =====
-export const syncPlan = () => call<SyncPlan>("sync_plan");
-export const syncExecute = (plan: SyncPlan) => call<SyncResult>("sync_execute", { plan: JSON.parse(JSON.stringify(plan)) });
-export const listReports = () => call<ReportRow[]>("list_reports");
-export const readReport = (file: string) => call<{ content: string }>("read_report", { file });
-export const openReport = (file: string) =>
-  call<{ ok: boolean }>("open_report", { file }).catch(() => ({ ok: false }));
-
-// ===== 技能仓库：冲突 =====
-export const listConflicts = () => call<ConflictItem[]>("list_conflicts");
-export const getConflictDiff = (id: string) => call<ConflictDiff | null>("get_conflict_diff", { id });
-export const resolveConflict = (id: string, choice: string) => call<{ ok: boolean; message: string }>("resolve_conflict", { id, choice });
-export const dismissConflict = (id: string) => call<{ ok: boolean }>("dismiss_conflict", { id });
-
-// ===== 技能仓库：挂载 / 回收站 / 自动感知 =====
-export const toggleMount = (skill: string, toolId: string, enable: boolean) =>
-  call<{ ok: boolean; message: string }>("toggle_mount", { skill, toolId, enable });
-export const repairMounts = () => call<{ repaired: number; details: string[] }>("repair_mounts");
-
-export const trashList = () => call<TrashRow[]>("trash_list");
-export const trashRestore = (name: string) => call<{ ok: boolean; message?: string; dest?: string }>("trash_restore", { name });
-export const trashPurge = () => call<{ purged: number }>("trash_purge");
-
-export const removeSkill = (name: string) => call<{ ok: boolean; message?: string }>("remove_skill", { name });
-
-export const watchStatus = () => call<WatchStatus>("watch_status");
-export const adoptHubSkill = (name: string) => call<{ ok: boolean; message?: string; name?: string; mounts?: number }>("adopt_hub_skill", { name });
 
 // ===== 反代网关：服务启停 / 状态 =====
 export const proxyStatus = () => call<ProxyGatewayStatus>("proxy_status");

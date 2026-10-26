@@ -22,17 +22,8 @@ import { setCursorFX } from "./motion/cursor";
 import Sidebar from "./components/Sidebar.vue";
 import PageTabs from "./components/PageTabs.vue";
 import SettingsDialog from "./components/config/SettingsDialog.vue";
-import ConfigSkillsSection from "./components/config/ConfigSkillsSection.vue";
 import ConfigUsageSection from "./components/config/ConfigUsageSection.vue";
 import ConfigProxySection from "./components/config/ConfigProxySection.vue";
-import SkillsHelpDialog from "./components/SkillsHelpDialog.vue";
-// 各模块的页面视图：各自独立目录，分别开发互不干扰
-import SkillsDashboardView from "./views/skills/SkillsDashboardView.vue";
-import SkillsLibraryView from "./views/skills/SkillsLibraryView.vue";
-import SkillsDedupView from "./views/skills/SkillsDedupView.vue";
-import SkillsSyncView from "./views/skills/SkillsSyncView.vue";
-import SkillsWebdavView from "./views/skills/SkillsWebdavView.vue";
-import SkillsSkillDetailView from "./views/skills/SkillsSkillDetailView.vue";
 // 用量统计模块（原「用量记录同步」）：数据源顶栏 + 五个页面 + 同步进度弹窗
 import SyncTopBar from "./components/sync/SyncTopBar.vue";
 import SyncDialog from "./components/sync/SyncDialog.vue";
@@ -249,7 +240,7 @@ function bindBackdrop() {
 /** 滚动渐入 + 卡片错落：页面内容块第一次进入视口时，由 motion-v 做一次
    「上浮 + 淡入 + 轻微过冲回弹」，同批露出的兄弟按 55ms 错峰，层次就出来了。
    全程只播一次（IO 触发即断开），之后悬停/布局动画完全不受影响。
-   目标选择器覆盖三套体系：框架 .page-body / skills .sk- / 用量同步 .sync-scope */
+   目标选择器覆盖两套体系：框架 .page-body / 用量同步 .sync-scope */
 function bindReveal() {
   const io = new IntersectionObserver(
     (entries) => {
@@ -271,8 +262,6 @@ function bindReveal() {
     ".page-body > *",
     ".kpis > *",
     ".grid-2 > *",
-    ".sk-page section",
-    ".sk-grid > *",
     ".top-kpis-grid > .kpi",
     ".sync-scope .card",
   ].join(", ");
@@ -629,7 +618,7 @@ const on = (mod: string, page: string) => app.activeModule === mod && app.active
 /** 懒挂载：页面首次进入才挂载（数据加载走各自的 onMounted），之后 v-show 保活不切状态。
     避免启动时就把十几个页面的扫描/探测 IPC 全打一遍。
     首键要等 load() 定下启动板块（自定义排序第一个）再记：loaded 翻真前的初始默认值
-    不能抢先挂载，否则启动板块在别的模块时技能仓库仪表盘会被白白拉起一遍 */
+    不能抢先挂载，否则启动板块不在第一个模块时它的仪表盘会被白白拉起一遍 */
 const visited = ref<Record<string, boolean>>({});
 watch(
   [() => app.loaded, () => `${app.activeModule}/${app.activePage}`],
@@ -670,12 +659,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
       <!-- 用量统计模块的数据源顶栏（原应用 AppBar）：仅「用量统计 · 总览」页显示；样式作用域在组件根上 -->
       <SyncTopBar v-if="on('sync', 'overview')" />
       <div class="pages">
-        <SkillsDashboardView v-if="seen('skills', 'dashboard')" v-show="on('skills', 'dashboard')" :class="{ 'page-anim': on('skills', 'dashboard') }" />
-        <SkillsLibraryView v-if="seen('skills', 'library')" v-show="on('skills', 'library')" :class="{ 'page-anim': on('skills', 'library') }" />
-        <SkillsDedupView v-if="seen('skills', 'dedup')" v-show="on('skills', 'dedup')" :class="{ 'page-anim': on('skills', 'dedup') }" />
-        <SkillsSyncView v-if="seen('skills', 'sync')" v-show="on('skills', 'sync')" :class="{ 'page-anim': on('skills', 'sync') }" />
-        <SkillsWebdavView v-if="seen('skills', 'webdav')" v-show="on('skills', 'webdav')" :class="{ 'page-anim': on('skills', 'webdav') }" />
-        <SkillsSkillDetailView v-if="seen('skills', 'skill-detail')" v-show="on('skills', 'skill-detail')" :class="{ 'page-anim': on('skills', 'skill-detail') }" />
         <!-- 用量统计五页：.sync-page 的样式作用域要求自身同时带 .sync-scope（见 styles/sync.css） -->
         <SyncOverviewView v-if="seen('sync', 'overview')" v-show="on('sync', 'overview')" class="sync-scope" :class="{ 'page-anim': on('sync', 'overview') }" />
         <SyncDetailView v-if="seen('sync', 'detail')" v-show="on('sync', 'detail')" class="sync-scope" :class="{ 'page-anim': on('sync', 'detail') }" />
@@ -706,9 +689,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
         <MemorySyncView v-if="seen('memory', 'sync')" v-show="on('memory', 'sync')" class="page" :class="{ 'page-anim': on('memory', 'sync') }" />
         <!-- 各模块的配置页：右上「配置」按钮切换到这里的页面（page + cfg-body 组合出页壳与留白）；
              配置页内部的二级子板块 tab 由各 section 自己渲染 -->
-        <div v-if="seen('skills', 'config')" v-show="on('skills', 'config')" class="page cfg-body" :class="{ 'page-anim': on('skills', 'config') }">
-          <ConfigSkillsSection />
-        </div>
         <div v-if="seen('sync', 'config')" v-show="on('sync', 'config')" class="page cfg-body" :class="{ 'page-anim': on('sync', 'config') }">
           <ConfigUsageSection />
         </div>
@@ -722,7 +702,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
     </main>
     <!-- 常驻挂载：显隐交给 el-dialog 自己管，进场动画才不会在 v-if 挂载时被跳过 -->
     <SyncDialog />
-    <SkillsHelpDialog />
     <SettingsDialog />
     <MemoryDetailDrawer
       :show="memory.detailDrawerOpen"

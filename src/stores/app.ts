@@ -8,11 +8,11 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 应用级状态：配置（主题 / 模块顺序 + 技能仓库配置）、当前模块与子页面、技能仓库全局数据
+// 应用级状态：配置（主题 / 模块顺序）、当前模块与子页面
 import { defineStore } from "pinia";
 import { MODULES } from "../types";
 import { moduleEnabled } from "../api/caps";
-import type { AppConfig, SettingsTab, ModuleDef, ModuleKey, PageDef, Overview, ToolRow } from "../types";
+import type { AppConfig, SettingsTab, ModuleDef, ModuleKey, PageDef } from "../types";
 import * as api from "../api/ipc";
 
 /** 递归合并：以 base 为基线补全 patch 缺失的嵌套字段；数组与原始值一律整体取 patch（有则覆盖）。
@@ -40,16 +40,9 @@ const defaultConfig: AppConfig = {
   fxPools: false,
   fxCursor: true,
   moduleOrder: MODULES.map((m) => m.key),
-  modules: { skills: { enabled: true }, sync: { enabled: true }, proxy: { enabled: true }, memory: { enabled: true } },
-  tools: {},
-  customDirs: [],
-  mountMode: "junction",
-  l3: { enabled: false, threshold: 0.85 },
-  trashDays: 7,
+  modules: { sync: { enabled: true }, proxy: { enabled: true }, memory: { enabled: true } },
   update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
-  webdav: { endpoint: "", username: "", password: "", root: "/agent-skills", deviceId: "", deviceName: "" },
-  schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false, hourly: false, daily: false, dailyTime: "09:00", notifyOnSuccess: false },
-  watch: { enabled: true, intervalSeconds: 15 },
+  schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: false },
   // 反代网关设置兜底（权威默认值见 electron/backend/config.cjs）
   proxy: {
     port: 9527,
@@ -85,9 +78,6 @@ const defaultConfig: AppConfig = {
   // 记忆中枢指针（其余配置在 <仓库>/config/memory.config.json，由 memory 模块页读取）
   memory: { enabled: true, rootDir: "" },
 };
-
-/** 技能仓库内的页面 id（skill-detail 为隐藏详情页，不进横条菜单，由技能库卡片进入） */
-export type SkillsPageId = "dashboard" | "library" | "skill-detail" | "sync" | "webdav" | "dedup";
 
 /** 动效开关的 localStorage 镜像：main.ts 在配置异步加载前靠它同步判定首帧状态
     （写不进只影响下次冷启动首帧，不碍事） */
@@ -132,7 +122,7 @@ export const useAppStore = defineStore("app", {
   state: () => ({
     config: { ...defaultConfig } as AppConfig,
     loaded: false,
-    activeModule: "skills" as ModuleKey,
+    activeModule: MODULES[0].key as ModuleKey,
     activePage: MODULES[0].pages[0].id,
     // ===== 全局设置弹窗（左下角设置按钮）：通用 / WebDAV 同步 / 数据与备份 =====
     settingsOpen: false,
@@ -143,13 +133,6 @@ export const useAppStore = defineStore("app", {
     updateAvailable: false,
     /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
     pageBeforeConfig: "",
-    // ===== 技能仓库全局数据 =====
-    toolMeta: [] as ToolRow[],   // 工具适配器显示名/图标的唯一来源，别处不许再硬编码
-    skillsOverview: null as Overview | null, // 左栏概况卡 / 仪表盘徽标用
-    conflictCount: 0,            // 去重与冲突徽标
-    skillDetailName: "",         // 进详情页时带上技能名
-    helpOpen: false,             // 技能仓库使用帮助对话框
-    helpSection: "",             // 打开时定位到的帮助小节 id
     // ===== 记忆中枢：页签显隐白名单（由 memory store 的 loadAll 从 cfg["ui.tabs"] 写回）=====
     /** 空数组 = 未加载/未配置，pagesOf 兜底为默认 8 个（dashboard/browse/projects/profile/agents/auto/import/sync） */
     memoryTabs: [] as string[],
@@ -176,14 +159,9 @@ export const useAppStore = defineStore("app", {
       allow.add("browse");
       return all.filter((p) => allow.has(p.id));
     },
-    /** 子页面徽标：技能仓库的待裁决数走实时数据，其余模块暂用静态 mock 值 */
+    /** 子页面徽标：各模块子页的静态兜底值（PageDef.badge） */
     pageBadge(s): (pageId: string) => string | undefined {
-      return (pageId: string) => {
-        if (s.activeModule === "skills" && pageId === "dedup") {
-          return s.conflictCount > 0 ? String(s.conflictCount) : undefined;
-        }
-        return this.moduleOf(s.activeModule).pages.find((p) => p.id === pageId)?.badge;
-      };
+      return (pageId: string) => this.moduleOf(s.activeModule).pages.find((p) => p.id === pageId)?.badge;
     },
   },
   actions: {
@@ -231,9 +209,6 @@ export const useAppStore = defineStore("app", {
       this.applyFxPools(this.config.fxPools === true);
       this.applyFxCursor(this.config.fxCursor !== false);
       this.loaded = true;
-      // 工具显示名全局一份；启动即拉取，设置保存后 refreshTools 刷新
-      this.toolMeta = (await api.listTools().catch(() => null)) || [];
-      if (this.activeModule === "skills") this.refreshSkillsStats();
     },
     async save() {
       try {
@@ -356,46 +331,16 @@ export const useAppStore = defineStore("app", {
       if (this.activeModule === key) return;
       this.activeModule = key;
       this.activePage = this.moduleOf(key).pages[0].id;
-      // 进技能仓库时刷新概况/徽标数据（异步不阻塞切换）
-      if (key === "skills") this.refreshSkillsStats();
     },
     setPage(id: string) {
       this.settingsOpen = false;
       this.activePage = id;
-    },
-    /** 技能仓库模块内跳转（各技能页面里的「去同步 / 去裁决 / 返回技能库」都用它） */
-    go(page: SkillsPageId) {
-      this.settingsOpen = false;
-      this.activeModule = "skills";
-      this.activePage = page;
-    },
-    /** 从技能库卡片进详情页 */
-    openSkillDetail(name: string) {
-      this.skillDetailName = name;
-      this.settingsOpen = false;
-      this.activeModule = "skills";
-      this.activePage = "skill-detail";
-    },
-    showHelp(section = "") {
-      this.helpSection = section;
-      this.helpOpen = true;
     },
     /** 模块排序：采用「设置 · 个性化」里算好的完整顺序并落盘 */
     async setModuleOrder(order: ModuleKey[]) {
       if (order.join() === this.config.moduleOrder.join()) return;
       this.config.moduleOrder = order;
       await this.save();
-    },
-    /** 刷新技能仓库概况（去重与冲突徽标数据源），失败静默保留旧值。
-     *  只读冲突 JSON，不触发 get_overview 的全量扫描+逐技能哈希（那是仪表盘页的按需动作，
-     *  侧栏切模块就全量哈希会把 UI 拖卡） */
-    async refreshSkillsStats() {
-      const conflicts = await api.listConflicts().catch(() => null);
-      if (Array.isArray(conflicts)) this.conflictCount = conflicts.length;
-    },
-    /** 设置弹窗保存完工具配置后调用，立即刷新全站的工具显示名 */
-    async refreshTools() {
-      this.toolMeta = (await api.listTools().catch(() => [])) || [];
     },
     /** 拉一次更新状态维护红点（启动兜底；此后由 App.vue 的 update:event 回流实时增减） */
     async refreshUpdateStatus() {
@@ -405,14 +350,6 @@ export const useAppStore = defineStore("app", {
       } catch {
         /* 取不到就保旧值（浏览器预览走 mock） */
       }
-    },
-    toolName(id: string): string {
-      const t = this.toolMeta.find((x) => x.id === id);
-      return t?.name || id;
-    },
-    toolIcon(id: string): string {
-      const t = this.toolMeta.find((x) => x.id === id);
-      return t?.icon || "ph-folder-open";
     },
   },
 });

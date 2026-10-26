@@ -9,8 +9,8 @@
   ============================================================
 -->
 <!-- 左栏双卡片：上 = 品牌 + 四大模块切换；下 = 当前模块的总览概况
-     概况数据全部来自真实统计：skills 走轻量 IPC（skills_side_stats）、sync 走 usage store、
-     proxy 走号池/Keys/网关状态、memory 走记忆中枢统计 IPC；模块顺序自定义在「设置 · 通用」
+     概况数据全部来自真实统计：sync 走 usage store、proxy 走号池/Keys/网关状态、
+     memory 走记忆中枢统计 IPC；模块顺序自定义在「设置 · 通用」
      版本 / 署名 / GitHub / 亮暗 / 设置入口统一收在最左下角 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
@@ -51,7 +51,6 @@ function modOn(k: string) {
 function refreshStatsForEnabled(only?: string) {
   const want = (k: string) => (only ? only === k : true);
   if (want("proxy") && modOn("proxy")) { refreshProxyMeta(); refreshChannels(); }
-  if (want("skills") && modOn("skills")) refreshSkillsStats();
   if (want("memory") && modOn("memory")) refreshMemoryStats();
   if (want("usage") && modOn("usage")) ensureUsageSummary();
 }
@@ -89,15 +88,13 @@ onUnmounted(() => {
   scheduleProxyRefresh.cancel();
   scheduleMemoryRefresh.cancel();
 });
-// 切模块时刷新对应板块的实时统计（号池可能刚被同步 / 技能刚被收纳 / 用量刚落库）
+// 切模块时刷新对应板块的实时统计（号池可能刚被同步 / 用量刚落库）
 watch(
   () => app.activeModule,
   (m) => {
     if (m === "proxy") {
       refreshChannels();
       refreshProxyMeta();
-    } else if (m === "skills") {
-      refreshSkillsStats();
     } else if (m === "sync") {
       ensureUsageSummary(true);
     } else if (m === "memory") {
@@ -105,16 +102,6 @@ watch(
     }
   }
 );
-
-// ===== 技能仓库 · 轻量真实统计（manifest / 冲突 / 工具目录一层列表，不做全量哈希） =====
-const skillsStats = ref<api.SkillsSideStats | null>(null);
-async function refreshSkillsStats() {
-  try {
-    skillsStats.value = await api.skillsSideStats();
-  } catch {
-    /* 拉不到保留旧值 */
-  }
-}
 
 // ===== 反代网关 · 网关状态 + Key 数（真实） =====
 const proxyRunning = ref(false);
@@ -187,7 +174,6 @@ const currency = computed(() => usageApp.config.billing?.displayCurrency || "CNY
 
 // ===== 模块卡片的运行状态与统计（全部真实数据，无 mock） =====
 const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "warn"; stats: { v: string; label: string; unit?: string }[] }>>(() => {
-  const sk = skillsStats.value;
   const syncStats: { v: string; label: string; unit?: string }[] = [
     { v: String(usage.devices.length), label: "机器", unit: "台" },
   ];
@@ -196,15 +182,6 @@ const MODULE_META = computed<Record<ModuleKey, { state: string; level: "ok" | "w
   }
   syncStats.push({ v: formatToken(syncTodayTokens.value), label: "今日 tokens" });
   return {
-    skills: {
-      state: sk && sk.pendingConflicts > 0 ? `${sk.pendingConflicts} 冲突待裁决` : "运行中",
-      level: sk && sk.pendingConflicts > 0 ? "warn" : "ok",
-      stats: [
-        { v: sk ? String(sk.skillCount) : "-", label: "已收纳", unit: "个" },
-        { v: sk ? String(sk.pendingConflicts) : "-", label: "待裁决", unit: "个" },
-        { v: sk ? String(sk.toolCount) : "-", label: "接入工具", unit: "个" },
-      ],
-    },
     sync: {
       state: usage.loadError ? "加载失败" : "已同步",
       level: usage.loadError ? "warn" : "ok",
@@ -265,7 +242,6 @@ const upOpen = ref(false);
 
 // 模块图标（线稿 path，复刻 design.html）
 const MODULE_ICONS: Record<ModuleKey, string> = {
-  skills: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',
   sync: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/>',
   proxy: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>',
   // 记忆中枢：脑/记忆背包（同款线稿：外轮廓 + 内部层线）
@@ -274,10 +250,6 @@ const MODULE_ICONS: Record<ModuleKey, string> = {
 
 // ===== 下卡片：模块总览概况（标题 / 提示全部接真实统计） =====
 const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(() => ({
-  skills: {
-    title: "工具连接",
-    hint: skillsStats.value ? `${skillsStats.value.mountOk}/${skillsStats.value.mountTotal} 挂载` : "挂载",
-  },
   sync: { title: "设备用量", hint: `${devices.value.length} 台设备` },
   proxy: { title: "渠道额度", hint: visibleChannels.value.length ? `${visibleChannels.value.length} 个渠道` : "渠道" },
   memory: {
@@ -355,19 +327,6 @@ async function removeDevice(d: DeviceMeta) {
   await usage.refreshDevices();
   await usage.loadOverview();
 }
-
-// 技能仓库 · 各工具真实挂载状态（skills_side_stats：目录一层列表 + manifest 挂载台账）
-// 某工具的挂载数 = manifest 里指向该工具的挂载条目；目录不存在即未命中
-const TOOLS = computed<{ name: string; meta: string; label: string; ok: boolean }[]>(() => {
-  const sk = skillsStats.value;
-  if (!sk) return [];
-  return sk.tools.map((t) => ({
-    name: t.name,
-    meta: `${t.dir} · ${t.skillCount} 个技能`,
-    label: t.skillCount > 0 || sk.mountTotal > 0 ? "已接入" : "空目录",
-    ok: true,
-  }));
-});
 </script>
 
 <template>
@@ -472,20 +431,6 @@ const TOOLS = computed<{ name: string; meta: string; label: string; ok: boolean 
               </el-tooltip>
             </div>
           </el-tooltip>
-        </template>
-
-        <!-- 技能仓库：工具连接（真实扫描目标 + 技能计数） -->
-        <template v-else-if="app.activeModule === 'skills'">
-          <div v-for="t in TOOLS" :key="t.name" class="ov-row">
-            <div class="grow">
-              <div class="ov-name">{{ t.name }}</div>
-              <div class="ov-meta">{{ t.meta }}</div>
-            </div>
-            <el-tag :type="t.ok ? 'success' : 'warning'">{{ t.label }}</el-tag>
-          </div>
-          <div v-if="!TOOLS.length" class="ov-row">
-            <div class="grow"><div class="ov-meta">未探测到已接入的工具目录</div></div>
-          </div>
         </template>
 
         <!-- 记忆中枢：概况（条数/今日/待处理/最近项目/已连通 Agent/索引一致率；每行可点跳对应页面） -->

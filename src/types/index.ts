@@ -8,9 +8,9 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 全局类型与常量：四大模块 / 子页面 / 应用配置 / 技能仓库数据结构
+// 全局类型与常量：四大模块 / 子页面 / 应用配置 / 反代网关数据结构
 // MODULES 是左栏导航的唯一事实源，App.vue 据此装配各模块视图组件
-export type ModuleKey = "skills" | "sync" | "proxy" | "memory";
+export type ModuleKey = "sync" | "proxy" | "memory";
 export type Theme = "dark" | "light";
 
 export interface PageDef {
@@ -26,199 +26,6 @@ export interface ModuleDef {
   pages: PageDef[];
 }
 
-// ===== 技能仓库：数据结构（跟 electron/backend 返回一一对应） =====
-
-export type HealthIssue = { level: "warn" | "bad"; text: string };
-
-export type SkillSource = { tool: string; originalName?: string; name?: string; dir?: string; firstSeen?: string; origin?: string };
-
-export type SkillMount = {
-  tool: string;
-  name: string;
-  path: string;
-  type: "junction" | "symlink" | "copy";
-  enabled: boolean;
-};
-
-export type SkillRow = {
-  name: string;
-  skillName: string;
-  description: string;
-  version: string;
-  treeHash: string;
-  health: HealthIssue[];
-  sources: SkillSource[];
-  inManifest: boolean;
-  mounts: SkillMount[];
-  mtimeMs: number;
-  /** user=用户安装；system=工具自带（默认隐藏，搜索可见，永不收纳）；hub-extra=中央仓库有目录但未登记 */
-  origin?: "user" | "system" | "hub-extra";
-};
-
-// 中央巡检：仓库里躺着但 manifest 没记账的目录
-export type HubExtraRow = {
-  name: string;
-  isLink: boolean;
-  hasSkillMd: boolean;
-  mtimeMs: number;
-  health: HealthIssue[];
-};
-
-export type Overview = {
-  hubDir: string;
-  skillCount: number;
-  manifestCount: number;
-  sourceCount: number;
-  l1Merged: number;
-  l2Conflicts: number;
-  tools: { id: string; name: string; dir: string; skillCount: number; mountCount: number }[];
-  mountHealth: { skill: string; tool: string; name: string; path: string; type: string; enabled: boolean; isLink: boolean; valid: boolean }[];
-  orphans: OrphanRow[];
-  pendingConflicts: ConflictItem[];
-  recentReports: ReportRow[];
-  trashCount: number;
-  hubExtra: HubExtraRow[];
-};
-
-export type ReportRow = { file: string; path: string; mtimeMs: number };
-
-export type SyncAction = {
-  type: "import" | "mount" | "skip" | "error" | "conflict";
-  skill: string;
-  mountName?: string;
-  toolId?: string;
-  parentDir?: string;
-  dir?: string;
-  replaceReal?: boolean;
-  note: string;
-  sources?: { tool: string; name: string; dir: string }[];
-};
-
-export type SyncPlan = {
-  mode: "junction" | "copy";
-  actions: SyncAction[];
-  conflicts: ConflictItem[];
-  orphans: OrphanRow[];
-  dedup: { duplicates: { kept: { name: string; tool: string }; removed: { name: string; tool: string }; rule: string; basis: string }[]; hints: { a: string; b: string; sim: number }[] };
-  scannedSummary: { id: string; name: string; dir: string; skillCount: number; mountCount: number }[];
-};
-
-export type SyncResult = {
-  mode: string;
-  summary: { imported: number; merged: number; conflicts: number; skipped: number; mounted: number; repaired: number; cleaned: number };
-  imports: { name: string; sources: string; action: string; path: string }[];
-  merges: { kept: string; removed: string; basis: string }[];
-  conflicts: { title: string; detail: string }[];
-  mounts: { skill: string; dir: string; action: string; outcome: string }[];
-  manifestDiff: string[];
-  reportFile: string;
-};
-
-export type ConflictItem = {
-  id: string;
-  kind: "content" | "diff-link" | "norm" | "remote";
-  skill?: string;
-  toolId?: string;
-  dir?: string;
-  title: string;
-  detail: string;
-  a?: string;
-  b?: string;
-  localHash?: string;
-  remoteHash?: string;
-  at: string;
-  resolved?: { at: string; choice: string };
-};
-
-export type ConflictDiff = {
-  item: ConflictItem;
-  left: { label: string; path: string; md: string };
-  right: { label: string; path: string; md: string };
-  /** diff-link 专有：链接现状（指向哪份、还在不在、中央有没有），面板据此决定给哪几个动词 */
-  link?: {
-    linkPath: string;
-    target: string;
-    resolved: string | null;
-    isLink: boolean;
-    resolves: boolean;
-    hasSkillMd: boolean;
-    centralPath: string;
-    centralExists: boolean;
-    sameAsCentral: boolean;
-    targetInsideHub: boolean;
-  };
-};
-
-export type ToolRow = {
-  id: string;
-  name: string;
-  icon: string;
-  builtin: boolean;
-  deletable: boolean;
-  enabled: boolean;
-  dir: string | null;
-  candidatePaths: string[];
-};
-
-// 电脑扫描发现的第三方 agent：用户确认了才落配置（suggestId 已避开现有工具 id）
-export type ProbeRow = { suggestId: string; name: string; icon: string; hitDirs: string[]; skillCount: number };
-
-// 删除自定义工具前的干跑结果：有未裁决冲突必须先裁决
-export type RemoveToolPlan = {
-  builtin: boolean;
-  mounts: { skill: string; path: string }[];
-  sourceCount: number;
-  openConflicts: number;
-};
-
-// 孤儿目录：工具目录里真实存在、但中央仓库 manifest 还没记录的技能目录
-export type OrphanRow = { name: string; tool: string; dir: string; mtimeMs?: number };
-
-export type TrashRow = { name: string; path: string; trashedAt: number; sizeBytes: number };
-
-// 自动感知状态：技能库/同步中心展示"每 X 秒自动扫描"用
-export type WatchStatus = { intervalSeconds: number; lastScanAt: number };
-
-export type SkillDetail = {
-  manifest: {
-    name: string;
-    version: string;
-    description: string;
-    treeHash: string;
-    skillName: string;
-    sources: SkillSource[];
-    mounts: SkillMount[];
-    mergeHistory: { at: string; action: string; detail: string }[];
-    health?: HealthIssue[];
-  } | null;
-  dir: string;
-  health: HealthIssue[];
-  skillMd: string;
-  /** 未收纳技能：探测到的工具目录来源 */
-  sources?: SkillSource[];
-};
-
-// ===== WebDAV 跨设备同步 =====
-
-export type WebDavStatus = {
-  running: boolean;
-  configured: boolean;
-  deviceId: string;
-  deviceName: string;
-  lastSyncAt: string;
-  stage: "idle" | "connect" | "pull" | "download" | "upload" | "push" | "done" | "cancelled" | "error";
-  stageLabel: string;
-  detail: string;
-  pct?: number;
-  lastError: string;
-};
-
-export type RemoteDevice = { id: string; name: string; appVersion: string; lastSyncAt: string; self: boolean };
-
-export type WebDavLog = { at: string; text: string };
-
-export type WebDavEvent = { event: "webdav"; stage: string; detail: string; pct?: number; running: boolean };
-
 // ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
 
 export type SettingsTab = "general" | "webdav" | "data" | "timing" | "feedback";
@@ -231,7 +38,7 @@ export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc
   { key: "feedback", name: "反馈与需求", icon: "ph-chat-circle-dots", desc: "问题反馈 · 功能建议" },
 ];
 
-// ===== 应用配置：框架（主题 / 模块顺序）+ 技能仓库 + 更新 =====
+// ===== 应用配置：框架（主题 / 模块顺序）+ 更新 =====
 
 export interface AppConfig {
   theme: Theme;
@@ -251,21 +58,8 @@ export interface AppConfig {
   /** 四大板块启用开关（issue #91）：关闭后左上角置灰不可点、后台完全不运行；
       唯一写入口是 module_toggle IPC，这里的值只作展示同步 */
   modules: Record<ModuleKey, { enabled: boolean }>;
-  tools: Record<string, { enabled: boolean; paths: string[]; name?: string; icon?: string }>;
-  customDirs: string[];
-  mountMode: "junction" | "copy";
-  l3: { enabled: boolean; threshold: number };
-  trashDays: number;
   /** 软件更新：channel 更新通道；autoCheck 定时自动检查开关；notifiedVersion 由主进程维护（前端只读回传） */
   update: UpdateConfig;
-  webdav: {
-    endpoint: string;
-    username: string;
-    password: string;
-    root: string;
-    deviceId: string;
-    deviceName: string;
-  };
   schedule: {
     minimizeToTray: boolean;
     /** 全局快捷键：唤起/收起主窗口（默认 Alt+`，两键）。必须是「功能键+字符键」组合；
@@ -276,12 +70,7 @@ export interface AppConfig {
      *  仅在 minimizeToTray 开启时有意义。默认关（与改造前行为一致）。 */
     lightweightMode: boolean;
     autoStart: boolean;
-    hourly: boolean;
-    daily: boolean;
-    dailyTime: string;
-    notifyOnSuccess: boolean;
   };
-  watch: { enabled: boolean; intervalSeconds: number };
   /** 反代网关设置（框架整体设置的一部分；端口改动需重启监听，其余热生效） */
   proxy: ProxyConfig;
   /** 记忆中枢：框架侧只管启用开关与根目录指针，其余配置在 <仓库>/config/memory.config.json */
@@ -1022,17 +811,6 @@ export interface UpdateEvent extends UpdateStatus {
  *  skills 的 skill-detail 为技能详情页：从技能库点卡片进入，不在横条菜单中展示；
  *  各模块的「配置」是隐藏页面（id=config，不走横条菜单），由横条右侧「配置」按钮切换 */
 export const MODULES: ModuleDef[] = [
-  {
-    key: "skills",
-    name: "技能仓库",
-    pages: [
-      { id: "dashboard", name: "仪表盘" },
-      { id: "library", name: "中央技能库" },
-      { id: "dedup", name: "去重与冲突" },
-      { id: "sync", name: "同步中心" },
-      { id: "webdav", name: "WebDAV 同步" },
-    ],
-  },
   {
     key: "sync",
     name: "用量统计",

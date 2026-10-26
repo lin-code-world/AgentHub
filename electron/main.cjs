@@ -8,8 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// Electron 主进程入口：窗口 / 托盘 / 单实例 / 主题同步 / 全局大小自适应
-// 技能仓库后台能力：定时 WebDAV 同步调度、自动感知收纳、软件自更新
+// Electron 主进程入口：窗口 / 托盘 / 单实例 / 主题同步 / 全局大小自适应 / 软件自更新
 "use strict";
 const path = require("node:path");
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, nativeTheme, Notification, globalShortcut } = require("electron");
@@ -119,10 +118,7 @@ stallTimer.unref?.();
 const config = require("./backend/config.cjs");
 const ipc = require("./backend/ipc.cjs");
 const updater = require("./backend/updater.cjs");
-const remotesync = require("./backend/remotesync.cjs");
-const scheduler = require("./backend/scheduler.cjs");
-const watch = require("./backend/watch.cjs");
-// 用量同步模块（原「用量记录同步」）：独立配置与本地库，调度器与技能仓库互不干扰
+// 用量同步模块（原「用量记录同步」）：独立配置与本地库，有专属调度器
 const usageConfig = require("./backend/sync-config.cjs");
 const usagedb = require("./backend/db.cjs");
 const usagesync = require("./backend/sync.cjs");
@@ -400,18 +396,6 @@ function onShortcutToggle() {
   }
 }
 
-// ===== 技能仓库：WebDAV 定时同步 =====
-
-function triggerSync() {
-  const cfg = config.loadConfig();
-  if (remotesync.isRunning()) return;
-  if (!remotesync.configured(cfg)) {
-    notify("AgentHub", "请先在「技能仓库 · WebDAV 同步」页配置服务器地址和账号");
-    return;
-  }
-  remotesync.run(cfg).catch(() => {});
-}
-
 // ===== 用量同步：本机用量上传/拉取 =====
 
 function triggerUsageSync() {
@@ -458,7 +442,6 @@ function formatNum(n) {
 /** 托盘菜单（动态构建：今日用量 + 更新提示 + 暂停/恢复定时同步） */
 function buildTrayMenu() {
   const cfg = config.loadConfig();
-  const running = remotesync.isRunning();
   // 板块开关（issue #91）：关闭板块的托盘入口一并隐藏，避免绕过 UI 触发已停用模块
   const on = (k) => {
     const m = (cfg.modules || {})[k];
@@ -495,17 +478,7 @@ function buildTrayMenu() {
       click: () => { releaseWindowNow("tray-manual"); },
     },
     { type: "separator" },
-    ...(on("skills") ? [{
-      label: "立即同步技能",
-      enabled: remotesync.configured(cfg) && !running,
-      click: triggerSync,
-    }] : []),
     ...(on("sync") ? [{ label: "立即同步用量", click: triggerUsageSync }] : []),
-    ...(on("skills") ? [{
-      label: scheduler.isPaused() ? "恢复定时同步" : "暂停定时同步",
-      enabled: remotesync.configured(cfg) && !!(cfg.schedule && (cfg.schedule.hourly || cfg.schedule.daily)),
-      click: () => { scheduler.setPaused(!scheduler.isPaused()); refreshTrayMenu(); },
-    }] : []),
     ...(on("sync") ? [{
       label: usageScheduler.isPaused() ? "恢复用量定时同步" : "暂停用量定时同步",
       click: () => { usageScheduler.setPaused(!usageScheduler.isPaused()); refreshTrayMenu(); },
@@ -537,10 +510,7 @@ function registerModuleToggle() {
       cfg.modules = next;
       config.saveConfig(cfg);
       // 运行时启停：关 = 停后台设施（定时器/监听/服务/库）；开 = 重新拉起（各处均幂等）
-      if (m === "skills") {
-        if (enabled) { scheduler.start(); watch.start(); }
-        else { scheduler.stop(); watch.stop(); }
-      } else if (m === "sync") {
+      if (m === "sync") {
         if (enabled) usageScheduler.start();
         else {
           usageScheduler.stop();
@@ -647,32 +617,7 @@ function createTray() {
   tray.on("double-click", showWindow);
 }
 
-// ===== 桌面通知：默认仅同步失败提醒，设置里可开启「成功也通知」；失败持续期间不重复弹 =====
-
-let lastNotifiedOk = null;
-function notifySync(okFlag, message) {
-  try {
-    refreshTrayMenu();
-    if (!Notification.isSupported()) return;
-    if (okFlag) {
-      lastNotifiedOk = true;
-      const cfg = config.loadConfig();
-      if (!(cfg.schedule && cfg.schedule.notifyOnSuccess)) return;
-    } else {
-      // 失败持续中不重复打扰；首次失败/失败恢复后再失败才提醒
-      if (lastNotifiedOk === false) return;
-      lastNotifiedOk = false;
-    }
-    const n = new Notification({
-      title: okFlag ? "WebDAV 同步完成" : "WebDAV 同步失败",
-      body: message || (okFlag ? "中央仓库已与远端同步" : "请检查 WebDAV 配置与网络"),
-      icon: iconPath("icon.png"),
-    });
-    n.show();
-  } catch {
-    /* 通知失败静默 */
-  }
-}
+// ===== 桌面通知 =====
 
 function notify(title, body) {
   if (!Notification.isSupported()) return;
@@ -680,7 +625,7 @@ function notify(title, body) {
   n.show();
 }
 
-// 用量同步完成/失败通知：与技能同步同一套去重逻辑，配置读用量模块自己的 schedule
+// 用量同步完成/失败通知：配置读用量模块自己的 schedule
 let lastUsageNotifiedOk = null;
 function notifyUsageSync(okFlag, message) {
   try {
@@ -704,18 +649,6 @@ function notifyUsageSync(okFlag, message) {
     /* 通知失败静默 */
   }
 }
-
-// 自动感知回执：零冲突收纳直接报告结果；发现冲突只提醒，等用户去软件里裁决
-watch.setOnEvent(({ kind, summary, count }) => {
-  refreshTrayMenu();
-  if (kind === "conflict") {
-    notify("AgentHub 技能仓库", `发现 ${count || 0} 个需要裁决的冲突，已跳过自动收纳`);
-    return;
-  }
-  if (kind === "synced" && summary) {
-    notify("AgentHub 技能仓库", `自动收纳完成：${summary.imported} 个新增 · 挂载 ${summary.mounted} 处 · 合并重复 ${summary.merged} 份`);
-  }
-});
 
 // ===== 单实例锁 =====
 // 开发旁路：AGENTHUB_ALLOW_MULTI=1 时跳过单实例锁，并隔离 userData，
@@ -770,7 +703,6 @@ if (!gotLock) {
 
     ipc.register({ ipcMain, app, shell, nativeTheme });
     registerModuleToggle();
-    remotesync.setOnFinish(notifySync);
     usagesync.setOnFinish(notifyUsageSync);
     // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）
     // boot() 是 async：rules.init() / store.open() / credits.startScheduler() / startCheckinAuto()
@@ -782,10 +714,6 @@ if (!gotLock) {
     memory.boot().catch((e) => __crashLog("memory-boot-failed", __describe(e)));
     createWindow();
     createTray();
-    if (on("skills")) {
-      scheduler.start();
-      watch.start();
-    }
     if (on("sync")) usageScheduler.start();
     updater.init({ onShowWindow: showWindow, onTrayRefresh: refreshTrayMenu });
     // 全局快捷键（默认 Alt+`，两键）：冲突则弹气泡并持续重试，解除后自动恢复。
@@ -817,9 +745,7 @@ if (!gotLock) {
   app.on("before-quit", (e) => {
     // 统一收尾：原先两条分支各自重复一遍 stop 调用，新增模块时极易漏改一处
     const cleanup = () => {
-      scheduler.stop();
       usageScheduler.stop();
-      watch.stop();
       // 全局快捷键必须显式注销：更新重启是"拦下退出再重启"，
       // 不注销会让旧键在重启窗口期内处于悬空占用状态
       try { if (shortcutRegistrar) shortcutRegistrar.stop(); else shortcut.unregisterAll(globalShortcut); } catch { /* 忽略 */ }
