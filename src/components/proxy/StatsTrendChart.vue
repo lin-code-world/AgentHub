@@ -91,7 +91,7 @@ function render() {
 
   chart.clear();
   chart.setOption({
-    animation: ui.config.fx,
+    animation: false,
     animationDuration: 500,
     animationDurationUpdate: 450,
     animationEasing: "cubicOut",
@@ -186,7 +186,6 @@ watch(() => props.points, () => nextTick(render), { deep: true });
 watch(() => props.metric, () => nextTick(render));
 watch(() => props.granularity, () => nextTick(render));
 watch(() => ui.isDark, () => nextTick(render));
-watch(() => ui.config.fx, () => nextTick(render));
 </script>
 
 <template>

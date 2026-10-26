@@ -106,14 +106,8 @@ function configPath() {
 function defaultConfig() {
   return {
     theme: "dark",
-    // 界面动效总开关（装饰层，默认开启）；粒子尘场 / 光池追随是它的两个独立子开关，默认关闭
-    // （两者是背景层最吃性能的两项，开启前设置页会给性能提示）；个性化鼠标样式默认开启
-    fx: true,
-    fxParticles: false,
-    fxPools: false,
-    fxCursor: true,
-    // 左栏模块顺序与板块开关（moduleOrder/modules）已随板块机制移除；
-    // 旧配置里的残留字段由 loadConfig 忽略，无需迁移
+    // 动效字段（fx/fxParticles/fxPools/fxCursor）已随动画系统移除；
+    // 旧配置里的残留字段由 loadConfig 剔除，无需迁移
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
@@ -463,6 +457,11 @@ function loadConfig() {
   // 旧配置的 moduleOrder/modules（板块排序与开关）已废弃：直接剔除，不再读写
   delete merged.moduleOrder;
   delete merged.modules;
+  // 旧配置的动效字段（fx/fxParticles/fxPools/fxCursor）已随动画系统移除：直接剔除
+  delete merged.fx;
+  delete merged.fxParticles;
+  delete merged.fxPools;
+  delete merged.fxCursor;
   merged.webdav.password = decryptSecret(merged.webdav.password);
   merged.webdavShared = normalizeShared(merged.webdavShared);
   merged.webdavShared.password = decryptSecret(merged.webdavShared.password);

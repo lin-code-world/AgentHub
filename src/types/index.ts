@@ -41,18 +41,6 @@ export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc
 
 export interface AppConfig {
   theme: Theme;
-  /** 界面动效总开关（仅展示层）：默认开启，用户在设置里关闭后本机记住；
-      false 时恢复系统鼠标指针并停用装饰动画，业务逻辑不受影响 */
-  fx: boolean;
-  /** 粒子尘场（界面动效的子开关，默认关闭）：最底层 canvas 尘粒，
-      持续重绘并驱动毛玻璃重新采样，是背景层最吃性能的一项 */
-  fxParticles: boolean;
-  /** 光池追随（界面动效的子开关，默认关闭）：鼠标互动光影——
-      两团跟随光标游走的光斑、玻璃壳随光标的反光、卡片悬停聚光与液态背景的光标视差 */
-  fxPools: boolean;
-  /** 个性化鼠标样式（界面动效的子开关，默认开启）：液滴光标 + 点击涟漪；
-      关闭后恢复系统指针，业务逻辑不受影响 */
-  fxCursor: boolean;
   /** 软件更新：channel 更新通道；autoCheck 定时自动检查开关；notifiedVersion 由主进程维护（前端只读回传） */
   update: UpdateConfig;
   schedule: {

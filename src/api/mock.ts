@@ -27,10 +27,6 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
-    fx: true,
-    fxParticles: false,
-    fxPools: false,
-    fxCursor: true,
     update: { channel: "stable", autoCheck: true, notifiedVersion: "" },
     schedule: { minimizeToTray: true, shortcutToggle: "Alt+`", lightweightMode: false, autoStart: true },
     proxy: {
