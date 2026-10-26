@@ -76,12 +76,6 @@ onMounted(updateFades);
 
 <template>
   <nav class="tabs glass">
-    <!-- 左栏收缩后的展开入口：仅收缩态显示，点一下整个左栏回来 -->
-    <el-tooltip content="展开侧栏" placement="bottom" v-if="app.sideCollapsed">
-      <button class="tab tab-expand" @click="app.toggleSideCollapsed()">
-        <i class="ph ph-caret-double-right"></i>
-      </button>
-    </el-tooltip>
     <!-- 侧栏收缩/展开切换：常驻最左，图标随状态切换（展开态=收向左，收缩态=展向右） -->
     <el-tooltip :content="app.sideCollapsed ? '展开侧栏' : '收缩侧栏'" placement="bottom">
       <button class="tab tab-expand" @click="app.toggleSideCollapsed()">
