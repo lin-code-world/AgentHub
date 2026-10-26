@@ -5,7 +5,7 @@
 # AgentApiGateway —— 反代网关
 
 <p align="center">
-  <a href="./README.md">简体中文</a> · <a href="./README.en.md">English</a>
+  <a href="./README.md">简体中文</a>
 </p>
 
 > 把订阅额度变成标准 API，任何客户端都能调。
@@ -56,10 +56,9 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 - 不需要预装 Node、浏览器等任何依赖，运行时已打包在内
 - 需要本机登录过对应客户端（号池里要接入对应渠道的账号）
 
-### 数据、更新与备份
+### 数据与备份
 
-- 所有配置与数据都存在 `%APPDATA%\AgentApiGateway`，卸载程序不会删除它
-- 自动更新：默认**每小时**检查一次 GitHub Releases，检测到新版本会在侧栏设置齿轮和「设置 · 通用」的更新按钮上冒红点；自动检查可在「设置 · 通用」关闭
+- 所有配置与数据都存在 `%APPDATA%\AgentHub`，卸载程序不会删除它
 - 左下角「设置」= 全局项（通用 / WebDAV 同步 / 同步时间）；反代网关右上角还有一个「配置」按钮，管的是网关自己的设置
 
 ---

@@ -130,7 +130,6 @@ export const saveConfig = (cfg: AppConfig) =>
   call<{ ok: boolean; message: string }>("save_config", { config: JSON.parse(JSON.stringify(cfg)) });
 
 // ===== 框架：其它 =====
-export const getAppVersion = () => call<string>("get_app_version");
 export const getDataDir = () => call<string>("get_data_dir");
 export const openDataDir = () => call<void>("open_data_dir");
 // 等用户操作原生目录选择框，时长不可控，关掉看门狗
