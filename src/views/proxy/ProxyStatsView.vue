@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import * as api from "../../api/ipc";
-import type { ProxyGatewayStatus, ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsKeyRow } from "../../types";
+import type { ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsKeyRow } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { fmtInt, fmtK, fmtMs, fmtTime, fmtDate, fmtAgo, channelName, statusCls } from "./format";
 import { coalesceAsync } from "../../utils/timing";
@@ -24,37 +24,6 @@ import StatsTrendChart from "../../components/proxy/StatsTrendChart.vue";
 import StatsDonutChart from "../../components/proxy/StatsDonutChart.vue";
 
 const app = useAppStore();
-
-// ===== 网关服务开关（总览兼作网关操作入口）：状态 / 启停（失败走 toast）=====
-const st = ref<ProxyGatewayStatus | null>(null);
-const svcBusy = ref(false);
-
-async function refreshSvc() {
-  try {
-    st.value = await api.proxyStatus();
-  } catch {
-    /* 统计区的 err 已有展示，服务状态拉不到就保留旧值 */
-  }
-}
-
-async function toggleService() {
-  if (svcBusy.value) return;
-  svcBusy.value = true;
-  const wasRunning = !!st.value?.running;
-  try {
-    const r = wasRunning ? await api.proxyStop() : await api.proxyStart();
-    if (r && (r as { ok?: boolean }).ok === false) ElMessage.error((r as { message?: string }).message || "操作失败");
-    else {
-      app.config.proxy.restoreOnLaunch = !wasRunning; // 后端已落盘，同步内存里的配置让配置页开关跟手
-      ElMessage.success(wasRunning ? "网关服务已停止" : "网关服务已启动");
-    }
-  } catch (e) {
-    ElMessage.error(String((e as Error).message || e));
-  } finally {
-    svcBusy.value = false;
-    await refreshSvc();
-  }
-}
 
 // ===== 时间区间 =====
 const PRESETS = [
@@ -290,18 +259,13 @@ watch(
 watch([() => filters.key, () => filters.channel, () => filters.status], applyFilter);
 
 watch(active, (on) => {
-  if (on) {
-    refreshSvc();
-    scheduleRefresh();
-  } else {
-    scheduleRefresh.cancel();
-  }
+  if (on) scheduleRefresh();
+  else scheduleRefresh.cancel();
 });
 
 let offEvent: (() => void) | undefined;
 
 onMounted(() => {
-  refreshSvc();
   reload();
   // 请求流水变化（后端已节流为每 2s 至多一条）驱动本页刷新，无需轮询；
   // 明细/趋势/排行全部实时直查 usage_requests 流水，事件即变更信号
@@ -334,11 +298,6 @@ onUnmounted(() => {
         <el-date-picker v-if="preset === 'custom'" :model-value="customRange" type="daterange" value-format="YYYY-MM-DD" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="glass-popper" class="f-date-range" @update:model-value="pickCustomRange" />
         <span class="range-hint">{{ rangeLabel }} · {{ ov?.range.granularity === "hour" ? "按小时" : "按天" }}</span>
         <div class="spacer"></div>
-        <span class="svc-port" :title="`网关监听 ${app.config.proxy.bind}:${app.config.proxy.port}`">:{{ app.config.proxy.port }}</span>
-        <button class="btn btn-sm svc-toggle" :class="{ 'is-on': st?.running }" :disabled="svcBusy" :title="st?.running ? '点击停止网关服务' : '点击启动网关服务'" @click="toggleService">
-          <span class="svc-dot" :class="{ off: !st?.running }"></span>
-          {{ svcBusy ? "切换中…" : st?.running ? "服务已开启" : "服务已关闭" }}
-        </button>
         <button class="btn btn-sm" @click="reload"><i class="ph ph-arrows-clockwise"></i> 刷新</button>
         <button class="btn btn-sm" @click="openClean"><i class="ph ph-broom"></i> 清理</button>
       </div>
@@ -580,38 +539,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* ===== 筛选栏内的网关服务开关与端口号 ===== */
-/* 端口号：mono 数字，悬停提示完整监听地址 */
-.svc-port {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-3);
-  cursor: default;
-}
-/* 服务开关：开着 = 主题色描边 + 状态点亮；关着 = 灰态，一眼可辨 */
-.svc-toggle .svc-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-  vertical-align: middle;
-}
-.svc-toggle .svc-dot.off {
-  background: var(--text-3);
-  box-shadow: none;
-}
-.svc-toggle.is-on {
-  border-color: var(--accent-line);
-  color: var(--accent-strong);
-}
-.svc-toggle:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 /* 筛选栏固定在页面顶部：滚动只发生在下方内容区（对齐操作日志页的筛选栏配方） */
 .stats-filters {
   position: sticky;
