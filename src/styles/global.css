@@ -232,15 +232,21 @@ body {
     radial-gradient(ellipse 78% 78% at 50% 50%, transparent 62%, var(--accent-dim), transparent 78%);
 }
 
-/* ===== 骨架：左栏 + 顶部横条（子页面切换）+ 主舞台 ===== */
+/* ===== 骨架：左栏 + 顶部横条（子页面切换）+ 主舞台 =====
+   左栏展开 300px；收缩态（.side-collapsed）整列收起，主区占满——
+   收缩/展开的入口分别在侧栏底部操作条与页签条最左 */
 .app {
   display: grid;
-  grid-template-columns: 258px 1fr;
+  grid-template-columns: 300px 1fr;
   grid-template-rows: auto 1fr;
   grid-template-areas: "side tabs" "side main";
   height: 100vh;
   padding: var(--gap-shell);
   gap: var(--gap-shell);
+}
+.app.side-collapsed {
+  grid-template-columns: 0 1fr;
+  grid-template-areas: "tabs" "main";
 }
 
 /* ===== 主舞台 ===== */
@@ -968,6 +974,10 @@ body {
     padding: 10px;
     gap: 10px;
   }
+  .app.side-collapsed {
+    grid-template-columns: 0 1fr;
+    grid-template-areas: "tabs" "main";
+  }
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -987,6 +997,10 @@ body {
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 200px 1fr;
+  }
+  .app.side-collapsed {
+    grid-template-columns: 0 1fr;
+    grid-template-areas: "tabs" "main";
   }
 }
 @media (max-height: 620px) {

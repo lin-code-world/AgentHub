@@ -76,8 +76,8 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
        el-date-picker 面板的月份/星期等内置文案全靠这里，删掉会静默回退英文。
        provider 自身不渲染 DOM 节点（config-provider 直接 renderSlot default），
        包一层不改变结构与 .app 的背景层叠。 -->
-  <div class="app">
-    <Sidebar />
+  <div class="app" :class="{ 'side-collapsed': app.sideCollapsed }">
+    <Sidebar v-if="!app.sideCollapsed" />
     <PageTabs />
     <main class="main glass">
       <div class="pages">

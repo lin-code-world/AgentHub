@@ -105,6 +105,14 @@ export const useAppStore = defineStore("app", {
     // ===== 全局设置弹窗（左下角设置按钮）：通用 / WebDAV 同步 / 数据与备份 =====
     settingsOpen: false,
     settingsTab: "general" as SettingsTab,
+    /** 左栏容器收缩态：收起后主区占满，入口留在页签条最左（状态本机记住） */
+    sideCollapsed: (() => {
+      try {
+        return localStorage.getItem("agenthub.sideCollapsed") === "1";
+      } catch {
+        return false;
+      }
+    })(),
     /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
     pageBeforeConfig: "",
   }),
@@ -227,6 +235,15 @@ export const useAppStore = defineStore("app", {
     setPage(id: string) {
       this.settingsOpen = false;
       this.activePage = id;
+    },
+    /** 左栏收缩/展开：状态本机记住（与页面镜像同款 localStorage 方案） */
+    toggleSideCollapsed() {
+      this.sideCollapsed = !this.sideCollapsed;
+      try {
+        localStorage.setItem("agenthub.sideCollapsed", this.sideCollapsed ? "1" : "0");
+      } catch {
+        /* 写不进只影响下次冷启动 */
+      }
     },
   },
 });

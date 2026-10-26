@@ -213,8 +213,9 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
               {{ c.display }}<span v-if="c.summary.expiringSoon" class="ov-tag warn">即将到期</span>
             </div>
             <div class="ov-meta">
-              {{ c.summary.accountCount ? `${c.summary.onlineCount}/${c.summary.accountCount} 可用` : "空号池" }}<template v-if="c.summary.earliestExpire"> · 最早到期 {{ fmtDay(c.summary.earliestExpire) }}</template>
+              {{ c.summary.accountCount ? `${c.summary.onlineCount}/${c.summary.accountCount} 可用` : "空号池" }}
             </div>
+            <div v-if="c.summary.earliestExpire" class="ov-meta">最早到期 {{ fmtDay(c.summary.earliestExpire) }}</div>
           </div>
           <b class="ov-num">{{ fmtBalance(c.summary.totalCredits, c.id) }}<span class="ov-unit">{{ balanceUnit(c.id) }}</span></b>
         </div>
@@ -223,8 +224,13 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         </div>
       </div>
 
-      <!-- 左下角全局操作：版本 / 署名 / 亮暗 / 设置 -->
+      <!-- 左下角全局操作：收缩侧栏 / 亮暗 / 设置 -->
       <div class="side-foot">
+        <el-tooltip content="收缩侧栏" placement="top">
+          <button class="btn btn-ghost" @click="app.toggleSideCollapsed()">
+            <i class="ph ph-caret-double-left"></i>
+          </button>
+        </el-tooltip>
         <el-tooltip content="切换亮暗主题" placement="top">
           <button class="btn btn-ghost" @click="app.toggleTheme()">
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
@@ -428,7 +434,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .mc-gw-switch-text {
   font-size: 9.5px;
   font-weight: 600;
-  color: var(--text-2); /* 关态：比滑块灰底亮一档的正文色，保证可读 */
+  color: #e07f44; /* 关态：橙色调，与服务开/关的提示语义呼应 */
   user-select: none;
   line-height: 1;
 }
