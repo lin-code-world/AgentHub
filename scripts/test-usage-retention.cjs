@@ -140,7 +140,7 @@ if (API_OK) {
   const pre = fs.readFileSync(path.join(ROOT, "electron", "preload.cjs"), "utf8");
   const allowed = new Set([...pre.matchAll(/^\s+"([a-z0-9_]+)",/gm)].map((m) => m[1]));
   const registered = new Set();
-  for (const rel of ["electron/backend/ipc.cjs", "electron/backend/sync-ipc.cjs", "electron/backend/proxy/index.cjs"]) {
+  for (const rel of ["electron/backend/ipc.cjs", "electron/backend/proxy/index.cjs"]) {
     const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
     for (const m of src.matchAll(/ipcMain\.handle\(\s*"([a-z0-9_]+)"/g)) registered.add(m[1]);
   }

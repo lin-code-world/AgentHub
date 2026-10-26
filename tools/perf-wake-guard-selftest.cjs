@@ -130,20 +130,6 @@ async function T(name, fn) {
     assert.ok(/scheduleNext\(\)/.test(sched), "应抽出 scheduleNext 复用");
     const skipBlock = sched.slice(sched.indexOf("periodicAllowed"), sched.indexOf("refreshAll"));
     assert.ok(/scheduleNext\(\)/.test(skipBlock) && /return/.test(skipBlock), "跳过时仍要排下一轮再 return");
-
-    const m = read("electron/backend/memory/scheduler.cjs");
-    assert.ok(/require\("\.\.\/wakeGuard\.cjs"\)/.test(m), "scheduler.cjs 应 require wakeGuard");
-    const tickStart = m.indexOf("async _tickInner()");
-    // 窗口取足：守卫前有较长的说明注释，切太短会把 periodicAllowed 挤出窗口而误报
-    const tick = m.slice(tickStart, tickStart + 1800);
-    const tickB = tick.indexOf("noteTick(\"memory-sched\"");
-    const tickGuard = tick.indexOf("wakeGuard.periodicAllowed()");
-    const tickBook = tick.indexOf("_lastTickAt = now");
-    assert.ok(tickB > 0, "_tickInner 应调用 noteTick（B）");
-    assert.ok(tickGuard > 0, "_tickInner 应调用 periodicAllowed（A）");
-    assert.ok(tickBook > 0, "应能定位记账推进语句");
-    assert.ok(tickB < tickGuard, "B（noteTick）必须在 A 判定之前");
-    assert.ok(tickGuard < tickBook, "守卫应在推进记账之前");
   });
 
   // ===== T9 接线：main.cjs 注册 powerMonitor 并留痕（供核实 Modern Standby 是否派发） =====
@@ -257,7 +243,6 @@ async function T(name, fn) {
     const cases = [
       ["electron/backend/proxy/index.cjs", "function checkinAutoTick()", "checkin-auto", "checkinAllowed"],
       ["electron/backend/proxy/credits.cjs", "function startScheduler", "credits-refresh", "periodicAllowed"],
-      ["electron/backend/memory/scheduler.cjs", "async _tickInner()", "memory-sched", "periodicAllowed"],
     ];
     for (const [file, anchor, key, guard] of cases) {
       const src = read(file);

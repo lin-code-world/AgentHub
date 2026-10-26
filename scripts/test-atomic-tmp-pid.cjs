@@ -188,8 +188,8 @@ async function race(mode) {
     const bad = [];
     for (const f of files) {
       const src = fs.readFileSync(f, "utf8");
-      // 只认「同一个 tmp 变量既 writeFileSync 又被 renameSync」这个形态：remotesync.cjs 的
-      // .remote-tmp 是下载目录（不是 rename 源），不该被算进来
+      // 只认「同一个 tmp 变量既 writeFileSync 又被 renameSync」这个形态：下载目录等
+      // 非 rename 源不该被算进来
       for (const m of src.matchAll(/const tmp = ([^;\n]+);/g)) {
         const after = src.slice(m.index, m.index + 600);
         if (/writeFileSync\(\s*tmp\b/.test(after) && /renameSync\(\s*tmp\b/.test(after)) {
