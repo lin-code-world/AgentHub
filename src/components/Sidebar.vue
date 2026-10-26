@@ -224,13 +224,8 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         </div>
       </div>
 
-      <!-- 左下角全局操作：收缩侧栏 / 亮暗 / 设置 -->
+      <!-- 左下角全局操作：亮暗 / 设置（侧栏收缩入口统一在页签条最左） -->
       <div class="side-foot">
-        <el-tooltip content="收缩侧栏" placement="top">
-          <button class="btn btn-ghost" @click="app.toggleSideCollapsed()">
-            <i class="ph ph-caret-double-left"></i>
-          </button>
-        </el-tooltip>
         <el-tooltip content="切换亮暗主题" placement="top">
           <button class="btn btn-ghost" @click="app.toggleTheme()">
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>

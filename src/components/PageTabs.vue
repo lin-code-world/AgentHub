@@ -82,6 +82,12 @@ onMounted(updateFades);
         <i class="ph ph-caret-double-right"></i>
       </button>
     </el-tooltip>
+    <!-- 侧栏收缩/展开切换：常驻最左，图标随状态切换（展开态=收向左，收缩态=展向右） -->
+    <el-tooltip :content="app.sideCollapsed ? '展开侧栏' : '收缩侧栏'" placement="bottom">
+      <button class="tab tab-expand" @click="app.toggleSideCollapsed()">
+        <i class="ph" :class="app.sideCollapsed ? 'ph-caret-double-right' : 'ph-caret-double-left'"></i>
+      </button>
+    </el-tooltip>
     <div ref="scrollEl" class="tabs-scroll" @scroll.passive="updateFades" @wheel="onWheel">
       <button
         v-for="p in app.pagesOf"
