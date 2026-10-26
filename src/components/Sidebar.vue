@@ -392,17 +392,16 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .mc-stats {
   display: flex;
   flex-wrap: wrap; /* 挤不下时「上游启闭」按钮换行右对齐，数字不被压缩 */
-  align-items: flex-end;
-  gap: 12px;
-  margin-top: 10px;
+  align-items: center;
+  gap: 10px 16px;
+  padding-right: 72px; /* 第一行右侧让位给覆盖的网关服务开关 */
 }
-/* 网关服务开关：覆盖在反代网关卡右上角（原 mc-state 状态位），不触发卡片切换
-   加宽的带文案开关（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
+/* 网关服务开关：覆盖在反代网关卡右上角（scoped 覆盖全局 40×22 的 .switch：64 宽，滑块行程 44px）
    关 = 滑块在左、文案「服务关」靠右；开 = 滑块在右、文案「服务开」靠左（绿底深字） */
 .mc-gw-switch {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 14px;
   width: 64px;
   display: inline-flex;
   align-items: center;
@@ -433,9 +432,15 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 }
 .mc-stat b {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
+  color: var(--text);
   display: block;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.module-card.active .mc-stat b {
+  color: var(--accent-strong);
 }
 /* 数字后的弱化单位（台/个/条）：与下卡片 .ov-unit 同构的两段式 */
 .mc-unit {
@@ -446,21 +451,23 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   font-family: var(--font-ui);
 }
 .mc-stat span {
-  font-size: 9px;
+  display: block;
+  margin-top: 3px;
+  font-size: 9.5px;
   color: var(--text-3);
 }
-/* 上游启闭小按钮（仅反代网关卡）：绿色描边常态，悬停点亮加深，与免责问号同色系 */
+/* 上游启闭小按钮（仅反代网关卡）：绿色描边常态，悬停点亮加深 */
 .mc-up-btn {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
+  gap: 4px;
+  padding: 3px 9px;
   border-radius: var(--r-pill);
   border: 1px solid var(--accent-line);
   background: transparent;
-  color: var(--text-3);
-  font-size: 9px;
+  color: var(--text-2);
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
