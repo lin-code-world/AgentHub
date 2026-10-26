@@ -204,23 +204,23 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         <span class="ov-hint">{{ OVERVIEW[app.activeModule].hint }}</span>
       </div>
       <div class="ov-body">
-        <!-- 反代网关：渠道额度（号池实时数据，渠道增减自动跟进） -->
-        <template>
-          <div v-for="c in visibleChannels" :key="c.id" class="ov-row">
-            <div class="grow">
-              <div class="ov-name">
-                {{ c.display }}<span v-if="c.summary.expiringSoon" class="ov-tag warn">即将到期</span>
-              </div>
-              <div class="ov-meta">
-                {{ c.summary.accountCount ? `${c.summary.onlineCount}/${c.summary.accountCount} 可用` : "空号池" }}<template v-if="c.summary.earliestExpire"> · 最早到期 {{ fmtDay(c.summary.earliestExpire) }}</template>
-              </div>
+        <!-- 反代网关：渠道额度（号池实时数据，渠道增减自动跟进）。
+             注意：这里不能用 <template> 做分组——无指令的 template 会被 Vue 编译成不渲染的
+             惰性 fragment（内容进 content 文档片段），整个渠道列表会凭空消失 -->
+        <div v-for="c in visibleChannels" :key="c.id" class="ov-row">
+          <div class="grow">
+            <div class="ov-name">
+              {{ c.display }}<span v-if="c.summary.expiringSoon" class="ov-tag warn">即将到期</span>
             </div>
-            <b class="ov-num">{{ fmtBalance(c.summary.totalCredits, c.id) }}<span class="ov-unit">{{ balanceUnit(c.id) }}</span></b>
+            <div class="ov-meta">
+              {{ c.summary.accountCount ? `${c.summary.onlineCount}/${c.summary.accountCount} 可用` : "空号池" }}<template v-if="c.summary.earliestExpire"> · 最早到期 {{ fmtDay(c.summary.earliestExpire) }}</template>
+            </div>
           </div>
-          <div v-if="!visibleChannels.length" class="ov-row">
-            <div class="grow"><div class="ov-meta">{{ channels.length ? "无可用余额渠道（已过期或额度耗尽）" : "号池尚未接入或加载中" }}</div></div>
-          </div>
-        </template>
+          <b class="ov-num">{{ fmtBalance(c.summary.totalCredits, c.id) }}<span class="ov-unit">{{ balanceUnit(c.id) }}</span></b>
+        </div>
+        <div v-if="!visibleChannels.length" class="ov-row">
+          <div class="grow"><div class="ov-meta">{{ channels.length ? "无可用余额渠道（已过期或额度耗尽）" : "号池尚未接入或加载中" }}</div></div>
+        </div>
       </div>
 
       <!-- 左下角全局操作：版本 / 署名 / 亮暗 / 设置 -->
