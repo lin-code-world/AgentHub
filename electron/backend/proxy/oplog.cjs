@@ -29,7 +29,12 @@ function log(level, op, message, extra) {
       target: redact((extra && extra.target) || ""),
       detail: redact((extra && extra.detail) || ""),
     });
-  } catch { /* 日志失败不影响业务 */ }
+  } catch { /* 日志失败不影响业务 */ return; }
+  // 落库后通知前端（300ms 节流，事件体不带内容，见 events.cjs notify）：
+  // 延迟 require 防加载顺序耦合；通知失败同样不反噬业务动作
+  try {
+    require("./events.cjs").notify("oplog");
+  } catch { /* 通知失败不影响业务 */ }
 }
 
 /** 分页列表（时间倒序）：{ from, to, level, op, limit, offset } → { rows, total } */

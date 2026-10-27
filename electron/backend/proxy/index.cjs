@@ -1367,8 +1367,8 @@ function register(ipcMain) {
   }));
 
   // ===== 操作日志（反代网关「日志」页签）：分页查询 / 类型下拉 / 导出 Excel =====
-  ipcMain.handle("proxy_oplog_list", handle(({ from, to, level, op, limit, offset }) =>
-    oplog.list({ from, to, level, op, limit, offset })));
+  ipcMain.handle("proxy_oplog_list", handle(({ from, to, level, op, limit, offset, sinceId }) =>
+    oplog.list({ from, to, level, op, limit, offset, sinceId })));
   ipcMain.handle("proxy_oplog_ops", handle(() => oplog.listOps()));
   ipcMain.handle("proxy_oplog_export", handle(({ from, to, level, op }) => {
     const rows = oplog.exportRows({ from, to, level, op });

@@ -14,7 +14,8 @@
 // 命令清单与 /api/rpc 门控按 browser 形态下发（modeOf/denyReason 的 form 参数，文案见 commandTable.cjs）。
 //
 // 结构上只依赖注入的 commandTable（collect/modeOf/denyReason）、adminCrypto 的会话鉴权与
-// proxy/server.cjs 的轻量 status() 读数，不碰反代转发、选号、冷却、鉴权、计费：
+// proxy/server.cjs 的轻量 status() 读数（事件桥另只订阅 proxy/platform 的事件出口，只读不写），
+// 不碰反代转发、选号、冷却、鉴权、计费：
 // start({ port, commandTable, staticDir }) 的 port 是**反代端口**（监听 port + 1），返回实际监听端口，
 // 容器形态（gateway）后续只换注入的命令表与 staticDir 即可复用。
 // start/stop 在模块内串行化：并发调用若先检查后赋值，会两个都 listen、stop 只关一个（端口泄漏）。
@@ -81,9 +82,9 @@ function capabilitiesOf(commands, commandTable) {
     platform: platformForm(),
     version: appVersion(),
     modules: modulesOf(commands),
-    // 浏览器边界声明（Ruling 17）：服务启停 / SSE / 文件对话框在浏览器形态都不可用。
-    // /api/events 加密通道已在，但真实事件源接通前不对外声明 SSE（任务 11 接通后再置 true）
-    features: { serviceControl: false, sse: false, fileDialog: false },
+    // 浏览器边界声明（Ruling 17）：服务启停 / 文件对话框在浏览器形态都不可用；
+    // SSE 已接通真实事件源（事件桥 ensureEventBridge 把 platform 事件写进 /api/events），按 Ruling 17 置回 true
+    features: { serviceControl: false, sse: true, fileDialog: false },
     commands: out,
   };
 }
@@ -124,7 +125,27 @@ function loginRateLimited(ip) {
 }
 
 // ===== SSE 长连接登记：改令牌清空会话时要连带关掉（否则旧会话的流还在推数据） =====
-const sseClients = new Set(); // { res, timer, sessionId }
+const sseClients = new Set(); // { res, timer, sessionId, keys }
+
+// ===== 真实事件桥：platform 的事件出口 → SSE 加密帧 =====
+// 信封与桌面 IPC 的 app:event 完全同形（{event:"proxy", ...payload}），前端 onUpdateEvent
+// 两种形态共用同一套消费逻辑（日志/统计准实时刷新）。事件体不带内容（见 events.cjs notify），
+// 订阅一次挂在模块级（sseClients 是模块级集合，服务重启无需解绑/重绑）；
+// platform 不可用（纯 Node 自测等）时安静降级为 hello/ping 心跳。
+let offEmit = null;
+function ensureEventBridge() {
+  if (offEmit) return;
+  try {
+    const platform = require("./proxy/platform/index.cjs");
+    offEmit = platform.onEmit((payload) => {
+      for (const client of [...sseClients]) {
+        if (!sendFrame(client, client.keys, { event: "proxy", ...payload })) closeSse(client); // 连接已断：收尾
+      }
+    });
+  } catch {
+    /* 平台层不可用：SSE 只剩心跳，不阻断管理服务 */
+  }
+}
 
 function sendFrame(client, keys, payload) {
   try {
@@ -217,7 +238,7 @@ function eventsHandler() {
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     if (typeof res.flushHeaders === "function") res.flushHeaders();
-    const client = { res, timer: null, sessionId: q.sessionId, seq: 0 };
+    const client = { res, timer: null, sessionId: q.sessionId, seq: 0, keys: v.keys };
     sseClients.add(client);
     sendFrame(client, v.keys, { type: "hello", ts: Date.now() });
     client.timer = setInterval(() => {
@@ -237,6 +258,7 @@ function __setSseHeartbeatMs(ms) {
 function buildApp({ commandTable, staticDir }) {
   const commands = commandTable.collect(); // 命令表启动时收集一次（注册副作用幂等，时机在反代 boot 之后）
   const caps = capabilitiesOf(commands, commandTable);
+  ensureEventBridge(); // 真实事件 → SSE 广播（幂等，订阅一次即可）
   const app = express();
   app.disable("x-powered-by");
   const jsonBody = express.json({ limit: "1mb" });

@@ -87,6 +87,7 @@ const EXPECTED = [
   "C2 清空会话后 SSE 连接关闭",
   "C3 SSE 帧 seq 单调递增（Ruling 19）",
   "C4 会话过期后 SSE 连接被关闭",
+  "C5 platform 事件经事件桥广播为加密 SSE 帧（信封同 app:event、事件体不带内容）",
   "D1 登录限流：每 IP 每分钟 20 次，超出 429",
 ];
 
@@ -478,6 +479,44 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   adminCrypto.__setNow(() => nowMs());
   admin.__setSseHeartbeatMs(0);
   ok("C4 会话过期后 SSE 连接被关闭（心跳发现过期）", expiredClosed);
+
+  // ===== C5：真实事件广播到 SSE（任务 11 事件桥）：platform 事件 → 加密事件帧 =====
+  const sC5 = loginUnit(makeClient());
+  const tsC5 = nowMs();
+  const nonceC5 = b64(16);
+  const ctrlC5 = new AbortController();
+  const sseRes5 = await fetch(`${ADMIN_URL}/api/events?sessionId=${encodeURIComponent(sC5.sessionId)}&ts=${tsC5}&nonce=${encodeURIComponent(nonceC5)}&sig=${encodeURIComponent(reqSig(sC5.keys, sC5.sessionId, "GET", "/api/events", tsC5, nonceC5, ""))}`, { signal: ctrlC5.signal });
+  const reader5 = sseRes5.body.getReader();
+  const dec5 = new TextDecoder();
+  let buf5 = "";
+  while (!buf5.includes("\n\n")) {
+    const chunk = await reader5.read();
+    if (chunk.done) break;
+    buf5 += dec5.decode(chunk.value, { stream: true });
+  }
+  const framesOf = (s) =>
+    s
+      .split("\n")
+      .filter((l) => l.startsWith("data: "))
+      .map((l) => JSON.parse(l.slice(6)))
+      .map((f) => JSON.parse(openWith(sC5.keys.kResp, f.iv, f.ciphertext)));
+  require(path.join(ROOT, "electron", "backend", "proxy", "platform", "index.cjs")).emit({ type: "oplog" });
+  let evtFrames = framesOf(buf5);
+  const t5 = setTimeout(() => ctrlC5.abort(), 5000);
+  try {
+    while (evtFrames.length < 2) {
+      const next = await reader5.read();
+      if (next.done) break;
+      buf5 += dec5.decode(next.value, { stream: true });
+      evtFrames = framesOf(buf5);
+    }
+  } catch {
+    /* 超时中断：按已收到的帧判 */
+  }
+  clearTimeout(t5);
+  ctrlC5.abort();
+  const evt = evtFrames[1] || null;
+  ok("C5 platform 事件经事件桥广播为加密 SSE 帧（信封同 app:event、事件体不带内容）", !!evt && evt.event === "proxy" && evt.type === "oplog" && evt.seq === 2 && !("message" in evt) && !("detail" in evt), `frames=${JSON.stringify(evtFrames)}`);
 
   // ===== Part D：登录限流（放最后：打满窗口配额后本进程不能再登录） =====
   let first429 = 0;

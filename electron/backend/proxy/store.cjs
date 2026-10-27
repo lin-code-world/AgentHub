@@ -1097,16 +1097,20 @@ function opLogWhere(filter) {
   return { clause: where.length ? ` WHERE ${where.join(" AND ")}` : "", vals };
 }
 
-/** 分页列表（时间倒序；limit 1~200 封顶） */
+/** 分页列表（时间倒序；limit 1~200 封顶）。
+ *  sinceId：增量拉取专用（前端「日志」页收到 oplog 通知后用）——只返回 id > sinceId 的新行，
+ *  按 id 升序（旧→新，前端倒排后拼到列表头部），忽略 offset；total 仍是筛选下的总数（分页标题用） */
 function listOpLogs(filter) {
   open();
   const { clause, vals } = opLogWhere(filter || {});
   const total = db.prepare(`SELECT COUNT(*) AS n FROM op_logs${clause}`).get(...vals).n;
-  const rows = db.prepare(`SELECT * FROM op_logs${clause} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`).all(
-    ...vals,
-    Math.max(1, Math.min(200, Number(filter.limit) || 50)),
-    Math.max(0, Number(filter.offset) || 0)
-  );
+  const limit = Math.max(1, Math.min(200, Number(filter && filter.limit) || 50));
+  const sinceId = Number(filter && filter.sinceId) || 0;
+  if (sinceId > 0) {
+    const rows = db.prepare(`SELECT * FROM op_logs${clause}${clause ? " AND" : " WHERE"} id > ? ORDER BY id ASC LIMIT ?`).all(...vals, sinceId, limit);
+    return { rows, total };
+  }
+  const rows = db.prepare(`SELECT * FROM op_logs${clause} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`).all(...vals, limit, Math.max(0, Number(filter && filter.offset) || 0));
   return { rows, total };
 }
 
@@ -1259,6 +1263,11 @@ function insertUsage(row) {
     row.status || 0,
     String(row.error || "").slice(0, 300)
   );
+  // 落库后通知统计页（500ms 节流，事件体不带内容，见 events.cjs notify）：
+  // 延迟 require 防加载顺序耦合；通知失败绝不影响流水落库（tools/event-throttle-selftest.cjs 守）
+  try {
+    require("./events.cjs").notify("stats");
+  } catch { /* 通知失败不影响落库 */ }
 }
 
 /** 总览指标：今日请求/token/成功率/TTFT 均值 */

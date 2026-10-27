@@ -371,6 +371,8 @@ export interface ProxyOpLogFilter {
   op?: string;
   limit?: number;
   offset?: number;
+  /** 增量拉取：只返回 id > sinceId 的新日志（按 id 升序），忽略 offset；total 仍是筛选总数（见 store.listOpLogs） */
+  sinceId?: number;
 }
 export const proxyOpLogList = (filter: ProxyOpLogFilter) => call<ProxyOpLogList>("proxy_oplog_list", filter as Record<string, unknown>);
 export const proxyOpLogOps = () => call<string[]>("proxy_oplog_ops");

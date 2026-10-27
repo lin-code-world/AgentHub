@@ -11,10 +11,11 @@
 <script setup lang="ts">
 // 反代网关 · 操作日志（「日志」页签）：反代网关各项操作一条一条落库（op_logs 表，stats.db），
 // 这里分页展示 + 时间段/等级/操作筛选 + 导出 Excel。写入点见 backend/proxy/oplog.cjs 模块头。
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
 import { denyState } from "../../api/caps";
+import { coalesceAsync } from "../../utils/timing";
 import type { ProxyOpLogRow } from "../../types";
 
 const app = useAppStore();
@@ -30,6 +31,8 @@ const filter = reactive({
 
 const rows = ref<ProxyOpLogRow[]>([]);
 const total = ref(0);
+/** 增量基线：当前页已知的最大日志 id（第 0 页即全表最新一条），准实时刷新用它拉 sinceId 增量 */
+const lastId = ref(0);
 const error = ref("");
 const page = ref(0);
 const pageSize = 20;
@@ -64,6 +67,7 @@ async function load() {
     rows.value = r?.rows || [];
     total.value = r?.total || 0;
     error.value = "";
+    if (page.value === 0 && rows.value.length) lastId.value = rows.value[0].id;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "加载失败";
   }
@@ -78,9 +82,51 @@ async function loadOps() {
   }
 }
 
+/** 增量拉取：第 0 页用 sinceId 只取新日志（id 升序）倒排拼到表头；其它页新行会挤动分页，整页重拉 */
+async function loadIncremental() {
+  if (page.value !== 0 || lastId.value <= 0) return load();
+  const { from, to } = rangeToMs();
+  try {
+    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, sinceId: lastId.value, limit: 200 });
+    const added = r?.rows || [];
+    if (added.length) {
+      rows.value = [...added.slice().reverse(), ...rows.value].slice(0, pageSize);
+      lastId.value = added[added.length - 1].id;
+    }
+    total.value = r?.total ?? total.value;
+    error.value = "";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "加载失败";
+  }
+}
+
+/** 本页是否处于前台：页面经 v-show 保活，事件刷新只在激活时跑，切走即停 */
+const active = computed(() => app.activeModule === "proxy" && app.activePage === "proxylog");
+// 事件与 15s 兜底轮询共用一条 2s 节流（准实时也「最多 2 秒刷新一次」）
+const scheduleLiveRefresh = coalesceAsync(loadIncremental, 2000);
+let liveTimer = 0;
+let offEvent: (() => void) | undefined;
+
 onMounted(() => {
   load();
   loadOps();
+  // 新日志落库（后端 300ms 节流为 {type:"oplog"}，事件体不带内容）→ 拉增量，页面不可见不处理
+  offEvent = api.onUpdateEvent((e) => {
+    const p = e as { event?: string; type?: string };
+    if (p.event !== "proxy" || p.type !== "oplog") return;
+    if (!active.value) return;
+    scheduleLiveRefresh();
+  });
+  // 15s 兜底轮询：事件丢失（断流 / 休眠唤醒）时补一针，页面不可见不执行
+  liveTimer = window.setInterval(() => {
+    if (active.value) scheduleLiveRefresh();
+  }, 15000);
+});
+
+onUnmounted(() => {
+  window.clearInterval(liveTimer);
+  scheduleLiveRefresh.cancel();
+  if (offEvent) offEvent();
 });
 
 // v-show 常驻页：切回该页时刷新（新操作随时产生，重进页面就要看到最新）

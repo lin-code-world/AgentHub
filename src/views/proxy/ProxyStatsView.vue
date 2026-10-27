@@ -263,23 +263,31 @@ watch(active, (on) => {
   else scheduleRefresh.cancel();
 });
 
+// 准实时刷新（任务 11）：usage 落库后后端 500ms 节流发 {type:"stats"}（事件体不带内容），
+// 前端再节流最多 2s 一次；15s 兜底轮询防事件丢失（断流 / 休眠唤醒），页面可见才执行
+const scheduleLiveRefresh = coalesceAsync(reload, 2000);
+let liveTimer = 0;
 let offEvent: (() => void) | undefined;
 
 onMounted(() => {
   reload();
-  // 请求流水变化（后端已节流为每 2s 至多一条）驱动本页刷新，无需轮询；
   // 明细/趋势/排行全部实时直查 usage_requests 流水，事件即变更信号
   offEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string };
-    if (p.event !== "proxy" || p.type !== "request") return;
+    if (p.event !== "proxy" || p.type !== "stats") return;
     if (!active.value) return;
-    scheduleRefresh();
+    scheduleLiveRefresh();
   });
+  liveTimer = window.setInterval(() => {
+    if (active.value) scheduleLiveRefresh();
+  }, 15000);
 });
 
 onUnmounted(() => {
   window.clearTimeout(searchTimer);
+  window.clearInterval(liveTimer);
   scheduleRefresh.cancel();
+  scheduleLiveRefresh.cancel();
   if (offEvent) offEvent();
 });
 </script>

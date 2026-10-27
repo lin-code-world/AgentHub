@@ -84,7 +84,7 @@ async function reachable(p) {
   ok('capabilities.modules 含 "proxy"', Array.isArray(caps.modules) && caps.modules.includes("proxy"), JSON.stringify(caps.modules));
   ok("capabilities.commands 带 mode（proxy_status=read / proxy_start=deny）", !!caps.commands && !!caps.commands.proxy_status && caps.commands.proxy_status.mode === "read" && !!caps.commands.proxy_start && caps.commands.proxy_start.mode === "deny", JSON.stringify(caps.commands && caps.commands.proxy_start));
   ok("browser 形态 deny 原因带「浏览器访问时不可用」口径", !!(caps.commands && caps.commands.proxy_start) && typeof caps.commands.proxy_start.reason === "string" && caps.commands.proxy_start.reason.startsWith("浏览器访问时不可用"), String(caps.commands && caps.commands.proxy_start && caps.commands.proxy_start.reason));
-  ok("Ruling 17：capabilities.features.sse === false（事件源接通前不声明 SSE）", !!caps.features && caps.features.sse === false && caps.features.serviceControl === false && caps.features.fileDialog === false, JSON.stringify(caps.features));
+  ok("Ruling 17：capabilities.features.sse === true（真实事件源已接通，前置条件满足）", !!caps.features && caps.features.sse === true && caps.features.serviceControl === false && caps.features.fileDialog === false, JSON.stringify(caps.features));
 
   // ===== Ruling 11 + 评审 Critical 1：browser 独立文案表，容器形态措辞不得泄漏到浏览器文案 =====
   const containerReason = commandTable.denyReason("proxy_start", "container");
