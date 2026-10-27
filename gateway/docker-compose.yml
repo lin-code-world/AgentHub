@@ -6,7 +6,7 @@
 # 管理：http://127.0.0.1:9528/api （默认只绑宿主本机；远程管理请前置带 TLS 的反向代理）
 #
 # 账号从哪来（详见 gateway/README.md §6）：
-#   POST /api/accounts/import 导入含 token 的凭据 JSON（桌面版「导出凭据」或手工生成）
+#   POST /api/accounts/import 导入含 token 的凭据 JSON（桌面版「导出明文凭据」或手工生成）
 # 注意：与桌面版共用同一个数据卷拿不到凭据——桌面凭据是 safeStorage 密文，容器解不开
 #
 # 环境变量：

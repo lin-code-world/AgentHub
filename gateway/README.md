@@ -17,7 +17,7 @@ OpenAI / Anthropic / Responses 三协议，自带 Web 控制台与管理 REST AP
 | — | 与桌面版共用同一个数据目录（凭据信封不兼容，见 §5.4） |
 
 **账号从哪来**（容器是空壳，必须先灌号）：
-**JSON 导入**（唯一通道）：桌面版「导出凭据」的明文凭据 JSON，或手工/脚本生成的含 token
+**JSON 导入**（唯一通道）：桌面版「导出 → 导出账号凭据」的明文 JSON，或手工/脚本生成的含 token
 JSON，走管理 API 或 Web 控制台，见 §6。
 
 ---
@@ -177,7 +177,7 @@ docker compose -f gateway/docker-compose.yml start
 
 桌面版的凭据用系统密钥（safeStorage/DPAPI）加密，**只在那台机器的那个用户下能解开**；
 容器（Linux）读到的会是解不开的密文，账号会显示"存在但没有 token"，转发必然失败——而且是静默的。
-两种形态之间传号只走凭据 JSON：桌面版「导出凭据」→ 容器导入（§6）。
+两种形态之间传号只走凭据 JSON：桌面版「导出明文凭据」→ 容器导入（§6）。
 
 ---
 
@@ -186,7 +186,7 @@ docker compose -f gateway/docker-compose.yml start
 ### 6.1 JSON 导入
 
 ```bash
-# 含明文 token 的凭据 JSON（单条/数组均可）：桌面版号池多选「导出凭据」导出的文件，
+# 含明文 token 的凭据 JSON（单条/数组均可）：桌面版号池「导出 → 导出账号凭据」导出的文件，
 # 或手工/脚本生成的同格式 JSON
 curl -X POST http://127.0.0.1:9528/api/accounts/import \
   -H "Authorization: Bearer $AGENTHUB_ADMIN_TOKEN" -H "Content-Type: application/json" \
@@ -195,13 +195,13 @@ curl -X POST http://127.0.0.1:9528/api/accounts/import \
 
 要点：
 - JSON 必须**含明文 token/refreshToken**；Web 控制台的号池页也支持「粘贴 JSON 导入」与「选择 JSON 文件上传」；
-- 桌面端的元数据导出（`agenthub-accounts` 格式）刻意不含 token，用于灌号会被明确拒绝；
-- 重复导入同一账号是更新而不是新增（按通用键合并）。
+- 旧版桌面端的元数据导出（`agenthub-accounts` 格式）刻意不含 token，用于灌号会被明确拒绝；
+- 重复导入同一账号是更新而不是新增（按同渠道同 uid 合并）。
 
 ### 6.2 与桌面版协同的分工
 
 - **登录/扫码/本机导入**：在桌面版做（OAuth 回调、设备码、客户端登录态都在那边）；
-- **跨机/跨形态传号**：桌面版号池多选「导出凭据」拿到明文凭据 JSON，再在容器里导入（明文落盘请妥善保管）；
+- **跨机/跨形态传号**：桌面版号池「导出明文凭据」拿到明文 JSON，再在容器里导入（明文落盘请妥善保管）；
 - **人机校验**（ZCode 领奖）：在桌面版号池页手动过码，Docker 侧自动签到遇到需要过码的行会如实标记。
 
 ---
@@ -292,7 +292,7 @@ docker compose -f gateway/docker-compose.yml up -d
 | `/api/readyz` 恒 503 | 空池（还没灌号）或全部账号在冷却；先看 `/api/channels` 的池状态 |
 | 请求 503 且提示渠道不可用 | 该渠道无在线账号或全部冷却；用管理 API 查号池 |
 | 签到没在预期时间执行 | 容器 `TZ` 是否对（§3）；签到时刻按容器本地时间计算 |
-| 上游全部 401 | 凭据失效：在桌面版重新登录该账号，「导出凭据」后导入容器（§6） |
+| 上游全部 401 | 凭据失效：在桌面版重新登录该账号，「导出明文凭据」后导入容器（§6） |
 
 常用命令：
 

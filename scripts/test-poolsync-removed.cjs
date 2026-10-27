@@ -73,8 +73,12 @@ function ok(cond, name, extra) {
   ok(!ipcSrc.includes("webdav_shared_"), "ipc.cjs 无 webdav_shared_* 处理器");
   const proxySrc = readSrc("electron/backend/proxy/index.cjs");
   ok(!proxySrc.includes("proxy_poolsync_"), "proxy/index.cjs 无 proxy_poolsync_* 处理器");
+  // 真源是 commandTable.cjs（READ/DENY/collect 的事实源）：gateway/src/commands.cjs 只是透传层，
+  // 只查它等于把断言打在转发层上（Ruling 37）
+  const cmdTableSrc = readSrc("electron/backend/commandTable.cjs");
+  ok(!cmdTableSrc.includes("proxy_poolsync"), "commandTable.cjs（命令真源）无 proxy_poolsync");
   const gwCommands = readSrc("gateway/src/commands.cjs");
-  ok(!gwCommands.includes("proxy_poolsync_"), "gateway 命令表无 proxy_poolsync_*");
+  ok(!gwCommands.includes("proxy_poolsync_"), "gateway 命令适配层无 proxy_poolsync_*（透传自 commandTable）");
   const ipcTs = readSrc("src/api/ipc.ts");
   ok(!ipcTs.includes("webdav_shared_") && !ipcTs.includes("proxy_poolsync_"), "src/api/ipc.ts 无同步命令封装");
 }
