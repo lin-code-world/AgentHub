@@ -51,7 +51,7 @@ async function toggleGw() {
   }
 }
 
-// 事件合流：poolsync/credits 事件密集到达时，
+// 事件合流：credits 等事件密集到达时，
 // 侧栏卡片的刷新被合并成有节制的几次，不再逐事件打 IPC（事件风暴 → IPC 风暴）
 const scheduleProxyRefresh = coalesceAsync(() => Promise.all([refreshProxyMeta(), refreshChannels()]), 800);
 
@@ -61,11 +61,11 @@ function refreshStatsForEnabled() {
 }
 onMounted(async () => {
   refreshStatsForEnabled();
-  // 网关启停/号池同步都经 app:event 广播：侧栏卡片只订阅不轮询。
+  // 网关启停等经 app:event 广播：侧栏卡片只订阅不轮询。
   // 原来只在切模块时刷一次，本模块内点「启动服务」后卡片会一直停在「网关未启动」
   offProxyEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string };
-    if (p.event === "proxy" && (p.type === "status" || p.type === "poolsync" || p.type === "credits")) {
+    if (p.event === "proxy" && (p.type === "status" || p.type === "credits")) {
       scheduleProxyRefresh();
       return;
     }

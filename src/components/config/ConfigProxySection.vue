@@ -37,7 +37,7 @@ const channels = ref<{ id: string; display: string }[]>([]);
 // 全局回退模型候选 = 合并模型目录
 const models = ref<ProxyModel[]>([]);
 
-/** 打开框架设置弹窗并落到「同步时间」页（周期类配置统一在那里改） */
+/** 打开框架设置弹窗并落到「刷新周期」页（周期类配置统一在那里改） */
 function gotoTiming() {
   app.settingsTab = "timing";
   app.settingsOpen = true;
@@ -299,11 +299,11 @@ function openDataDir() {
     <div class="grid-2">
       <div class="card">
         <div class="card-title">额度监控</div>
-        <!-- 周期类配置统一在「设置 · 同步时间」管理，这里只读状态并引导 -->
+        <!-- 周期类配置统一在「设置 · 刷新周期」管理，这里只读状态并引导 -->
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">自动刷新与定时签到</div>
-            <div class="set-desc">{{ proxyTimingSummary }} · 统一在「设置 · 同步时间」管理</div>
+            <div class="set-desc">{{ proxyTimingSummary }} · 统一在「设置 · 刷新周期」管理</div>
           </div>
           <button class="btn btn-ghost" @click="gotoTiming">去修改 →</button>
         </div>

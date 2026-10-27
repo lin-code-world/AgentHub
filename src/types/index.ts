@@ -28,12 +28,11 @@ export interface ModuleDef {
 
 // ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
 
-export type SettingsTab = "general" | "webdav" | "timing";
+export type SettingsTab = "general" | "timing";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
   { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 应用行为" },
-  { key: "webdav", name: "WebDAV 同步", icon: "ph-cloud", desc: "统一服务器 · 号池同步" },
-  { key: "timing", name: "同步时间", icon: "ph-clock-countdown", desc: "号池自动同步 / 刷新周期" },
+  { key: "timing", name: "刷新周期", icon: "ph-clock-countdown", desc: "额度刷新周期 / 自动签到" },
 ];
 
 // ===== 应用配置：框架（主题 / 行为）=====
@@ -68,9 +67,6 @@ export interface ProxyConfig {
   /** 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）。号池到期徽标与逐包明细共用这一个值，
    *  默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数 */
   expiringSoonDays: number;
-  /** 号池定时同步（poolsyncSchedule）：hourly 每小时档 / daily 每天固定时刻，全关 = 仅手动；
-   *  API Keys 与模型映射随号池同步走，自动同步让新设备开箱即得 */
-  poolsyncSchedule: { hourly: boolean; hourlyInterval: number; daily: boolean; dailyTime: string };
   debugStatus: boolean;
   /** 模型 → 渠道 id 的 per-model 覆盖（渠道可扩充，故为字符串值） */
   modelOverrides: Record<string, string>;
@@ -525,16 +521,11 @@ export interface ProxyRuleFile {
 /** 主进程推送的反代网关事件（app:event，event="proxy"） */
 export interface ProxyEvent {
   event: "proxy";
-  type: "request" | "status" | "credits" | "oauth-done" | "poolsync";
+  type: "request" | "status" | "credits" | "oauth-done";
   ok?: boolean;
   message?: string;
   id?: string;
   uid?: string;
-  /** poolsync 事件：同步进度（stage/detail/percent/running） */
-  stage?: string;
-  detail?: string;
-  percent?: number;
-  running?: boolean;
 }
 
 /** zcode 账号级设备指纹（deviceMid）诊断行：周末套餐领取资格的设备维判据 */
@@ -675,7 +666,6 @@ export const MODULES: ModuleDef[] = [
       { id: "providers", name: "自定义提供商" },
       { id: "keys", name: "API Keys" },
       { id: "expiry", name: "积分日历" },
-      { id: "poolsync", name: "号池同步" },
       { id: "proxylog", name: "日志" },
     ],
   },

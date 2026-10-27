@@ -32,7 +32,7 @@ function argOf(flag, dft) {
 }
 
 const ROOT = path.resolve(argOf("--root", path.join(__dirname, "..")));
-const MIN = Number(argOf("--min", "108"));
+const MIN = Number(argOf("--min", "107"));
 
 const ENTRIES = [
   "gateway/src/index.cjs",
@@ -42,7 +42,6 @@ const ENTRIES = [
   "electron/backend/proxy/adapters.cjs",
   "electron/backend/proxy/pool.cjs",
   "electron/backend/proxy/credits.cjs",
-  "electron/backend/proxy/poolsched.cjs",
   "electron/backend/proxy/rules.cjs",
   "electron/backend/proxy/discovery.cjs",
   "electron/backend/config.cjs",

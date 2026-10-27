@@ -194,13 +194,6 @@ zcodeLocal.launchZcode = () => ({ ok: false, message: "sandbox" });
   const cm2 = await zcodeSwitch.enterClaimMode("不存在的id", {});
   ok(!cm2.ok, "领取模式对不存在账号如实拒绝");
 
-  // ⑨ WebDAV 锚定备份：未配置时静默 skipped（不抛错、不拖累主流程）
-  console.log("⑨ WebDAV 锚定备份兜底");
-  const poolsync = require("../electron/backend/proxy/poolsync.cjs");
-  ok(typeof poolsync.backupAnchorMid === "function" && typeof poolsync.restoreAnchorMidFromRemote === "function", "poolsync 导出锚定备份/恢复两函数");
-  const bk = await poolsync.backupAnchorMid();
-  ok(bk && bk.action === "skipped", `未配置 WebDAV 时返回 skipped（${(bk && bk.reason) || ""}）`);
-
   console.log(failed ? `\n✗ ${failed} 项失败，${pass} 项通过` : `\n✓ 全部 ${pass} 项通过`);
   fs.rmSync(TMP, { recursive: true, force: true });
   process.exit(failed ? 1 : 0);

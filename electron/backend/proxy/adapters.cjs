@@ -2050,38 +2050,6 @@ function normalizeGlmReasoning(out) {
   if (out.extra_body && typeof out.extra_body === "object") delete out.extra_body.thinking;
 }
 
-/** 兜底取新凭据：从远端号池拉一次（只拉取合并，preferKeys 让本号优先采纳远端那份），
- *  返回合并后本机这一号的凭据。用于「refresh 被服务端拒绝」——另一台设备可能刚轮换出新值。
- *  WebDAV 未配置 / 别的同步在进行 / 网络失败 / 超时一律回 { pulled:false }：刷新链路绝不能被
- *  远端拖死；pulled 只是「确实发起过拉取」，决定失败文案是「已尝试过但没取到」还是「没试成」，
- *  免得对用户谎报动作。 */
-async function pullRaccoonCreds(account) {
-  if (!account || !account.id) return { pulled: false };
-  try {
-    const poolsync = require("./poolsync.cjs");
-    const r = await Promise.race([
-      poolsync.pullChannel("raccoon", { preferKeys: new Set([poolsync.accountKeyOf(account)]) }),
-      new Promise((res) => {
-        const t = setTimeout(() => res({ ok: false, message: "拉取远端号池超时" }), 8000);
-        if (t.unref) t.unref();
-      }),
-    ]);
-    if (!r || !r.ok) return { pulled: false };
-    const row = store.getAccount(account.id);
-    if (!row) return { pulled: true };
-    const s = store.accountSecrets(row);
-    return { pulled: true, token: s.token || "", refreshToken: s.refreshToken || "" };
-  } catch {
-    return { pulled: false };
-  }
-}
-
-/** access 是否已过期（本地解 exp，留 60s 余量；解不出当过期） */
-function raccoonAccessExpired(token) {
-  const exp = Number(util.jwtDecode(token).exp || 0);
-  return !exp || exp * 1000 <= Date.now() + 60000;
-}
-
 /** 账号 meta 读成对象（行里 meta 是 JSON 串、调用方手里的可能是对象，两形状都收） */
 function raccoonMetaOf(account) {
   try {
@@ -2118,17 +2086,12 @@ function noteRaccoonSid(account, token) {
   }
 }
 
-/** 刷新失败文案分流：把服务端给的拒绝码翻成用户能照做的下一步。
- *  triedPull 只表示「确实发起过远端拉取」——没配 WebDAV / 别的同步占着 / 网络失败时不能
- *  对用户说「已尝试从其他设备拉取」，那是在谎报动作。 */
-function raccoonRefreshFailHint(rejectCode, triedPull) {
+/** 刷新失败文案分流：把服务端给的拒绝码翻成用户能照做的下一步。 */
+function raccoonRefreshFailHint(rejectCode) {
   const why = rejectCode === 200822
     ? "（服务端返回 200822：该 refresh_token 已被并发刷新替换）"
     : "";
-  const tail = triedPull
-    ? "；已从其他设备拉取过最新凭据但没取到更新的一份——若确实在别的设备重新登录过该账号，本机也需重新登录一次"
-    : "；若刚在小浣熊客户端点过「退出登录」，服务端凭据会被吊销，号池内该账号需重新导入或登录";
-  return why + tail;
+  return why + "；若刚在小浣熊客户端点过「退出登录」，服务端凭据会被吊销，号池内该账号需重新导入或登录";
 }
 
 const raccoon = {
@@ -2420,15 +2383,9 @@ const raccoon = {
    *  刷新成功后原子写回，让两边始终持同一份凭据；文件归属校验不过则绝不碰文件。
    *
    *  refresh_token 是**单副本、用后轮换作废**的凭据，于是"谁手里的是旧值"这件事必然发生
-   *  （同机是与桌面端抢，跨机是与同步过去的另一台抢）。被拒后按三级兜底依次尝试，
-   *  全都不成立才判失效：
+   *  （与同机的桌面端抢）。被拒后按两级兜底依次尝试，全都不成立才判失效：
    *   ① 本机共用文件：重读 auth.json，值变了就用新值再试（同机并发刷新竞态）；
-   *   ② 跨机号池：拉一次远端号池取另一台刚轮换出来的凭据——新 refresh 就用它重试；
-   *      对端 refresh 与手里这份相同但 access 还没过期，则直接采用（省一次刷新与一次轮换，
-   *      避免两台机器互相把对方轮换掉）；
-   *   ③ access 双保险：refresh 被拒但当前 access 仍在线（userInfo 验通）就不判失效。
-   *  成功刷新后触发一次去抖回传（poolsync.pushSoon）：不推的话对端手里的 refresh 立刻作废，
-   *  下次同步之前它都是"需重新登录"。 */
+   *   ② access 双保险：refresh 被拒但当前 access 仍在线（userInfo 验通）就不判失效。 */
   async refreshToken(account, secrets) {
     const c = this.cfg();
     const uid = account && account.uid;
@@ -2436,8 +2393,6 @@ const raccoon = {
     let refreshToken = (own0 && own0.refreshToken) || (secrets && secrets.refreshToken) || "";
     if (!refreshToken) return { ok: false, message: "无 refreshToken，请重新登录或粘贴" };
     const headers = raccoonRefreshHeaders(c, account);
-    let pulledRemote = false; // 跨机兜底只做一次（重试预算有限，也避免反复打 WebDAV）
-    let triedPull = false;    // 是否已经试过拉远端（供失败文案区分「试过没取到」与「压根没试成」）
     let rejectCode = 0;       // 401 / 200822，用于失败文案分流
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -2451,8 +2406,6 @@ const raccoon = {
         // 回写共用文件（仅当文件确属本号）：桌面端下次刷新读到新值，不再拿旧 refresh 撞 401
         const own = raccoonAuth.ownedTokens(uid, nextRefresh);
         if (own) raccoonAuth.writeTokens({ accessToken: String(token), refreshToken: nextRefresh });
-        // 本轮凭据已轮换，对端手里那份作废：就近回传一次，别让它一路跌到"需重新登录"
-        try { require("./poolsync.cjs").pushSoon(); } catch { /* 回传是尽力而为 */ }
         const sidChanged = noteRaccoonSid(account, String(token));
         return { ok: true, token: String(token), refreshToken: nextRefresh, sidChanged };
       }
@@ -2468,23 +2421,7 @@ const raccoon = {
         continue; // 值变了，再试一次
       }
 
-      // ② 跨机号池：另一台设备可能刚轮换掉这份
-      if (!pulledRemote && !triedPull) {
-        triedPull = true;
-        const got = await pullRaccoonCreds(account);
-        pulledRemote = !!got.pulled; // 只有真拉成了，失败文案才能说「已尝试过」
-        if (got.refreshToken && got.refreshToken !== refreshToken) {
-          refreshToken = got.refreshToken;
-          continue; // 取到对端的新 refresh，再试一次
-        }
-        // 对端 refresh 与手里这份相同（它也没换过）：但它的 access 还没过期就直接用——
-        // 两台机器各刷一次只会互相作废，能省掉的轮换就省掉
-        if (got.token && got.token !== (secrets && secrets.token) && !raccoonAccessExpired(got.token)) {
-          return { ok: true, token: got.token, refreshToken: got.refreshToken || refreshToken, adopted: true };
-        }
-      }
-
-      // ③ 双保险容错：如果当前 access_token 依然有效（未过期且 user_info 正常），绝不误判为 expired！
+      // ② 双保险容错：如果当前 access_token 依然有效（未过期且 user_info 正常），绝不误判为 expired！
       if (secrets && secrets.token) {
         const u = await this.userInfo(secrets.token, account).catch(() => null);
         if (u && u.uid && String(u.uid) === String(uid)) {
@@ -2492,9 +2429,9 @@ const raccoon = {
           return { ok: true, token: secrets.token, refreshToken };
         }
       }
-      return { ok: false, expired: true, message: `登录态已过期，请重新登录${raccoonRefreshFailHint(rejectCode, pulledRemote)}` };
+      return { ok: false, expired: true, message: `登录态已过期，请重新登录${raccoonRefreshFailHint(rejectCode)}` };
     }
-    return { ok: false, expired: true, message: `登录态已过期（重试后仍被服务端拒绝），请重新登录${raccoonRefreshFailHint(rejectCode, pulledRemote)}` };
+    return { ok: false, expired: true, message: `登录态已过期（重试后仍被服务端拒绝），请重新登录${raccoonRefreshFailHint(rejectCode)}` };
   },
 
   /** 用户信息（导入后补全 uid/昵称）：GET /auth/v1/user_info（会话4 §6）。

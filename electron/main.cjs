@@ -80,9 +80,7 @@ process.on("uncaughtException", (e) => {
 });
 process.on("unhandledRejection", (r) => __crashLog("unhandledRejection", __describe(r)));
 process.on("exit", (code) => {
-  let sync = "n/a";
-  try { sync = require("./backend/webdav.cjs").syncBusyTag() || "idle"; } catch { /* 模块未加载 */ }
-  __crashLog("exit", `code=${code} uptime=${Math.round(process.uptime())}s ${memUsage()} sync=${sync}`);
+  __crashLog("exit", `code=${code} uptime=${Math.round(process.uptime())}s ${memUsage()}`);
 });
 app.on("child-process-gone", (_e, d) => __crashLog("child-process-gone", __describe(d)));
 app.on("render-process-gone", (_e, _wc, d) => __crashLog("render-process-gone", __describe(d)));
@@ -107,22 +105,7 @@ const memTimer = setInterval(() => {
   __crashLog("memory-high", memUsage());
 }, 5 * 60 * 1000);
 memTimer.unref?.();
-// 同步卡死留痕（issue #146 猜想 2）：正常一次远端同步最长约 90s（30s×重试），
-// 持锁超过 10 分钟即疑似卡死；同一标签每 15 分钟最多记一条。
-let stallTag = "";
-let stallAt = 0;
-const stallTimer = setInterval(() => {
-  let wd;
-  try { wd = require("./backend/webdav.cjs"); } catch { return; }
-  const tag = wd.syncBusyTag();
-  const held = wd.syncHeldMs();
-  if (!tag || held < 10 * 60 * 1000) { stallTag = ""; stallAt = 0; return; }
-  if (tag === stallTag && Date.now() - stallAt < 15 * 60 * 1000) return;
-  stallTag = tag;
-  stallAt = Date.now();
-  __crashLog("sync-stall", `tag=${tag} held=${Math.round(held / 1000)}s`);
-}, 60 * 1000);
-stallTimer.unref?.();
+// 同步卡死留痕（issue #146 猜想 2）已随号池同步移除：远端同步锁的看门狗一并下线
 // ===== 闪退取证结束 =====
 
 const config = require("./backend/config.cjs");
@@ -390,18 +373,6 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // 建窗前先应用主题，避免深色配置下标题栏先白后黑闪烁
     const bootCfg = config.loadConfig();
-    // 同步配置留痕：崩溃日志里一眼能看出崩时有没有配 WebDAV、
-    // 各模块是否在跑远端同步；只记有无，不落任何账号密码。
-    try {
-      // 与引擎 configured() 同口径：pool 要求账号密码。
-      const hasAuth = (w) => !!(w && w.endpoint && w.username && w.password);
-      __crashLog(
-        "sync-config",
-        `pool=${hasAuth(config.moduleWebdav("proxy")) ? "yes" : "no"}`,
-      );
-    } catch (e) {
-      __crashLog("sync-config-failed", __describe(e));
-    }
     applyNativeTheme(bootCfg.theme);
 
     ipc.register({ ipcMain, app, shell, nativeTheme });

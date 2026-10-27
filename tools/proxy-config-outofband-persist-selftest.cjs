@@ -139,11 +139,16 @@ console.log("=== 契约 C：兜底不得让保存本身失败 ===");
 {
   const r = config.saveConfigFromUI(config.defaultConfig());
   ok("C1 saveConfigFromUI 返回 ok:true", !!(r && r.ok === true), JSON.stringify(r));
-  // C2：saveConfigFromUI 里只有「读盘」那段被 try 包住；保存/校验的异常必须照常抛出，
-  //     否则设置页会把非法配置当成功（静默丢配置）。用一个缺 webdav 的残缺配置触发。
+  // C2：saveConfigFromUI 里只有「读盘」那段被 try 包住；保存失败必须照常抛出，
+  //     否则设置页会把没存上的配置当成功（静默丢配置）。用「数据目录被同名文件占住」触发写盘失败。
   let threw = false;
+  const savedDir = process.env.AGENTHUB_DATA_DIR;
+  const blocker = path.join(SANDBOX, "not-a-dir");
+  fs.writeFileSync(blocker, "x");
+  process.env.AGENTHUB_DATA_DIR = blocker;
   try { config.saveConfigFromUI({ proxy: {} }); } catch { threw = true; }
-  ok("C2 保存/校验失败仍会抛错（不被读盘兜底吞掉）", threw);
+  process.env.AGENTHUB_DATA_DIR = savedDir;
+  ok("C2 保存失败仍会抛错（不被读盘兜底吞掉）", threw);
   // C3：兜底只影响名单内那两个字段，其余字段不会被顺带改动
   {
     const c = config.defaultConfig();

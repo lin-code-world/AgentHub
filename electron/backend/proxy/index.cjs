@@ -28,8 +28,6 @@ const server = require("./server.cjs");
 const events = require("./events.cjs");
 const util = require("./util.cjs");
 const ideswitch = require("./ideswitch.cjs");
-const poolsync = require("./poolsync.cjs");
-const poolsched = require("./poolsched.cjs");
 const oplog = require("./oplog.cjs");
 const xlsx = require("./xlsx.cjs"); // xlsx 写入器在本目录（v1.57.0 误写 ../xlsx.cjs，顶层 require 抛错 → 启动即崩）
 const zcodeLocal = require("./zcodeLocal.cjs");
@@ -159,9 +157,9 @@ function parseAccountsJson(text, fallbackChannel) {
 
 // 桌面元数据包 vs 凭据包：报错必须说清「文件本来就没有 token」，否则用户会反复换文件格式。
 const METADATA_ONLY_MESSAGE =
-  "这是旧版桌面端导出的账号元数据（不含 token），不能用于灌号。请改用：① 号池同步（推荐）；" +
-  "② 粘贴含 token/refreshToken 的凭据 JSON（新版桌面端号池「导出」按钮的产物已含明文凭据）；" +
-  "③ 管理 API POST /api/accounts/import";
+  "这是旧版桌面端导出的账号元数据（不含 token），不能用于灌号。请改用：" +
+  "① 粘贴含 token/refreshToken 的凭据 JSON（新版桌面端号池「导出」按钮的产物已含明文凭据）；" +
+  "② 管理 API POST /api/accounts/import";
 
 /** 批量入池：同渠道同 uid 已存在则跳过；入池即后台查一次额度 */
 function importAccounts(list) {
@@ -478,19 +476,6 @@ async function boot(opts = {}) {
   } catch { /* 迁移失败不阻断启动，号池页仍可手动修复 */ }
   credits.startScheduler(() => settings().creditsRefreshMin);
   startCheckinAuto();
-  poolsched.start(); // 号池定时同步（issue #89/#92）：hourly/daily 周期触发，全关时空转
-  // 远程锚定指纹（remoteMid）的云端兜底：本机 anchor 缺锚（重装/换机）先从 WebDAV 拉回；
-  // 有锚则顺手上传一份（内容 hash 记账，未变不重传）。fire-and-forget，WebDAV 未配置/网络
-  // 失败一律静默——锚定的主事实在本机 anchor 文件里，云端只是防丢副本
-  try {
-    const ps = require("./poolsync.cjs");
-    const zl = require("./zcodeLocal.cjs");
-    void (async () => {
-      const st = zl.remoteMidState();
-      if (!st.anchorMid) await ps.restoreAnchorMidFromRemote();
-      await ps.backupAnchorMid();
-    })().catch(() => {});
-  } catch { /* WebDAV 不可用不影响启动 */ }
   // 网关随应用启动：设置页已移除「记住网关开关」选项，打开应用即监听配置里的端口。
   // 启动失败（端口被占等）必须留痕：此前 `.catch(() => {})` 连失败原因一起丢掉，
   // 用户只会看到「网关没起来」而日志里没有任何线索
@@ -505,13 +490,12 @@ async function boot(opts = {}) {
   }
 }
 
-/** 停掉本模块持有的全部定时设施与在途流程（额度刷新 / 自动签到 / 号池同步 / 在途 OAuth）。
+/** 停掉本模块持有的全部定时设施与在途流程（额度刷新 / 自动签到 / 在途 OAuth）。
  *  shutdown 与容器停机序列共用——网关监听停不停由调用方决定（桌面 shutdown 停 server；
  *  容器先 drain 在途请求再关） */
 function stopTimers() {
   credits.stopScheduler();
   stopCheckinAuto();
-  poolsched.stop();
   discovery.cancelOAuth();
 }
 
@@ -533,16 +517,13 @@ function setRuntime(on) {
     if (!booted) return boot();
     credits.startScheduler(() => settings().creditsRefreshMin);
     startCheckinAuto();
-    poolsched.start();
     events.emit({ type: "status" });
     return Promise.resolve();
   }
   credits.stopScheduler();
   stopCheckinAuto();
-  poolsched.stop();
   discovery.cancelOAuth();
   server.stop();
-  try { poolsync.cancel(); } catch { /* 在途号池同步一并收尾，符合「停用后不运行」承诺 */ }
   try { store.close(); } catch { /* 关闭失败无碍，句柄随进程退出 */ }
   events.emit({ type: "status" }); // 侧栏网关卡片立即回到已停止态，不等下一次轮询
   return Promise.resolve();
@@ -799,11 +780,10 @@ function register(ipcMain) {
   }));
   ipcMain.handle("proxy_key_delete", handle(({ id }) => {
     if (!store.deleteKey(id)) return fail("Key 不存在");
-    try { poolsync.noteKeyRemoved(id); } catch { /* 墓碑记失败只是其他设备暂时删不掉，下轮可重 */ }
     oplog.log("info", "API Key", `删除 Key ${id}`, { target: id });
     return ok({});
   }));
-  // 批量删除（Key 列表多选）：逐个走与单删相同的链路（墓碑先行 + WebDAV 传播），oplog 只记汇总一条
+  // 批量删除（Key 列表多选）：逐个走与单删相同的链路，oplog 只记汇总一条
   ipcMain.handle("proxy_keys_delete", handle(({ ids }) => {
     const list = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
     if (!list.length) return fail("未选择 Key");
@@ -811,7 +791,6 @@ function register(ipcMain) {
     let missing = 0;
     for (const id of list) {
       if (!store.deleteKey(id)) { missing++; continue; }
-      try { poolsync.noteKeyRemoved(id); } catch { /* 同上：墓碑记失败不阻塞本地删除 */ }
       removed++;
     }
     if (removed) oplog.log("info", "API Key", `批量删除 ${removed} 个 Key（选择 ${list.length} 个${missing ? `，${missing} 个已不存在` : ""}）`, {});
@@ -883,8 +862,6 @@ function register(ipcMain) {
   ipcMain.handle("proxy_account_remove", handle(({ id }) => {
     const acc = store.getAccount(id);
     if (!acc) return fail("账号不存在");
-    // 先写墓碑再删本机：删除要经 WebDAV 传播到其他设备（号池同步拉取时按墓碑移除）
-    poolsync.noteRemoved(poolsync.accountKeyOf(acc));
     if (!store.removeAccount(id)) return fail("账号不存在");
     // CatPaw 会话注册表挂点（对齐 W5 接线要求）：账号删除后其会话记录残留
     // （2h TTL），工具续接窗口内其他账号的请求可把 tool 结果提交到已消失账号的 conversation
@@ -892,7 +869,7 @@ function register(ipcMain) {
     oplog.log("info", "号池账号", `移除 ${store.channelDisplay(acc.channel)} 账号「${acc.name}」`, { channel: acc.channel, target: acc.name });
     return ok({});
   }));
-  // 批量删除（号池列表多选）：逐个走与单删相同的链路（墓碑先行 + CatPaw 会话清理），oplog 只记汇总一条
+  // 批量删除（号池列表多选）：逐个走与单删相同的链路（CatPaw 会话清理），oplog 只记汇总一条
   ipcMain.handle("proxy_account_remove_batch", handle(({ ids }) => {
     const list = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
     if (!list.length) return fail("未选择账号");
@@ -901,7 +878,6 @@ function register(ipcMain) {
     for (const id of list) {
       const acc = store.getAccount(id);
       if (!acc) { missing++; continue; }
-      poolsync.noteRemoved(poolsync.accountKeyOf(acc));
       if (store.removeAccount(id)) removed++;
       try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响删除 */ }
     }
@@ -939,8 +915,8 @@ function register(ipcMain) {
         createdAt: view.createdAt || 0,
         updatedAt: view.updatedAt || 0,
         // 切号快照等敏感元数据在这里一并解为明文：zcode 的 sw 是 DPAPI 密文，
-        // 带着密文导出到别的机器/软件等于没带（与同步快照共用同一份明文实现）
-        meta: poolsync.prepareMetaForExport(secrets.meta, view.channel),
+        // 带着密文导出到别的机器/软件等于没带
+        meta: zcodeLocal.prepareMetaForExport(secrets.meta, view.channel),
       });
     }
     if (!accounts.length) return fail("选中账号都已不存在");
@@ -964,7 +940,7 @@ function register(ipcMain) {
     oplog.log("info", "号池账号", `${enabled ? "启用" : "停用"} ${store.channelDisplay(acc.channel)} 账号「${acc.name}」`, { channel: acc.channel, target: acc.name });
     return ok({});
   }));
-  // 重命名账号（自定义备注）：改 name 字段，WebDAV 同步时 LWW 传播到其他设备
+  // 重命名账号（自定义备注）：改 name 字段
   ipcMain.handle("proxy_account_rename", handle(({ id, name }) => {
     const acc = store.getAccount(id);
     if (!acc) return fail("账号不存在");
@@ -972,7 +948,7 @@ function register(ipcMain) {
     oplog.log("info", "号池账号", `重命名「${acc.name}」为「${String(name || "").trim()}」`, { channel: acc.channel, target: acc.name });
     return ok({});
   }));
-  // 账号备注（号池列表「备注」弹窗）：落 meta.note，随 exportPool 快照导出 + 备注新者胜传播
+  // 账号备注（号池列表「备注」弹窗）：落 meta.note
   ipcMain.handle("proxy_account_note", handle(({ id, note }) => {
     const acc = store.getAccount(id);
     if (!acc) return fail("账号不存在");
@@ -1395,24 +1371,6 @@ function register(ipcMain) {
     driver: store.driver(),
     dataDir: store.proxyDir(),
   })));
-
-  // ===== 号池 WebDAV 同步（统一服务器 + proxy 根目录；压缩包用 WebDAV 密码加密；
-  //        可选 channel = 只同步某一个编译器） =====
-  ipcMain.handle("proxy_poolsync_status", handle(() => poolsync.progress()));
-  ipcMain.handle("proxy_poolsync_run", handle(async ({ channel }) => {
-    if (poolsync.progress().running) return fail("号池同步已在进行中");
-    // 前台 await 跑完：号池体量小（几十账号），一轮就是几次请求；进度仍走 app:event 广播
-    const r = await poolsync.run({ channel: channel ? String(channel) : "" });
-    oplog.log(r && r.ok === false ? "error" : "info", "号池同步",
-      r && r.message ? String(r.message) : `号池同步完成${channel ? `（${store.channelDisplay(channel)}）` : ""}`,
-      { channel: channel ? String(channel) : "", detail: r && r.lastError ? String(r.lastError) : "" });
-    return r;
-  }));
-  ipcMain.handle("proxy_poolsync_cancel", handle(() => {
-    const r = poolsync.cancel();
-    oplog.log("info", "号池同步", "号池同步已取消");
-    return r;
-  }));
 }
 
 // 计划判定与抖动的纯函数一并导出：供自测直接验证跨午夜 / 不补欠账 / 已完成等分支

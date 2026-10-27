@@ -9,7 +9,7 @@
  * ============================================================
  */
 // 反代网关 · 平台适配层入口：按运行环境分发到 Electron 或纯 Node 实现
-// 上层模块（events / adapters / poolsync / 网关入口等）只许 require 本文件，
+// 上层模块（events / adapters / 网关入口等）只许 require 本文件，
 // 绝不直接 require("electron")——同一份代码因此能在桌面壳与 headless 容器下运行。
 //
 // isElectron 判定三条铁律：

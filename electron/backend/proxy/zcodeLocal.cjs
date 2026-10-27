@@ -1030,12 +1030,32 @@ function resolveModelInputFormat(modelId) {
   return m ? m.inputFormat : null;
 }
 
+/** 导出前元数据明文化（「导出选中账号明文凭据」用）：DPAPI 密文跨机/跨软件都解不开，
+ *  将切号快照等敏感字段还原为明文 JSON 结构，导出的凭据才能在别的机器/软件里直接用。 */
+function prepareMetaForExport(meta, channel) {
+  if (!meta || typeof meta !== "object") return {};
+  const cloned = JSON.parse(JSON.stringify(meta));
+  if (channel === "zcode" && cloned.sw && typeof cloned.sw === "object") {
+    try {
+      cloned.sw = {
+        accessToken: unseal(cloned.sw.accessToken),
+        refreshToken: unseal(cloned.sw.refreshToken),
+        userInfo: unseal(cloned.sw.userInfo),
+        codingPlanKeys: unseal(cloned.sw.codingPlanKeys),
+        relayPassHash: unseal(cloned.sw.relayPassHash),
+        _plain: true,
+      };
+    } catch { /* 解密异常保留原样 */ }
+  }
+  return cloned;
+}
+
 module.exports = {
   ENC_PREFIX, isEnc, defaultSecret, encDecrypt, encEncrypt, tryDecrypt,
   v2Dir, paths, isNewGen, readJson, atomicWriteJson,
   jwtPayload, uidFromJwt, parseCodingPlanKeyName, parseCredentials, readLive, readProfiles,
   extractConfigApiKeys, pickPlanKey, accountRecord,
-  readSwitchSnapshot, buildSwitchSnapshot, seal, unseal,
+  readSwitchSnapshot, buildSwitchSnapshot, seal, unseal, prepareMetaForExport,
   anchorPath, readAnchor, saveAnchor, getOrCreateAnchor, findOriginalMidFromBackups,
   mergeWriteCredentials, verifyCredentialsWritten, verifySettingWritten, alignFamilyDomain, resetPlanCache,
   derivedDeviceMid, applyDeviceMid, restoreRemoteMid, remoteMidState,

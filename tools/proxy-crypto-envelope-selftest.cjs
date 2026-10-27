@@ -69,23 +69,9 @@ ok("D1 enc:v1: 在无 safeStorage 环境返回空串", config.decryptSecret("enc
 ok("E1 无前缀明文原样返回", config.decryptSecret("legacy-plain") === "legacy-plain");
 ok("E2 空值边界", config.encryptSecret("") === "" && config.decryptSecret("") === "" && config.encryptSecret(null) === "");
 
-// F. 落盘往返：saveConfig 加密落盘 → loadSharedWebdav 解回明文
-const DAV_PASS = "dav-pass-123456";
-const cfg = config.defaultConfig();
-cfg.webdavShared = Object.assign({}, cfg.webdavShared, {
-  endpoint: "https://dav.example.com/dav",
-  username: "tester",
-  password: DAV_PASS,
-});
-config.saveConfig(cfg, { forceClearSharedSecrets: true });
-const raw = JSON.parse(fs.readFileSync(config.configPath(), "utf8"));
-ok("F1 磁盘上是 enc:v2: 密文", String(raw.webdavShared.password).startsWith("enc:v2:"), String(raw.webdavShared.password).slice(0, 16));
-ok("F2 磁盘密文不含明文口令", !String(raw.webdavShared.password).includes(DAV_PASS));
-ok("F3 loadSharedWebdav 解回明文", config.loadSharedWebdav().password === DAV_PASS);
-
-// G. 密钥轮换语义：旧 key 密文在新 key 下解不开（不可恢复），文档化的恢复路径是号池重新同步
+// G. 密钥轮换语义：旧 key 密文在新 key 下解不开（不可恢复），恢复只能重新录入凭据
 process.env.AGENTHUB_SECRET_KEY = "rotated-key-999";
-ok("G1 轮换后旧密文解不开（预期，恢复靠重新同步）", config.decryptSecret(cipher) === "");
+ok("G1 轮换后旧密文解不开（预期，恢复靠重新录入凭据）", config.decryptSecret(cipher) === "");
 process.env.AGENTHUB_SECRET_KEY = savedKey;
 
 console.log("");

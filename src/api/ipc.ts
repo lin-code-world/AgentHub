@@ -135,60 +135,13 @@ export const openDataDir = () => call<void>("open_data_dir");
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
 export const getIsPortable = () => call<boolean>("get_is_portable");
 
-/** 订阅主进程广播（网关状态 / 号池同步进度 / 配置变更），返回退订函数。
+/** 订阅主进程广播（网关状态 / 额度刷新 / 配置变更），返回退订函数。
  *  Web 托管形态走 SSE（信封同形）；纯静态预览（mock）没有事件源 */
 export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | undefined {
   if (window.agenthub?.onUpdateEvent) return window.agenthub.onUpdateEvent((payload) => cb(payload));
   if (isWebTransport()) return subscribeWebEvents(cb);
   return undefined;
 }
-
-// ===== 统一 WebDAV（设置 · 数据存储）：一套服务器凭据 + 号池根目录 =====
-export interface SharedWebdavConfig {
-  /** 存储类型：webdav（默认）| s3（S3 兼容对象存储：OSS/COS/R2/MinIO 等） */
-  type: "webdav" | "s3";
-  endpoint: string;
-  username: string;
-  /** 渲染层只拿掩码；保存时传精确掩码 = 未修改。S3 模式下即 SecretKey（同时是号池默认加密口令） */
-  password: string;
-  /** 号池压缩包加密口令（掩码态；空 = 沿用 password） */
-  encryptionPassphrase: string;
-  s3: { bucket: string; region: string; pathStyle: boolean };
-  roots: { proxy: string };
-}
-export const webdavSharedGet = () => call<SharedWebdavConfig>("webdav_shared_get");
-export const webdavSharedSave = (cfg: SharedWebdavConfig) =>
-  call<{ ok: boolean; message: string }>("webdav_shared_save", { config: JSON.parse(JSON.stringify(cfg)) });
-export const webdavSharedTest = (cfg: Partial<SharedWebdavConfig>) =>
-  call<{ ok: boolean; message: string; latencyMs?: number }>("webdav_shared_test", { config: JSON.parse(JSON.stringify(cfg)) });
-export const webdavSharedClear = () => call<{ ok: boolean; message: string }>("webdav_shared_clear");
-
-// ===== 反代网关：号池 WebDAV 同步（统一服务器 + proxy 根目录；channel 可选 = 只同步某渠道） =====
-export interface ProxyPoolSyncStatus {
-  running: boolean;
-  stage: string;
-  stageLabel: string;
-  detail: string;
-  lastError: string;
-  lastSyncAt: number;
-  lastSummary: string;
-  /** 同步进度百分比（0~100，按阶段锚点） */
-  percent: number;
-  /** 上次/进行中同步的渠道范围（"" = 全部渠道） */
-  channel: string;
-  configured: boolean;
-  deviceId: string;
-  deviceName: string;
-}
-export const proxyPoolsyncStatus = () => call<ProxyPoolSyncStatus>("proxy_poolsync_status");
-export const proxyPoolsyncRun = (channel?: ProxyChannelId | "") =>
-  // 长任务：主进程 running 互斥 + 进度事件 + proxy_poolsync_cancel 托底
-  call<{ ok: boolean; message?: string; summary?: string; pulled?: number; added?: number; updated?: number; removed?: number; skipped?: number; uploaded?: boolean }>(
-    "proxy_poolsync_run",
-    { channel: channel || "" },
-    0
-  );
-export const proxyPoolsyncCancel = () => call<{ ok: boolean }>("proxy_poolsync_cancel");
 
 // ===== 反代网关：服务启停 / 状态 =====
 export const proxyStatus = () => call<ProxyGatewayStatus>("proxy_status");

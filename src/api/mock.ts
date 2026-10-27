@@ -40,7 +40,6 @@ function defaultConfig(): AppConfig {
     creditsRefreshMin: 30,
     usageRetentionDays: 90,
     expiringSoonDays: 1,
-    poolsyncSchedule: { hourly: false, hourlyInterval: 6, daily: false, dailyTime: "04:00" },
     debugStatus: false,
       modelOverrides: {},
       humanizeJitter: true,
@@ -735,7 +734,7 @@ export const mock = {
         return { rows: rows.slice(offset, offset + limit), total: rows.length };
       }
       case "proxy_oplog_ops":
-        return ["代理请求", "号池账号", "号池同步", "网关启停", "网关配置", "自动签到", "OAuth 登录", "模型目录", "签到", "切换账号", "API Key", "冷却与风控"];
+        return ["代理请求", "号池账号", "网关启停", "网关配置", "自动签到", "OAuth 登录", "模型目录", "签到", "切换账号", "API Key", "冷却与风控"];
       case "proxy_oplog_export":
         return { ok: true, path: "(浏览器预览)/proxy-oplog.xlsx", count: 3, message: "导出成功（3 条记录）" };
       case "proxy_rules_list":
@@ -745,33 +744,6 @@ export const mock = {
         return { ok: true };
       case "proxy_vault_status":
         return { encrypted: true, driver: "node:sqlite", dataDir: "(浏览器预览)" };
-      case "webdav_shared_get":
-        return {
-          type: "webdav",
-          endpoint: "https://dav.jianguoyun.com/dav",
-          username: "demo@example.com",
-          password: "••••••••",
-          encryptionPassphrase: "",
-          s3: { bucket: "", region: "", pathStyle: false },
-          roots: { proxy: "/agenthub-proxy", memory: "/agenthub-memory" },
-        };
-      case "webdav_shared_save":
-        return { ok: true, message: "已保存" };
-      case "webdav_shared_clear":
-        return { ok: true, message: "已清除统一服务器配置" };
-      case "webdav_shared_test":
-        return { ok: true, message: "连接成功 · 218ms", latencyMs: 218 };
-      case "proxy_poolsync_status":
-        return {
-          running: false, stage: "idle", stageLabel: "空闲", detail: "", lastError: "",
-          lastSyncAt: Date.now() - 3600000, lastSummary: "拉取 1 台设备 · 新增 2 · 刷新 3 · 移除 0 · 已上传",
-          percent: 0, channel: "",
-          configured: true, deviceId: "demo-device", deviceName: "这台电脑",
-        };
-      case "proxy_poolsync_run":
-        return { ok: true, summary: "拉取 1 台设备 · 新增 2 · 刷新 3 · 移除 0 · 已上传", pulled: 1, added: 2, updated: 3, removed: 0, uploaded: true };
-      case "proxy_poolsync_cancel":
-        return { ok: true };
       default:
         // 未造的命令走 null 降级（页面按“未检测到后端”处理）
         return null;

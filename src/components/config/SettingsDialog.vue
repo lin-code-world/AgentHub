@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 全局设置弹窗：左下角设置按钮打开。通用 / WebDAV 同步 / 同步时间三块，
+<!-- 全局设置弹窗：左下角设置按钮打开。通用 / 刷新周期两块，
      左列模块按钮点击切换，右侧内容定高滚动（弹窗大小固定，不随内容长高）；
      各模块自己的配置不在弹窗里，在对应板块右上「配置」按钮切换的配置页中 -->
 <script setup lang="ts">
@@ -16,7 +16,6 @@ import { ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import { SETTINGS_TABS } from "../../types";
 import ConfigGeneralSection from "./ConfigGeneralSection.vue";
-import ConfigWebdavSection from "./ConfigWebdavSection.vue";
 import ConfigTimingSection from "./ConfigTimingSection.vue";
 
 const app = useAppStore();
@@ -37,7 +36,7 @@ watch(
     <template #header>
       <div>
         <div class="sd-title">设置</div>
-        <div class="sd-sub">通用 · WebDAV 同步 · 同步时间（各模块配置在对应板块右上「配置」）</div>
+        <div class="sd-sub">通用 · 刷新周期（各模块配置在对应板块右上「配置」）</div>
       </div>
     </template>
     <div class="sd-layout">
@@ -58,7 +57,6 @@ watch(
       </div>
       <div class="sd-scroll">
         <div v-if="visited.general" v-show="app.settingsTab === 'general'"><ConfigGeneralSection /></div>
-        <div v-if="visited.webdav" v-show="app.settingsTab === 'webdav'"><ConfigWebdavSection /></div>
         <div v-if="visited.timing" v-show="app.settingsTab === 'timing'"><ConfigTimingSection /></div>
       </div>
     </div>

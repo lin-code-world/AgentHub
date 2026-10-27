@@ -18,7 +18,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 ## 架构
 
 - `electron/` 主进程，全部 `.cjs`（CommonJS）：`main.cjs` 应用入口；`preload.cjs` IPC 白名单桥；`backend/proxy/`
-  反代网关核心；`backend/config.cjs` 全局配置；`backend/webdav.cjs`/`s3.cjs` 号池同步的共享传输层。
+  反代网关核心；`backend/config.cjs` 全局配置。
 - `src/` 渲染层（Vue 3 `<script setup lang="ts">`）：`views/proxy/` 网关页面，`api/ipc.ts` 统一 IPC 封装。
 - `gateway/` Docker headless 形态：独立 package.json（依赖 `node:sqlite`，需 Node >= 22.5）。入口 `gateway/src/index.cjs` 复用
   `proxy/index.cjs` 的 `boot()`，只处理形态差异（监听覆盖、管理 REST API、停机序列）。
@@ -26,7 +26,8 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 ## 双形态共享网关核心
 
 - `electron/backend/proxy/` 同时服务桌面版与 Docker 版（Dockerfile 直接 COPY 整个 `electron/backend`）。改 proxy 会同时影响两个形态。
-- 两形态数据目录互不相通：桌面凭据是 safeStorage 密文，容器解不开；传号只走号池同步（poolsync）。部署细节见
+- 两形态数据目录互不相通：桌面凭据是 safeStorage 密文，容器解不开；两形态间没有自动传号通道（号池
+  WebDAV/S3 同步已移除），灌号走凭据 JSON 导入。部署细节见
   `gateway/README.md`。
 
 ## 新增 IPC 命令要改三处
@@ -51,7 +52,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   `scripts/dev-anthropic-in-test.cjs`、`scripts/dev-responses-in-test.cjs`。
 - 需要 Electron 运行时的脚本用仓库自带二进制跑：
   `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-smoke.cjs`（全链路含假上游）。
-- Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 108，防 COPY 缩水）。
+- Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 107，防 COPY 缩水）。
 - 沙箱约定：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
 
 ## 环境与发布

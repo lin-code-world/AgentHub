@@ -67,12 +67,11 @@ function readWbCurrent(channel) {
     log(`[trae] checkinStatus(新): ${JSON.stringify(st).slice(0, 220)}`);
   }
 
-  // 3) poolsync 渠道过滤：导出/合并函数是模块内部实现，这里只核对本机号池渠道分布，
-  //    过滤行为由 poolsync.run({channel}) 的 exportPool/mergeSnapshot 代码路径保证
+  // 3) 本机号池渠道分布（人工核对用）
   const all = store.listAccounts();
   const byCh = {};
   for (const view of all) byCh[view.channel] = (byCh[view.channel] || 0) + 1;
-  log(`\n[poolsync] 本机号池 ${all.length} 个账号: ${JSON.stringify(byCh)}`);
+  log(`\n[号池] 本机号池 ${all.length} 个账号: ${JSON.stringify(byCh)}`);
 
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

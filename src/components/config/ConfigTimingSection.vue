@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 同步时间：反代网关「号池定时同步」的周期在这里管，改动即改即存，状态反馈集中在顶部 -->
+<!-- 设置 · 刷新周期：反代网关「额度自动刷新」的周期在这里管，改动即改即存，状态反馈集中在顶部 -->
 <script setup lang="ts">
 import { ref } from "vue";
 import { useAppStore } from "../../stores/app";
@@ -42,32 +42,10 @@ function gotoProxyPool() {
 <template>
   <div v-if="ready" class="timing-sec">
     <div class="tg-head">
-      <span class="tg-hint">各板块的自动同步 / 自动刷新周期统一在这里调整，改动即存即生效。各板块配置页里的同类入口已改为引导到这里。</span>
+      <span class="tg-hint">自动刷新周期统一在这里调整，改动即存即生效。各板块配置页里的同类入口已改为引导到这里。</span>
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
     </div>
 
-    <div class="switch-row">
-      <div class="s-left">
-        <div class="s-title">号池定时同步（WebDAV）</div>
-        <div class="s-desc">API Keys、模型映射与账号随号池同步；开启后按周期自动跑，换设备不用手动点</div>
-      </div>
-      <div class="tg-ctl">
-        <el-select v-if="app.config.proxy.poolsyncSchedule.hourly" v-model="app.config.proxy.poolsyncSchedule.hourlyInterval" class="f-el-select" popper-class="glass-popper" style="width: 110px" @change="saveFramework">
-          <el-option v-for="n in [1, 2, 3, 6, 12]" :key="n" :value="n" :label="`${n} 小时`" />
-        </el-select>
-        <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.hourly }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.hourly" @click="app.config.proxy.poolsyncSchedule.hourly = !app.config.proxy.poolsyncSchedule.hourly; saveFramework()"></div>
-      </div>
-    </div>
-    <div class="switch-row">
-      <div class="s-left">
-        <div class="s-title">号池每天固定时间</div>
-        <div class="s-desc">每天到点同步一次（错过自动补跑）；与每小时档可同时开</div>
-      </div>
-      <div class="tg-ctl">
-        <input v-if="app.config.proxy.poolsyncSchedule.daily" type="time" class="f-input" style="width: 110px" v-model="app.config.proxy.poolsyncSchedule.dailyTime" @change="saveFramework" />
-        <div class="switch" :class="{ on: app.config.proxy.poolsyncSchedule.daily }" role="switch" :aria-checked="app.config.proxy.poolsyncSchedule.daily" @click="app.config.proxy.poolsyncSchedule.daily = !app.config.proxy.poolsyncSchedule.daily; saveFramework()"></div>
-      </div>
-    </div>
     <div class="switch-row">
       <div class="s-left">
         <div class="s-title">额度自动刷新周期</div>

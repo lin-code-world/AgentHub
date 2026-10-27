@@ -10,12 +10,12 @@
  */
 // AgentApiGateway 反代网关 · Docker headless 形态入口
 //
-// 装配复用 proxy/index.cjs 的 boot()（规则/数据库/额度刷新/真实签到 tick/号池同步/
-// deviceMid 自愈/锚点兜底），桌面版日后新增装配项这里自动继承；本入口只处理形态差异：
+// 装配复用 proxy/index.cjs 的 boot()（规则/数据库/额度刷新/真实签到 tick/deviceMid 自愈），
+// 桌面版日后新增装配项这里自动继承；本入口只处理形态差异：
 // 进程内覆盖监听参数（不回写 config）、管理 REST API、停机序列。
 //
-// 数据目录与桌面版相互独立：桌面凭据是 safeStorage 密文、容器解不开，两种形态之间
-// 传号只走号池同步（poolsync 的口令信封通道）。
+// 数据目录与桌面版相互独立：桌面凭据是 safeStorage 密文、容器解不开，
+// 两形态之间没有自动传号通道，灌号走粘贴凭据 JSON 或管理 API 导入。
 "use strict";
 
 const crypto = require("node:crypto");
@@ -48,7 +48,6 @@ const server = require(path.join(PROXY_DIR, "server.cjs"));
 const pool = require(path.join(PROXY_DIR, "pool.cjs"));
 const adapters = require(path.join(PROXY_DIR, "adapters.cjs"));
 const discovery = require(path.join(PROXY_DIR, "discovery.cjs"));
-const poolsync = require(path.join(PROXY_DIR, "poolsync.cjs"));
 const proxyIndex = require(path.join(PROXY_DIR, "index.cjs"));
 
 const PORT = Number(process.env.AGENTHUB_PROXY_PORT) || 9527;
@@ -296,15 +295,6 @@ function registerConfigRoutes(app) {
   app.get("/api/config", handle((req, res) => {
     res.json({ ok: true, config: JSON.parse(JSON.stringify(config.loadConfig().proxy)) });
   }));
-  app.get("/api/config/webdav", handle((req, res) => {
-    res.json({ ok: true, webdav: config.maskedSharedWebdav() });
-  }));
-  // 写统一 WebDAV/S3 配置：与桌面版设置页同一条落盘路径（掩码密码 = 保留原值）
-  app.put("/api/config/webdav", handle((req, res) => {
-    if (!requireFull(req, res)) return;
-    const r = config.saveSharedWebdav(req.body || {});
-    res.status(r.ok ? 200 : 400).json(r.ok ? { ok: true, webdav: config.maskedSharedWebdav() } : r);
-  }));
   // 备份：VACUUM INTO 一致性快照（WAL 下直接拷 stats.db 会丢最近事务）
   app.get("/api/backup", handle((req, res) => {
     const target = path.join(os.tmpdir(), `agenthub-stats-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.db`);
@@ -437,7 +427,6 @@ async function shutdown(signal) {
   try { if (adminServer) adminServer.close(); } catch { /* 已关 */ }
   for (const c of sseClients) { try { c.end(); } catch { /* 已断 */ } } // 主动收掉长连接，停机不留悬挂
   try { proxyIndex.stopTimers(); } catch { /* 未装配 */ }
-  try { await poolsync.cancel(); } catch { /* 在途同步收尾 */ }
   const drained = await server.drainAndStop({ timeoutMs: DRAIN_TIMEOUT_MS });
   console.log(`[AgentApiGateway] 反代网关已停（在途 ${drained.active}，${drained.drained ? "已排空" : "超时强断"}）`);
   try { store.close(); } catch { /* 句柄随进程退出 */ }

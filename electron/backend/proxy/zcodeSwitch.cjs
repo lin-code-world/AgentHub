@@ -382,13 +382,6 @@ function repairDeviceMid(opts) {
   return { ok: true, repaired, rows: finalSt.rows, liveMid: finalSt.liveMid };
 }
 
-/** 锚定指纹上云（fire-and-forget）：WebDAV 未配置/网络失败都静默，备份是副业不拖累主流程 */
-function backupAnchorMidQuiet() {
-  try {
-    Promise.resolve(require("./poolsync.cjs").backupAnchorMid()).catch(() => {});
-  } catch { /* 模块不可用不影响领取模式 */ }
-}
-
 /** 领取模式通用进程闸：客户端在跑且未确认时返回 needConfirm 探针（结构对齐切号确认框）；
  *  已确认则先杀客户端，返回 null 表示可以动手。杀不掉返回失败对象 */
 function claimProcessGate(opts, noteText) {
@@ -463,7 +456,6 @@ async function enterClaimMode(accountId, opts) {
   const r = zcodeLocal.applyDeviceMid({ deviceMid: mid, accountId: acc.id });
   if (!r.ok) return { ok: false, channel: "zcode", message: `领取指纹写入失败：${r.message}` };
   const rel = zcodeLocal.launchZcode(gate.exeFile || undefined);
-  backupAnchorMidQuiet();
   return {
     ok: true,
     channel: "zcode",
@@ -502,7 +494,6 @@ async function restoreRemoteMid(opts) {
   const r = zcodeLocal.restoreRemoteMid();
   if (!r.ok) return { ok: false, channel: "zcode", message: r.message || "本机指纹恢复失败" };
   const rel = zcodeLocal.launchZcode(gate.exeFile || undefined);
-  backupAnchorMidQuiet();
   return {
     ok: true,
     channel: "zcode",

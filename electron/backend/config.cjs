@@ -8,9 +8,9 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 配置读写（Node 主进程侧）：框架配置（主题 / 模块顺序）与统一 WebDAV / 反代网关配置
+// 配置读写（Node 主进程侧）：框架配置（主题 / 模块顺序）与反代网关 / 远程目标配置
 // 统一落在 Windows 惯例的用户应用数据目录（Electron userData = %APPDATA%\AgentHub），
-// 深合并默认值，临时文件原子落盘；WebDAV 密码用系统级密钥加密存储。
+// 深合并默认值，临时文件原子落盘；敏感凭据用系统级密钥加密存储。
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -111,35 +111,6 @@ function defaultConfig() {
     /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
     remoteTargets: [],
     remoteActiveId: "local",
-    // 设备身份段：deviceId/deviceName 是号池同步（poolsync）的本机设备标识来源，
-    // 首次使用时惰性生成；endpoint 等旧同步字段仅为老配置迁移保留，不再有同步引擎读取
-    webdav: {
-      endpoint: "",
-      username: "",
-      password: "",
-      root: "/agent-skills",
-      deviceId: "",     // 首次使用时惰性生成
-      deviceName: "",   // 默认取计算机名
-    },
-    // ===== 全项目统一的 WebDAV / S3 服务器（号池同步用，
-    // 各模块根目录隔离互不冲突；远端数据布局与格式保持不变） =====
-    // type="s3" 时 endpoint/username/password 复用为 S3 兼容 API 地址 / AccessKeyId / SecretKey
-    //（配 s3.bucket/region/pathStyle），同步引擎经 moduleWebdav 的 __s3 标记零改动走 S3 传输
-    webdavShared: {
-      type: "webdav",     // webdav | s3
-      endpoint: "",
-      username: "",
-      password: "",       // 落盘为 enc:v1: 密文；S3 模式下是 SecretKey
-      encryptionPassphrase: "", // 号池压缩包加密口令（enc:v1: 密文）；空 = 沿用 password（S3 模式下即 SecretKey）
-      s3: {
-        bucket: "",
-        region: "",       // 非亚马逊服务一般填 auto（R2）或服务商标注的区域
-        pathStyle: false, // true = path-style（MinIO/R2/OSS 等）；false = 虚拟主机式（AWS）
-      },
-      roots: {
-        proxy: "/agenthub-proxy",  // 反代网关号池同步根目录
-      },
-    },
     // 后台与调度
     schedule: {
       // 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务（反代网关）照常运行，
@@ -164,13 +135,6 @@ function defaultConfig() {
       expiringSoonDays: 1,      // 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）：
                                 // 号池到期徽标与逐包明细的 expiringSoon 共用这一个值
                                 // （默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数）
-      poolsyncSchedule: {       // 号池定时同步（issue #89/#92）：全关 = 仅手动；API Key 与
-                                // 模型映射随号池同步走，自动同步让新设备开箱即得
-        hourly: false,          // 每小时档自动同步
-        hourlyInterval: 6,      // 每小时档周期（小时）：1/2/3/6/12
-        daily: false,           // 每天固定时刻同步
-        dailyTime: "04:00",
-      },
       debugStatus: false,       // /status 调试端点（默认关，仅回环地址）
       modelOverrides: {},       // 模型 → 渠道 的 per-model 覆盖（多源重叠时优先）
       humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
@@ -257,160 +221,6 @@ function normalizeCheckinRules(rules) {
   return out;
 }
 
-// ===== 统一 WebDAV 服务器（webdavShared）：三套同步共用一套凭据，根目录各自隔离 =====
-
-// 掩码约定与用量同步模块（sync-config.cjs）一致：渲染层只拿掩码，保存时精确掩码 = 未修改
-const PASSWORD_MASK = "••••••••";
-
-/** 归一化共享配置：缺键补默认，根目录去掉多余斜杠（空值回退默认根目录） */
-function normalizeShared(s) {
-  const def = defaultConfig().webdavShared;
-  const out = s && typeof s === "object" ? s : {};
-  const roots = out.roots && typeof out.roots === "object" ? out.roots : {};
-  const s3 = out.s3 && typeof out.s3 === "object" ? out.s3 : {};
-  const normRoot = (v, d) => {
-    const r = typeof v === "string" ? v.trim().replace(/^\/+|\/+$/g, "") : "";
-    return r ? "/" + r : d;
-  };
-  return {
-    type: out.type === "s3" ? "s3" : "webdav",
-    endpoint: typeof out.endpoint === "string" ? out.endpoint.trim() : "",
-    username: typeof out.username === "string" ? out.username.trim() : "",
-    password: typeof out.password === "string" ? out.password : "",
-    encryptionPassphrase: typeof out.encryptionPassphrase === "string" ? out.encryptionPassphrase : "",
-    s3: {
-      bucket: typeof s3.bucket === "string" ? s3.bucket.trim() : "",
-      region: typeof s3.region === "string" ? s3.region.trim() : "",
-      pathStyle: s3.pathStyle === true,
-    },
-    roots: {
-      proxy: normRoot(roots.proxy, def.roots.proxy),
-    },
-  };
-}
-
-// 迁移过程只读框架配置，无重入风险；保留 sharedBusy 哨兵防将来新增迁移源时踩递归
-let sharedBusy = false;
-
-/**
- * 加载统一 WebDAV 配置（明文密码）。
- * 迁移规则（仅首次生效）：webdavShared.endpoint 为空时，从旧位置（框架 config.json 的
- * webdav 段）搬服务器凭据，老用户升级后号池同步开箱即用。
- */
-function loadSharedWebdav() {
-  if (sharedBusy) throw new Error("webdavShared 正在迁移中");
-  const cfg = loadConfig();
-  let s = normalizeShared(cfg.webdavShared);
-  if (!s.endpoint) {
-    sharedBusy = true;
-    try {
-      let dirty = false;
-      // 旧框架配置（首次配置的凭据，迁移后号池同步直接可用）
-      const oldFw = cfg.webdav || {};
-      if (oldFw.endpoint && String(oldFw.endpoint).trim()) {
-        s.endpoint = String(oldFw.endpoint).trim();
-        s.username = String(oldFw.username || "");
-        s.password = String(oldFw.password || "");
-        dirty = true;
-      }
-      if (dirty) {
-        try {
-          // 迁移卫生（issue #95）：凭据已并入 webdavShared，旧段一律清空——
-          // 否则 webdavShared 意外为空时再迁移会把旧服务器凭据「复活」，
-          // 用户看到配置自己回到旧服务器
-          cfg.webdav.endpoint = "";
-          cfg.webdav.username = "";
-          cfg.webdav.password = "";
-          cfg.webdavShared = s;
-          saveConfig(cfg); // saveConfig 内部会对 webdavShared.password 加密落盘
-        } catch { /* 写不回去下轮再迁移 */ }
-        s = normalizeShared(loadConfig().webdavShared); // 重读（含解密后的密码）
-      }
-    } finally {
-      sharedBusy = false;
-    }
-  }
-  return s;
-}
-
-/** 保存统一 WebDAV 配置（incoming 为明文/掩码表单值；掩码密码回填磁盘真值） */
-function saveSharedWebdav(incoming) {
-  const cur = loadSharedWebdav();
-  const next = normalizeShared(incoming);
-  if (next.password === PASSWORD_MASK) next.password = cur.password;
-  // 号池加密口令同样只回掩码：精确掩码 = 未修改（issue #89）
-  if (next.encryptionPassphrase === PASSWORD_MASK) next.encryptionPassphrase = cur.encryptionPassphrase;
-  // S3 模式桶名必填：空桶名会让请求 URL 变成 `https://.host` 之类，报错是「网络错误」无从定位
-  if (next.type === "s3" && !next.s3.bucket) return { ok: false, message: "S3 模式必须填写桶名（Bucket）" };
-  // 表单里把有值的加密口令清空 = 用户显式要求回到「沿用密码」，放行清除；
-  // cur 为空（解密失败）时不放行，密文仍由 saveConfig 保留（issue #95 保护）
-  const explicitPassphraseClear = next.encryptionPassphrase === "" && !!cur.encryptionPassphrase;
-  const cfg = loadConfig();
-  cfg.webdavShared = next;
-  return saveConfig(cfg, explicitPassphraseClear ? { forceClearSharedSecrets: true } : {}); // 加密落盘在 saveConfig 内统一处理
-}
-
-/** 显式清除统一 WebDAV 服务器配置（设置页「清除配置」按钮）：全字段清空。
- *  这是唯一允许把密码/加密口令清掉的入口——后台保存遇空密码会保留磁盘密文（解密失败保护），
- *  没有这个显式通道，用户将没有任何办法撤销已保存的服务器配置。
- *  同步清掉 legacy webdav 段凭据：否则清除后 webdavShared.endpoint 为空，再迁移会把
- *  旧服务器凭据原样「复活」（issue #95 现象） */
-function clearSharedWebdav() {
-  const cfg = loadConfig();
-  cfg.webdavShared = normalizeShared({});
-  cfg.webdav.endpoint = "";
-  cfg.webdav.username = "";
-  cfg.webdav.password = "";
-  return saveConfig(cfg, { forceClearSharedSecrets: true });
-}
-
-/** 统一配置掩码版（给渲染层）：有密码/加密口令则回掩码，绝不回明文 */
-function maskedSharedWebdav() {
-  const s = loadSharedWebdav();
-  return {
-    ...s,
-    password: s.password ? PASSWORD_MASK : "",
-    encryptionPassphrase: s.encryptionPassphrase ? PASSWORD_MASK : "",
-  };
-}
-
-/** 给同步引擎用：共享服务器 + 指定模块根目录拼成的完整 webdav 配置。
- *  S3 模式（issue #89）：endpoint/username/password 复用为 S3 API 地址 / AccessKeyId /
- *  SecretKey，并注入 __s3 标记与桶参数——webdav.cjs 据此分派到 S3 传输，
- *  各引擎与「配置齐全才可同步」的判断（endpoint/账号/密码非空）对 S3 原样成立 */
-function moduleWebdav(moduleKey) {
-  const s = loadSharedWebdav();
-  const root = (s.roots && s.roots[moduleKey]) || "";
-  const passphrase = sharedEncryptionPassphrase();
-  if (s.type === "s3") {
-    return {
-      __s3: true,
-      endpoint: s.endpoint,
-      username: s.username,
-      password: s.password,
-      passphrase, // 号池压缩包加密口令（显式口令优先，缺省=SecretKey）——poolsync 封套全走它
-      bucket: s.s3.bucket,
-      region: s.s3.region,
-      pathStyle: s.s3.pathStyle,
-      root,
-    };
-  }
-  return {
-    endpoint: s.endpoint,
-    username: s.username,
-    password: s.password,
-    passphrase,
-    root,
-  };
-}
-
-/** 号池压缩包加密口令（issue #89）：显式设置过 encryptionPassphrase 用之，
- *  否则沿用 password（WebDAV 模式=登录密码，S3 模式=SecretKey）——与历史行为兼容 */
-function sharedEncryptionPassphrase() {
-  const s = loadSharedWebdav();
-  return s.encryptionPassphrase || s.password;
-}
-
 /** 加载配置（不存在/损坏时返回默认；损坏时留档 .bak） */
 function loadConfig() {
   const p = configPath();
@@ -461,50 +271,18 @@ function loadConfig() {
   delete merged.fxPools;
   delete merged.fxCursor;
   delete merged.update;
-  merged.webdav.password = decryptSecret(merged.webdav.password);
-  merged.webdavShared = normalizeShared(merged.webdavShared);
-  merged.webdavShared.password = decryptSecret(merged.webdavShared.password);
-  merged.webdavShared.encryptionPassphrase = decryptSecret(merged.webdavShared.encryptionPassphrase);
-  // deviceId / 本机名惰性补全并写回，保证多次调用稳定
-  if (!merged.webdav.deviceId || !merged.webdav.deviceName) {
-    if (!merged.webdav.deviceId) merged.webdav.deviceId = crypto.randomUUID();
-    if (!merged.webdav.deviceName) merged.webdav.deviceName = os.hostname();
-    try { saveConfig(merged); } catch { /* 写不回去下次再补 */ }
-  }
+  // 号池 WebDAV/S3 同步已随功能移除：webdav / webdavShared / proxy.poolsyncSchedule 与上面同理，
+  // 旧配置残留字段一律剔除，不再读写
+  delete merged.webdav;
+  delete merged.webdavShared;
+  if (merged.proxy) delete merged.proxy.poolsyncSchedule;
   return merged;
 }
 
-/** 保存配置（先写临时文件再原子替换，写一半断电不留半个 JSON）。
- *  opts.forceClearSharedSecrets：显式清除意图（clearSharedWebdav / 表单清空加密口令）——
- *  绕过下述解密失败保留规则；后台读改写保存绝不传它 */
-function saveConfig(cfg, opts = {}) {
+/** 保存配置（先写临时文件再原子替换，写一半断电不留半个 JSON） */
+function saveConfig(cfg) {
   const p = configPath();
   const disk = JSON.parse(JSON.stringify(cfg));
-  disk.webdav.password = encryptSecret(disk.webdav.password);
-  if (disk.webdavShared) {
-    disk.webdavShared = normalizeShared(disk.webdavShared);
-    // 解密失败保护（issue #95）：loadConfig 解不开 enc:v1: 密文（换机 / DPAPI 变化）时
-    // 内存密码是 ""，若直接落盘会把好端端的密文覆盖成空——网关启停等后台读改写保存都会触发。
-    // 服务器未变而密码为空 = 本机没有新密码可写 → 保留磁盘密文；
-    // 换服务器（endpoint/username 变了）正常写空，显式清除走 clearSharedWebdav。
-    // encryptionPassphrase（号池加密口令，issue #89）无「换服务器」概念：为空一律保留磁盘密文
-    try {
-      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-      const dsh = raw && raw.webdavShared;
-      if (dsh && typeof dsh.password === "string" && dsh.password
-          && String(dsh.endpoint || "") === disk.webdavShared.endpoint
-          && String(dsh.username || "") === disk.webdavShared.username) {
-        disk.webdavShared.password = dsh.password;
-      }
-      if (dsh && typeof dsh.encryptionPassphrase === "string" && dsh.encryptionPassphrase
-          && !disk.webdavShared.encryptionPassphrase
-          && !(opts && opts.forceClearSharedSecrets)) {
-        disk.webdavShared.encryptionPassphrase = dsh.encryptionPassphrase;
-      }
-    } catch { /* 读不到就按原值落盘 */ }
-    disk.webdavShared.password = encryptSecret(disk.webdavShared.password);
-    disk.webdavShared.encryptionPassphrase = encryptSecret(disk.webdavShared.encryptionPassphrase);
-  }
   // 中转名带 pid，与本仓其余原子写同形（memory/config.cjs、memory/store.cjs、synonyms.cjs、
   // inject.cjs 早就是 `.tmp.${process.pid}`）：固定名时两个写入者会互相把对方的 .tmp rename 走
   const tmp = `${p}.tmp.${process.pid}`;
@@ -543,11 +321,6 @@ function saveConfigFromUI(cfg) {
     for (const k of OUT_OF_BAND_PROXY_FIELDS) {
       if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
     }
-    // webdavShared 整段同样磁盘优先（issue #95）：它从不经设置页整份保存编辑
-    //（专用通道 webdav_shared_save），渲染层快照里的这一段是启动时带进来的旧行李字段，
-    // 首配会话内密码快照为空串，任何整份提交（切主题/拖模块排序/改反代设置）都会把
-    // 已保存的服务器配置整段冲掉——这里以磁盘值为准，让该快照字段失效
-    if (disk && disk.webdavShared) next.webdavShared = disk.webdavShared;
     // 远程网关目标同样磁盘优先：唯一写入口是 remote_targets_save/delete/activate（主进程读改写），
     // 设置页整份提交携带的是启动时的旧快照，不保护会像 issue #90 一样把变更冲回去
     if (disk && Array.isArray(disk.remoteTargets)) next.remoteTargets = disk.remoteTargets;
@@ -568,7 +341,6 @@ function applyAutoStart(cfg) {
 module.exports = {
   dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
-  loadSharedWebdav, saveSharedWebdav, clearSharedWebdav, maskedSharedWebdav, moduleWebdav, sharedEncryptionPassphrase, PASSWORD_MASK,
   normalizeHm, normalizeJitter,
   saveConfigFromUI, OUT_OF_BAND_PROXY_FIELDS,
 };

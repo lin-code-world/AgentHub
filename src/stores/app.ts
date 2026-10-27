@@ -17,7 +17,7 @@ import * as api from "../api/ipc";
 
 /** 递归合并：以 base 为基线补全 patch 缺失的嵌套字段；数组与原始值一律整体取 patch（有则覆盖）。
  *  用途：后端返回的配置一旦缺某个嵌套字段（旧版后端 / 字段重命名 / mock 未同步），浅合并会让
- *  模板访问形如 proxy.poolsyncSchedule 时直接抛错白屏——这里保证任何层级都有 defaultConfig 兜底。 */
+ *  模板访问形如 proxy.creditsRefreshMin 时直接抛错白屏——这里保证任何层级都有 defaultConfig 兜底。 */
 function mergeConfigDeep<T>(base: T, patch: unknown): T {
   if (Array.isArray(base) || Array.isArray(patch)) return (patch === undefined ? base : (patch as T));
   if (base && typeof base === "object" && patch && typeof patch === "object") {
@@ -46,7 +46,6 @@ const defaultConfig: AppConfig = {
     creditsRefreshMin: 30,
     usageRetentionDays: 90,
     expiringSoonDays: 1,
-    poolsyncSchedule: { hourly: false, hourlyInterval: 6, daily: false, dailyTime: "04:00" },
     debugStatus: false,
     modelOverrides: {},
     humanizeJitter: true,
@@ -201,7 +200,7 @@ export const useAppStore = defineStore("app", {
       }
       this.applyTheme(this.config.theme);
     },
-    /** 打开全局设置弹窗：tab 缺省保持当前模块；左下角齿轮给 general，跨模块入口给 webdav 等 */
+    /** 打开全局设置弹窗：tab 缺省保持当前模块；左下角齿轮给 general，跨模块入口给 timing 等 */
     openSettings(tab?: SettingsTab) {
       if (tab) this.settingsTab = tab;
       this.settingsOpen = true;

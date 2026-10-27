@@ -96,15 +96,6 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_open_rules_dir",
   "proxy_open_data_dir",
   "proxy_vault_status",
-  // ===== 反代网关：号池 WebDAV 同步 =====
-  "proxy_poolsync_status",
-  "proxy_poolsync_run",
-  "proxy_poolsync_cancel",
-  // ===== 统一 WebDAV（设置 · 数据存储：共享服务器 + 号池根目录） =====
-  "webdav_shared_get",
-  "webdav_shared_save",
-  "webdav_shared_test",
-  "webdav_shared_clear",
   // ===== 远程网关（桌面连远程 Docker 版）=====
   "remote_targets_list",
   "remote_targets_save",

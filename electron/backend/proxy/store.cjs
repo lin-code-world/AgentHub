@@ -929,9 +929,8 @@ function updateAccount(id, patch) {
   const vals = [];
   const put = (col, val) => { sets.push(`${col}=?`); vals.push(val); };
   // 用户编辑时钟与活动时钟分开：下面那行 put("updated_at") 是无条件的，每次额度刷新、每次
-  // 代理请求扣减都会把 updated_at 推到当下。号池同步拿它仲裁 name/note ⇒ 只要对端跑过流量，
-  // 本机这一次改名就永远判负（用户看到「改完名过一会儿自己变回去」）。所以把「本行 name
-  // 何时被用户改的」单独记到 meta.renamedAt，由 poolsync 按它比。不加列，避免 schema 迁移。
+  // 代理请求扣减都会把 updated_at 推到当下，拿它比「name/note 何时被用户改」必然失真。
+  // 所以把「本行 name 何时被用户改的」单独记到 meta.renamedAt。不加列，避免 schema 迁移。
   const editClock = {};
   if (patch.name != null) {
     const next = String(patch.name).slice(0, 64);
@@ -1010,8 +1009,7 @@ function clearError(id) {
   updateAccount(id, { meta });
 }
 
-/** 设置账号备注（号池列表「备注」按钮）：落 meta.note（合并进现有 meta，不整包替换），
- *  随 exportPool 快照导出 + mergeSnapshot 备注新者胜传播到其他设备 */
+/** 设置账号备注（号池列表「备注」按钮）：落 meta.note（合并进现有 meta，不整包替换） */
 function noteAccount(id, note) {
   if (!id) return false;
   open();
@@ -1019,11 +1017,9 @@ function noteAccount(id, note) {
   if (!cur) return false;
   const meta = { ...parseMeta(cur.meta) };
   const text = String(note || "").trim().slice(0, 200);
-  // 内容没变就成功返回，不推进任何时钟：否则两侧拿同一个值互相追赶，每轮同步都白写一次
-  // （与 updateAccount 的改名同口径）。
+  // 内容没变就成功返回，不推进任何时钟（与 updateAccount 的改名同口径）
   if ((typeof meta.note === "string" ? meta.note : "") === text) return true;
-  // 清除写空串并**保留键**：删键的话「删掉备注」这个动作同步不到对端（对端只认非空
-  // remoteNote），结果是本机删掉了、别的机器永久残留旧备注。
+  // 清除写空串并**保留键**：读侧按「非空 note」判断有没有备注，删键会让「删掉备注」与「没设过」不可区分。
   meta.note = text;
   // 备注的编辑时刻独立记一条：updated_at 会被额度刷新/请求扣减推着走，拿它比备注同样会输。
   meta.noteAt = Date.now();
