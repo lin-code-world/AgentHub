@@ -167,7 +167,8 @@ function defaultConfig() {
                                    // 宁可多一个并发，也不让用户被一个卡住的前序请求挂住
     },
     // 局域网管理访问：浏览器登录管理页的令牌（落盘密文；明文只经桌面 IPC admin_access_info 交给设置页）。
-    // 首次启动由 main.cjs 调 ensureAdminToken() 自动生成 24 字节随机串，不允许清空
+    // 首次启动由 main.cjs 调 ensureAdminToken() 自动生成 24 字节随机串，不允许清空。
+    // 令牌来源分形态：桌面管理服务只认本字段，容器仍认 AGENTHUB_ADMIN_TOKEN 环境变量（详见下方「管理令牌」段）
     admin: {
       token: "",
     },
@@ -347,7 +348,12 @@ function saveConfigFromUI(cfg) {
 
 // ===== 管理令牌（局域网浏览器登录管理页用） =====
 // 令牌是敏感凭据：落盘走 encryptSecret 密文，明文只经桌面 IPC 交给设置页展示，
-// 不写日志、不进崩溃日志
+// 不写日志、不进崩溃日志。
+// 令牌来源分形态（供任务 5 管理 HTTP 服务照此接线）：
+//   · 桌面：管理服务只认本文件的 config.admin.token（ensureAdminToken 自动生成 / setAdminToken 修改），
+//     桌面没有只读令牌；
+//   · 容器（Docker headless）：仍认 AGENTHUB_ADMIN_TOKEN（及可选 AGENTHUB_ADMIN_READONLY_TOKEN）环境变量，
+//     见 gateway/README.md，不读这里的配置字段。
 
 /** 令牌生成（幂等）：已有可解出的令牌直接复用，缺失 / 解不开才生成 24 字节随机串并加密落盘 */
 function ensureAdminToken() {
@@ -360,17 +366,50 @@ function ensureAdminToken() {
   return token;
 }
 
+/** 本机局域网 IPv4（多网卡取枚举顺序第一个非回环地址；取不到返回 ""） */
+function lanIPv4() {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a && (a.family === "IPv4" || a.family === 4) && !a.internal) return a.address;
+    }
+  }
+  return "";
+}
+
 /** 管理访问信息（桌面 IPC 专用，返回令牌明文）：
- *  地址由配置计算（反代端口 + 1），不依赖管理服务是否已启动 */
+ *  地址由配置计算（反代端口 + 1），不依赖管理服务是否已启动；
+ *  url 优先局域网地址、取不到回退回环，loopbackUrl / lanUrl 两个地址都给（界面分别展示）；
+ *  端口非法（0 / 65535 之类会让 +1 后不是合法端口）时 available=false、地址为空 */
 function adminAccessInfo() {
   const cfg = loadConfig();
+  const port = Number(cfg.proxy && cfg.proxy.port);
+  const validPort = Number.isInteger(port) && port >= 1 && port <= 65534;
+  const adminPort = validPort ? port + 1 : 0;
+  const lanIp = lanIPv4();
   return {
-    url: `http://127.0.0.1:${Number(cfg.proxy.port || 9527) + 1}`,
+    available: validPort,
+    message: validPort ? "" : "反代端口配置非法，管理地址不可用",
+    url: validPort ? `http://${lanIp || "127.0.0.1"}:${adminPort}` : "",
+    loopbackUrl: validPort ? `http://127.0.0.1:${adminPort}` : "",
+    lanUrl: validPort && lanIp ? `http://${lanIp}:${adminPort}` : "",
     token: decryptSecret(cfg.admin && cfg.admin.token) || ensureAdminToken(),
   };
 }
 
-/** 修改管理令牌：非空且 ≥16 位（不允许清空）；成功后作废所有管理会话（浏览器需重新登录） */
+/** 令牌变更钩子：管理令牌变更后要作废所有浏览器会话。
+ *  会话模块（管理 HTTP 服务侧的 adminCrypto）启动时注册 clearSessions 即可接上，
+ *  setAdminToken 成功后会逐一调用；返回退订函数。钩子抛错不影响令牌写入结果 */
+const adminTokenListeners = [];
+function onAdminTokenChanged(fn) {
+  if (typeof fn !== "function") return () => {};
+  adminTokenListeners.push(fn);
+  return () => {
+    const i = adminTokenListeners.indexOf(fn);
+    if (i >= 0) adminTokenListeners.splice(i, 1);
+  };
+}
+
+/** 修改管理令牌：非空且 ≥16 位（不允许清空）；成功后触发令牌变更钩子（作废所有管理会话，浏览器需重新登录） */
 function setAdminToken(token) {
   const t = String(token == null ? "" : token).trim();
   if (!t) return { ok: false, message: "令牌不能为空" };
@@ -378,17 +417,10 @@ function setAdminToken(token) {
   const cfg = loadConfig();
   cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(t) };
   saveConfig(cfg);
-  clearAdminSessions();
+  for (const fn of [...adminTokenListeners]) {
+    try { fn(); } catch { /* 钩子失败不拦令牌更新（会话没清干净由重新登录兜底） */ }
+  }
   return { ok: true, message: "令牌已更新，浏览器需重新登录" };
-}
-
-/** 会话清空占位：管理令牌变更后要作废所有浏览器会话。
- *  会话模块（管理 HTTP 服务侧）落地后把这里接到会话存储的清空实现 */
-function clearAdminSessions() {}
-
-/** 当前管理会话数（会话模块落地前恒 0；admin_set_token 后必须为 0） */
-function sessionCount() {
-  return 0;
 }
 
 // 开机自启即时生效；便携版注册的是临时解压路径，开发模式不必注册
@@ -405,5 +437,5 @@ module.exports = {
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   normalizeHm, normalizeJitter,
   saveConfigFromUI, OUT_OF_BAND_PROXY_FIELDS,
-  ensureAdminToken, adminAccessInfo, setAdminToken, clearAdminSessions, sessionCount,
+  ensureAdminToken, adminAccessInfo, setAdminToken, onAdminTokenChanged,
 };

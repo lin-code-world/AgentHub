@@ -116,8 +116,11 @@ export const openDataDir = () => call<void>("open_data_dir");
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
 export const getIsPortable = () => call<boolean>("get_is_portable");
 
-/** 局域网管理访问信息：管理地址（反代端口 + 1）与令牌明文（只交本机设置页展示 / 复制） */
-export const adminAccessInfo = () => call<{ url: string; token: string }>("admin_access_info");
+/** 局域网管理访问信息（令牌明文只交本机设置页展示 / 复制）：
+ *  url 优先局域网地址、取不到回退回环；loopbackUrl / lanUrl 是两个原始地址；
+ *  端口非法（0 / 65535 之类）时 available=false、地址为空 */
+export type AdminAccessInfo = { available: boolean; message: string; url: string; loopbackUrl: string; lanUrl: string; token: string };
+export const adminAccessInfo = () => call<AdminAccessInfo>("admin_access_info");
 /** 修改管理令牌（非空且 ≥16 位）：成功后浏览器里的管理会话全部作废，需重新登录 */
 export const adminSetToken = (token: string) => call<{ ok: boolean; message?: string }>("admin_set_token", { token });
 

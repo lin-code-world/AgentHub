@@ -8,16 +8,19 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 局域网访问：管理地址（反代端口 + 1）与访问令牌（掩码展示，可查看 / 复制 / 修改）。
-     修改令牌后浏览器里的管理会话作废，需要重新登录 -->
+<!-- 设置 · 局域网访问：管理地址（反代端口 + 1，局域网地址优先展示、本机回环地址兜底）与访问令牌
+     （掩码展示，可查看 / 复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
+     令牌来源分形态：桌面管理服务只认 config.admin.token（本页展示 / 修改的就是它），
+     容器（Docker headless）仍认 AGENTHUB_ADMIN_TOKEN 环境变量；桌面没有只读令牌 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
+import type { AdminAccessInfo } from "../../api/ipc";
 
 const app = useAppStore();
 
-const info = ref<{ url: string; token: string } | null>(null);
+const info = ref<AdminAccessInfo | null>(null);
 const tokenShown = ref(false);
 const editing = ref(false);
 const newToken = ref("");
@@ -88,19 +91,29 @@ async function saveToken() {
 <template>
   <div class="lan-sec">
     <div class="tg-head">
-      <span class="tg-hint">局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。</span>
+      <span class="tg-hint">{{ info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
     </div>
 
     <div class="card">
       <div class="set-row">
         <div class="set-info">
-          <div class="set-name">管理地址</div>
-          <div class="set-desc">反代端口 + 1；局域网内其他设备访问时把 127.0.0.1 换成本机局域网 IP</div>
+          <div class="set-name">局域网地址</div>
+          <div class="set-desc">局域网内其他设备用这个地址访问管理页（反代端口 + 1）</div>
         </div>
         <div class="lan-ctl">
-          <span class="mono lan-text">{{ info?.url || "（暂不可用）" }}</span>
-          <button class="btn btn-ghost" :disabled="!info" @click="info && copyText(info.url, '管理地址')">复制</button>
+          <span class="mono lan-text">{{ info?.lanUrl || (info && info.available ? "（未检测到局域网网络，请用本机地址）" : "（地址不可用）") }}</span>
+          <button class="btn btn-ghost" :disabled="!info?.lanUrl" @click="info && info.lanUrl && copyText(info.lanUrl, '局域网地址')">复制</button>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-name">本机地址</div>
+          <div class="set-desc">仅本机浏览器可用（回环地址）</div>
+        </div>
+        <div class="lan-ctl">
+          <span class="mono lan-text">{{ info?.loopbackUrl || "（地址不可用）" }}</span>
+          <button class="btn btn-ghost" :disabled="!info?.loopbackUrl" @click="info && info.loopbackUrl && copyText(info.loopbackUrl, '本机地址')">复制</button>
         </div>
       </div>
       <div class="set-row">

@@ -9,8 +9,9 @@
  * ============================================================
  */
 // 管理令牌与局域网访问信息自测：首次启动自动生成 24 字节随机令牌（加密落盘、不写日志）；
-// admin_access_info 的管理地址 = 反代端口 + 1（不依赖管理服务是否已启动）；
-// admin_set_token 校验（非空、≥16 位）并作废所有会话（会话模块落地前 sessionCount 恒 0）；
+// admin_access_info 的管理地址 = 反代端口 + 1（局域网 / 回环两个地址，端口非法时明确不可用），
+// 不依赖管理服务是否已启动；
+// admin_set_token 校验（非空、≥16 位）并在成功后触发令牌变更钩子（会话模块启动时注册 clearSessions）；
 // 三处同步守护：ipc.cjs 注册 == preload 白名单 == src/api/ipc.ts 封装。
 // 目录沙箱运行，绝不触碰真实配置。用法：node tools/admin-access-info-selftest.cjs
 "use strict";
@@ -53,15 +54,32 @@ ok("A3 落盘为密文（明文不进 config.json）", !rawDisk.includes(t1) && 
 ok("A4 再次调用幂等（不换令牌）", config.ensureAdminToken() === t1);
 ok("A5 adminAccessInfo 解出同一明文", config.adminAccessInfo().token === t1);
 
-// ===== B. 管理地址 = 反代端口 + 1 =====
+// ===== B. 管理地址 = 反代端口 + 1（局域网 / 回环两个地址） =====
 console.log("=== B. 管理地址 ===");
 const cfg = config.loadConfig();
 cfg.proxy.port = 9600;
 config.saveConfig(cfg);
 const info = config.adminAccessInfo();
 ok("B1 地址以 http:// 开头", String(info.url).startsWith("http://"), info.url);
-ok("B2 端口为反代端口 + 1", String(info.url).endsWith(":9601"), info.url);
+ok("B2 端口为反代端口 + 1", String(info.loopbackUrl).endsWith(":9601"), info.loopbackUrl);
 ok("B3 返回令牌明文（桌面 IPC 专用）", info.token === t1);
+ok("B4 端口 9600 合法时 available=true", info.available === true && info.message === "", JSON.stringify(info.message));
+ok("B5 回环地址固定 127.0.0.1", info.loopbackUrl === "http://127.0.0.1:9601", info.loopbackUrl);
+ok("B6 局域网地址为空或同端口 http 地址", info.lanUrl === "" || /^http:\/\/.+:9601$/.test(info.lanUrl), info.lanUrl);
+ok("B7 url 优先局域网、取不到回退回环", info.url === (info.lanUrl || info.loopbackUrl), info.url);
+
+// —— 端口非法（0 / 65535）→ 明确不可用 ——
+cfg.proxy.port = 0;
+config.saveConfig(cfg);
+const bad0 = config.adminAccessInfo();
+ok("B8 端口 0 → available=false、地址为空", bad0.available === false && bad0.url === "" && bad0.loopbackUrl === "" && bad0.lanUrl === "", JSON.stringify(bad0));
+ok("B9 不可用时有明确提示", String(bad0.message).length > 0, bad0.message);
+cfg.proxy.port = 65535;
+config.saveConfig(cfg);
+const bad1 = config.adminAccessInfo();
+ok("B10 端口 65535（+1 越界）→ available=false", bad1.available === false && bad1.url === "" && bad1.loopbackUrl === "", bad1.url);
+cfg.proxy.port = 9600;
+config.saveConfig(cfg);
 
 // ===== C. admin_set_token 校验 =====
 console.log("=== C. 令牌修改校验 ===");
@@ -73,10 +91,19 @@ ok("C4 16 位以上接受", r.ok === true, JSON.stringify(r));
 ok("C5 修改后令牌更新", config.adminAccessInfo().token === "n3w-t0ken-0123456789abcdef");
 ok("C6 新令牌同样加密落盘", !fs.readFileSync(cfgPath, "utf8").includes("n3w-t0ken"));
 
-// ===== D. 修改令牌后清空所有会话（会话模块任务 6 落地前 sessionCount 恒 0） =====
-console.log("=== D. 会话清空 ===");
-ok("D1 修改令牌后 sessionCount() === 0", config.sessionCount() === 0, String(config.sessionCount()));
-ok("D2 clearAdminSessions 占位存在且可调用", typeof config.clearAdminSessions === "function" && config.clearAdminSessions() === undefined);
+// ===== D. 令牌变更钩子（会话模块 adminCrypto 启动时注册 clearSessions；这里验接线本身） =====
+console.log("=== D. 令牌变更钩子 ===");
+let hookCalls = 0;
+const offHook = config.onAdminTokenChanged(() => { hookCalls++; });
+config.setAdminToken("hook-t0ken-0123456789abcdef");
+ok("D1 修改令牌后钩子被调用一次", hookCalls === 1, String(hookCalls));
+config.setAdminToken("again-t0ken-0123456789ab");
+ok("D2 再次修改令牌钩子再被调用", hookCalls === 2, String(hookCalls));
+config.setAdminToken("short");
+ok("D3 校验被拒不触发钩子", hookCalls === 2, String(hookCalls));
+offHook();
+config.setAdminToken("after-off-0123456789abc");
+ok("D4 退订后不再触发", hookCalls === 2, String(hookCalls));
 
 // ===== E. 三处同步：ipc.cjs 注册 == preload 白名单 == src/api/ipc.ts 封装 =====
 console.log("=== E. IPC 三处同步 ===");

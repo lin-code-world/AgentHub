@@ -374,8 +374,14 @@ if (!gotLock) {
     // 建窗前先应用主题，避免深色配置下标题栏先白后黑闪烁
     const bootCfg = config.loadConfig();
     applyNativeTheme(bootCfg.theme);
-    // 管理令牌：首次启动自动生成（24 字节随机串，加密落盘），供局域网管理页登录
-    config.ensureAdminToken();
+    // 管理令牌：首次启动自动生成（24 字节随机串，加密落盘），供局域网管理页登录。
+    // 只记崩溃日志不拦启动：它内部会读写配置盘，磁盘只读/被锁时抛错不该决定应用能否起
+    // （令牌缺失只影响管理页登录；崩溃日志不含令牌明文）
+    try {
+      config.ensureAdminToken();
+    } catch (e) {
+      __crashLog("admin-token-init-failed", __describe(e));
+    }
 
     ipc.register({ ipcMain, app, shell, nativeTheme });
     // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）

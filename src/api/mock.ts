@@ -422,8 +422,17 @@ export const mock = {
         return;
       case "browse_dir":
         return { ok: true, canceled: true, path: null };
-      case "admin_access_info":
-        return { url: `http://127.0.0.1:${(read().proxy.port || 9527) + 1}`, token: "mock-admin-token-0123456789abcdef" };
+      case "admin_access_info": {
+        const adminPort = (read().proxy.port || 9527) + 1;
+        return {
+          available: true,
+          message: "",
+          url: `http://192.168.1.24:${adminPort}`,
+          loopbackUrl: `http://127.0.0.1:${adminPort}`,
+          lanUrl: `http://192.168.1.24:${adminPort}`,
+          token: "mock-admin-token-0123456789abcdef",
+        };
+      }
       case "admin_set_token":
         return String(args?.token || "").trim().length >= 16 ? { ok: true, message: "令牌已更新，浏览器需重新登录" } : { ok: false, message: "令牌至少 16 位" };
 
