@@ -51,6 +51,33 @@ const DENY = {
   proxy_zcode_solve_captcha: "人机校验需要图形环境，容器里无法弹窗——请在桌面版号池页手动领取",
 };
 
+/** browser 形态的独立 deny 文案（Ruling 11）：按浏览器视角逐条改写，不复用容器文案，
+ *  禁止出现容器 / 编排 / docker / 宿主机 / gateway-data 等容器形态措辞与本骨架没有的接口名 */
+const DENY_BROWSER = {
+  proxy_start: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+  proxy_stop: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+  proxy_restart: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+  proxy_open_data_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+  proxy_open_rules_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+  proxy_account_import_file: "浏览器访问时不可用：请用页面上的「选择文件」上传，或粘贴 JSON 导入",
+  proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
+  proxy_oauth_begin: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
+  proxy_ide_status: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
+  proxy_ide_switch: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
+  proxy_oplog_export: "浏览器访问时不可用：导出日志请在桌面窗口操作",
+  proxy_zcode_claim_mode: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+  proxy_zcode_device_repair: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+  proxy_zcode_device_status: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+  proxy_zcode_restore_mid: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+  proxy_zcode_switch_rollback: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+  proxy_zcode_solve_captcha: "浏览器访问时不可用：人机校验请在桌面号池页领取",
+};
+
+// 两表同键：deny 命令只写一边就在某个形态静默缺文案，加载期 fail-fast
+for (const cmd of Object.keys(DENY)) {
+  if (!DENY_BROWSER[cmd]) throw new Error(`deny 文案缺失：${cmd} 没有 browser 形态文案`);
+}
+
 /** 形态参数 form："container"（容器 headless，默认）/ "browser"（浏览器管理页）。
  *  两形态 deny 集合相同（Ruling 11），差异只在文案；桌面 IPC 直接注册 handler，不套 deny */
 function modeOf(cmd, form = "container") {
@@ -59,11 +86,9 @@ function modeOf(cmd, form = "container") {
 }
 
 /** deny 命令的面向用户原因；非 deny 命令返回 null。
- *  container 保持现有文案；browser 在前面加「浏览器访问时不可用：」（前端提示与 403 共用） */
+ *  container 用容器文案，browser 用独立改写的浏览器文案（各自成句，前端提示与 403 共用） */
 function denyReason(cmd, form = "container") {
-  const reason = DENY[cmd];
-  if (!reason) return null;
-  return form === "browser" ? `浏览器访问时不可用：${reason}` : reason;
+  return (form === "browser" ? DENY_BROWSER[cmd] : DENY[cmd]) || null;
 }
 
 /** 全量命令表（框架命令 + 反代网关命令）。注册副作用：proxy 的 register 首行会执行
@@ -79,4 +104,4 @@ function collect({ handle, deps } = {}) {
   return commands;
 }
 
-module.exports = { collect, modeOf, denyReason, READ, DENY };
+module.exports = { collect, modeOf, denyReason, READ, DENY, DENY_BROWSER };

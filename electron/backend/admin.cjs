@@ -13,9 +13,11 @@
 // /api/rpc 刻意不挂——无鉴权的命令通道留到任务 6 接入鉴权后再说，避免出现临时后门。
 // 命令清单按 browser 形态下发（modeOf/denyReason 的 form 参数，文案见 commandTable.cjs）。
 //
-// 结构上只依赖注入的 commandTable（collect/modeOf/denyReason），不碰反代转发、选号、冷却、鉴权、计费：
+// 结构上只依赖注入的 commandTable（collect/modeOf/denyReason）与 proxy/server.cjs 的轻量 status() 读数，
+// 不碰反代转发、选号、冷却、鉴权、计费：
 // start({ port, commandTable, staticDir }) 的 port 是**反代端口**（监听 port + 1），返回实际监听端口，
 // 容器形态（gateway）后续只换注入的命令表与 staticDir 即可复用。
+// start/stop 在模块内串行化：并发调用若先检查后赋值，会两个都 listen、stop 只关一个（端口泄漏）。
 "use strict";
 
 const fs = require("node:fs");
@@ -74,26 +76,19 @@ function capabilitiesOf(commands, commandTable) {
   };
 }
 
-/** /api/status 载荷：只给非敏感的运行摘要（渠道 / Key / 用量等带鉴权后再下发）。
- *  网关状态经命令表的 proxy_status 取（同桌面 IPC 同一份 handler），异常降级为未运行 */
-async function statusOf(commands) {
-  const base = { running: false, port: 0, bind: "" };
+/** /api/status 载荷：轻量状态（Ruling 14）——running / port / bind / version。
+ *  只读 proxy/server.cjs 的 status()（内存读数，不碰库），不跑全量 proxy_status：
+ *  无鉴权的公开端点不能每个请求都做 DB 统计 + 每渠道 poolSummary + listKeys，渠道 / Key / 用量
+ *  等带鉴权后再下发。server 未加载或读数异常时降级为未运行 */
+function statusOf() {
+  let gateway = { running: false, port: 0, bind: "" };
   try {
-    const handler = commands.get("proxy_status");
-    if (typeof handler !== "function") return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway: base };
-    // 桌面 handler 形如 (event, args)，全部不使用 event（同 gateway 的 /api/rpc 约定），传 null 即可
-    const r = await handler(null, {});
-    if (r && r.ok === false) return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway: base };
-    return {
-      ok: true,
-      form: "browser",
-      platform: platformForm(),
-      version: appVersion(),
-      gateway: { running: !!(r && r.running), port: Number((r && r.port) || 0), bind: String((r && r.bind) || "") },
-    };
+    const s = require("./proxy/server.cjs").status();
+    gateway = { running: !!s.running, port: Number(s.port || 0), bind: String(s.bind || "") };
   } catch {
-    return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway: base };
+    /* server 不可用时按未运行降级 */
   }
+  return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway };
 }
 
 /** Express 应用：/api/capabilities、/api/status、静态资源、SPA 回退（非 /api 的 GET/HEAD 回 index.html） */
@@ -104,7 +99,7 @@ function buildApp({ commandTable, staticDir }) {
   app.disable("x-powered-by");
 
   app.get("/api/capabilities", (_req, res) => res.json(caps));
-  app.get("/api/status", async (_req, res) => res.json(await statusOf(commands)));
+  app.get("/api/status", (_req, res) => res.json(statusOf()));
   // 其余 /api 一律 404 JSON：SPA 回退只服务非 /api 路径，接口打错返回 HTML 会让前端解析炸掉
   app.use("/api", (_req, res) => res.status(404).json({ ok: false, message: "未知接口" }));
 
@@ -123,15 +118,31 @@ function buildApp({ commandTable, staticDir }) {
   return app;
 }
 
+// start/stop 串行化：并发 start 时「先检查后赋值」会两个都 listen、stop 只关一个（端口泄漏）；
+// 一切启停排同一条链顺序执行，链上某步失败不拦后续操作（对 stop 与失败回滚重试友好）
+let opChain = Promise.resolve();
+function serialize(fn) {
+  const run = opChain.then(fn);
+  opChain = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
 /** 启动管理服务：port 是反代端口（监听 port + 1，0.0.0.0）；已在运行则先停旧再启新（端口联动语义） */
-async function start({ port, commandTable, staticDir } = {}) {
+function start({ port, commandTable, staticDir } = {}) {
+  return serialize(() => doStart({ port, commandTable, staticDir }));
+}
+
+async function doStart({ port, commandTable, staticDir }) {
   const adminPort = adminPortOf(port); // 端口非法先拒绝，别碰已在跑的服务
   if (!commandTable || typeof commandTable.collect !== "function" || typeof commandTable.modeOf !== "function" || typeof commandTable.denyReason !== "function") {
     const e = new Error("命令表不合法：需要 { collect, modeOf, denyReason }（见 electron/backend/commandTable.cjs）");
     e.code = "EADMINTABLE";
     throw e;
   }
-  if (server) await stop();
+  if (server) await doStop(); // 链内重入必须走 doStop：调 stop() 会排到链尾等自己（死锁）
   const app = buildApp({ commandTable, staticDir });
   await new Promise((resolve, reject) => {
     const srv = app.listen(adminPort, "0.0.0.0", () => {
@@ -151,7 +162,11 @@ async function start({ port, commandTable, staticDir } = {}) {
 }
 
 /** 停止管理服务：未启动时幂等 */
-async function stop() {
+function stop() {
+  return serialize(doStop);
+}
+
+async function doStop() {
   const srv = server;
   server = null;
   listenPort = 0;
