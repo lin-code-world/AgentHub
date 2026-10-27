@@ -34,6 +34,7 @@ const INFO_REQ = "agenthub-req";
 const INFO_RESP = "agenthub-resp";
 const INFO_SIG = "agenthub-sig";
 const TOL_MS = 5 * 60 * 1000; // 时间窗 ±5 分钟
+const NONCE_TTL_MS = 5 * 60 * 1000; // 随机数去重窗口 5 分钟
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 会话有效期 12 小时
 
 const PROXY_PORT = 19629; // 管理端口 = 反代端口 + 1
@@ -66,21 +67,27 @@ const EXPECTED = [
   "A9 超过 12 小时的会话被拒绝",
   "A10 改令牌后所有旧会话失效（sessionCount 归零）",
   "A11 会话上限 100 条，超出淘汰最旧",
-  "A12 随机数上限 5000 条，超出拒绝",
+  "A12 单会话随机数上限 1000 条（Ruling 15），超出拒绝",
+  "A13 登录随机数上限 100 条（Ruling 15），第 101 次登录被拒",
   "B1 POST /api/login 200 且字段齐全、不返回会话密钥",
   "B2 登录签名错误 → 401 统一文案",
   "B3 /api/rpc 加密往返：echo 明文一致、响应回带请求 nonce",
+  "B13 /api/rpc 响应不含令牌明文；admin_access_info 在 browser 形态被拒（Ruling 16）",
   "B4 /api/rpc 签名错误 → 401",
   "B5 /api/rpc 同一 nonce 重放 → 401",
   "B6 /api/rpc 密文被篡改（签名按篡改后重算）→ 401（GCM 认证失败）",
   "B7 handler 返回 {ok:false} 仍加密返回",
   "B8 handler 抛异常 → 加密返回 {ok:false}",
+  "B8 handler 返回不可序列化值（BigInt）→ 加密返回 {ok:false}，服务不崩",
   "B9 deny 命令 → 403 且带浏览器文案",
   "B10 未知命令 → 404",
   "B11 未鉴权 GET /api/events → 401",
   "B12 401 统一文案（签名错 / 时间窗 / 重放 / 会话失效 响应体一致）",
-  "C1 SSE 鉴权后收到加密首帧且可用 K_resp 解密",
+  "C1 SSE 鉴权后收到加密首帧（seq=1）且可用 K_resp 解密",
   "C2 清空会话后 SSE 连接关闭",
+  "C3 SSE 帧 seq 单调递增（Ruling 19）",
+  "C4 会话过期后 SSE 连接被关闭",
+  "D1 登录限流：每 IP 每分钟 20 次，超出 429",
 ];
 
 let adminCrypto = null,
@@ -172,7 +179,7 @@ const fetchJson = async (p, opts) => {
   return { status: res.status, body };
 };
 
-// 假命令表：echo 往返 / 业务失败 / 抛异常 / deny 门控（不执行真实命令，避免碰库）
+// 假命令表：echo 往返 / 业务失败 / 抛异常 / 不可序列化返回 / deny 门控（不执行真实命令，避免碰库）
 const fakeTable = {
   collect: () =>
     new Map([
@@ -184,10 +191,12 @@ const fakeTable = {
           throw new Error("炸了");
         },
       ],
+      ["unserializable", async () => ({ ok: true, big: BigInt(1) })], // JSON.stringify 抛 TypeError
       ["secret_op", async () => ({ ok: true, secret: "s3cr3t" })],
+      ["admin_access_info", async () => ({ ok: true, token: "PLAIN-TOKEN-MUST-NOT-LEAK" })],
     ]),
-  modeOf: (cmd) => (cmd === "secret_op" ? "deny" : "write"),
-  denyReason: (cmd) => (cmd === "secret_op" ? "浏览器访问时不可用：测试专用命令" : null),
+  modeOf: (cmd) => (cmd === "secret_op" || cmd === "admin_access_info" ? "deny" : "write"),
+  denyReason: (cmd) => (cmd === "secret_op" ? "浏览器访问时不可用：测试专用命令" : cmd === "admin_access_info" ? "浏览器访问时不可用：请在桌面窗口查看令牌" : null),
 };
 
 async function rpcHttp(session, cmd, args, opts = {}) {
@@ -282,33 +291,46 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   const nonceA10 = b64(16);
   ok("A10 旧会话的 verifyRequest 被拒", sA10.ok === true && adminCrypto.verifyRequest({ sessionId: sA10.sessionId, ts: tsA10, nonce: nonceA10, sig: reqSig(sA10.keys, sA10.sessionId, "POST", "/api/rpc", tsA10, nonceA10, ""), bodyHash: "", method: "POST", path: "/api/rpc" }).ok === false);
 
-  // 会话上限：100 条，超出淘汰最旧
+  // 会话上限：100 条，超出淘汰最旧。
+  // 登录随机数配额只有 100（Ruling 15）：分两批登录、中间拨快 5 分钟让登录 nonce 过期，
+  // 否则第 101 次登录先被登录配额挡掉（那是 A13 的断言点，不该混进会话上限用例）
   adminCrypto.clearSessions();
   const keep = [];
-  for (let i = 0; i < 101; i++) {
+  for (let i = 0; i < 100; i++) {
     const s = loginUnit(makeClient());
     if (s.ok) keep.push(s);
   }
+  const later = nowMs() + NONCE_TTL_MS + 60000;
+  adminCrypto.__setNow(() => later);
+  const last = loginUnit(makeClient(), later);
+  if (last.ok) keep.push(last);
   ok("A11 会话上限 100 条（超出淘汰最旧）", keep.length === 101 && adminCrypto.sessionCount() === 100, `created=${keep.length} count=${adminCrypto.sessionCount()}`);
-  const tsA11 = nowMs();
+  const tsA11 = later; // 服务端时钟还在 later：断言在该时刻下做（时间窗 ±5 分钟按它算）
   const nonceA11a = b64(16);
   const nonceA11b = b64(16);
   ok("A11 最早的会话被淘汰", adminCrypto.verifyRequest({ sessionId: keep[0].sessionId, ts: tsA11, nonce: nonceA11a, sig: reqSig(keep[0].keys, keep[0].sessionId, "POST", "/api/rpc", tsA11, nonceA11a, ""), bodyHash: "", method: "POST", path: "/api/rpc" }).ok === false);
   ok("A11 最新的会话仍可用", adminCrypto.verifyRequest({ sessionId: keep[100].sessionId, ts: tsA11, nonce: nonceA11b, sig: reqSig(keep[100].keys, keep[100].sessionId, "POST", "/api/rpc", tsA11, nonceA11b, ""), bodyHash: "", method: "POST", path: "/api/rpc" }).ok === true);
+  adminCrypto.__setNow(() => nowMs());
 
-  // 随机数上限：5000 条（用最新会话灌 nonce）
+  // 随机数配额（Ruling 15）：单会话 1000 条，超出拒绝（配额按会话分摊，登录另算，禁止全局共享）
   adminCrypto.clearSessions();
   const sA12 = loginUnit(makeClient());
   let accepted = 0,
     rejectedAt = 0;
-  for (let i = 0; i < 5100; i++) {
+  for (let i = 0; i < 1100; i++) {
     const nonce = "n" + i;
     const ts = nowMs();
     const r = adminCrypto.verifyRequest({ sessionId: sA12.sessionId, ts, nonce, sig: reqSig(sA12.keys, sA12.sessionId, "GET", "/api/events", ts, nonce, ""), bodyHash: "", method: "GET", path: "/api/events" });
     if (r.ok) accepted++;
     else if (!rejectedAt) rejectedAt = i + 1;
   }
-  ok("A12 随机数上限 5000 条（登录 nonce 占 1 条），超出拒绝", accepted === 4999 && rejectedAt === 5000, `accepted=${accepted} rejectedAt=${rejectedAt}`);
+  ok("A12 单会话随机数上限 1000 条（Ruling 15），超出拒绝", accepted === 1000 && rejectedAt === 1001, `accepted=${accepted} rejectedAt=${rejectedAt}`);
+
+  // 登录随机数独立小配额（Ruling 15）：会话灌满配额不影响登录，登录灌满也不牵连会话
+  adminCrypto.clearSessions();
+  const loginAttempts = [];
+  for (let i = 0; i < 101; i++) loginAttempts.push(loginUnit(makeClient()));
+  ok("A13 登录随机数上限 100 条（Ruling 15），第 101 次登录被拒", loginAttempts.slice(0, 100).every((s) => s.ok) && loginAttempts[100].ok === false, `okFirst100=${loginAttempts.slice(0, 100).filter((s) => s.ok).length} at101=${loginAttempts[100].ok}`);
   adminCrypto.clearSessions();
 
   // ===== Part B：HTTP 端点（假命令表，不执行真实命令） =====
@@ -327,6 +349,12 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   const echoPlain = echoRes.status === 200 && echoRes.body ? openWith(sessionB.keys.kResp, echoRes.body.iv, echoRes.body.ciphertext) : null;
   const echoObj = echoPlain ? JSON.parse(echoPlain) : null;
   ok("B3 /api/rpc 加密往返：echo 明文一致、响应回带请求 nonce", echoRes.status === 200 && echoRes.body && echoRes.body.nonce === echoRes.nonce && !!echoObj && echoObj.ok === true && JSON.stringify(echoObj.echo) === JSON.stringify(echoArgs), `status=${echoRes.status} body=${JSON.stringify(echoRes.body).slice(0, 200)} plain=${echoPlain}`);
+
+  // /api/rpc 不返回令牌明文：响应密文与解密明文都不含令牌；令牌命令在 browser 形态被 deny（Ruling 16）
+  const tokenNow = config.adminAccessInfo().token;
+  ok("B13 /api/rpc 响应不含令牌明文（密文与解密明文都不含）", JSON.stringify(echoRes.body).indexOf(tokenNow) < 0 && String(echoPlain).indexOf(tokenNow) < 0, "响应里出现令牌明文");
+  const guardRes = await rpcHttp(sessionB, "admin_access_info", {});
+  ok("B13 admin_access_info 在 browser 形态被拒（403，令牌不外泄）", guardRes.status === 403 && JSON.stringify(guardRes.body).indexOf(tokenNow) < 0 && JSON.stringify(guardRes.body).indexOf("PLAIN-TOKEN") < 0, `status=${guardRes.status} body=${JSON.stringify(guardRes.body)}`);
 
   const badLogin = await fetchJson("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPubKey: clientB.pubB64, ts: nowMs(), nonce: b64(16), sig: sign(kToken, [clientB.pubB64, String(nowMs()), "别的nonce"]) }) });
   ok("B2 登录签名错误 → 401 统一文案", badLogin.status === 401 && badLogin.body && badLogin.body.message === UNAUTHORIZED, `status=${badLogin.status} body=${JSON.stringify(badLogin.body)}`);
@@ -349,6 +377,11 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   const boomRes = await rpcHttp(sessionB, "boom", {});
   const boomPlain = boomRes.status === 200 && boomRes.body ? openWith(sessionB.keys.kResp, boomRes.body.iv, boomRes.body.ciphertext) : null;
   ok("B8 handler 抛异常 → 加密返回 {ok:false}", boomRes.status === 200 && !!boomPlain && JSON.parse(boomPlain).ok === false, `status=${boomRes.status} plain=${boomPlain}`);
+
+  // Important 6：JSON.stringify 遇 BigInt 抛 TypeError，不能掀掉主进程（Express 4 不接 async 异常）
+  const unserializableRes = await rpcHttp(sessionB, "unserializable", {});
+  const unserializablePlain = unserializableRes.status === 200 && unserializableRes.body ? openWith(sessionB.keys.kResp, unserializableRes.body.iv, unserializableRes.body.ciphertext) : null;
+  ok("B8 handler 返回不可序列化值（BigInt）→ 加密返回 {ok:false}，服务不崩", unserializableRes.status === 200 && !!unserializablePlain && JSON.parse(unserializablePlain).ok === false, `status=${unserializableRes.status} plain=${unserializablePlain}`);
 
   const denyRes = await rpcHttp(sessionB, "secret_op", {});
   ok("B9 deny 命令 → 403 且带浏览器文案", denyRes.status === 403 && denyRes.body && denyRes.body.message === "浏览器访问时不可用：测试专用命令", `status=${denyRes.status} body=${JSON.stringify(denyRes.body)}`);
@@ -383,7 +416,7 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   const frameLine = buf.split("\n").find((l) => l.startsWith("data: "));
   const frame = frameLine ? JSON.parse(frameLine.slice(6)) : null;
   const framePlain = frame ? openWith(sC.keys.kResp, frame.iv, frame.ciphertext) : null;
-  ok("C1 SSE 鉴权后收到加密首帧且可用 K_resp 解密", sseRes.status === 200 && !!frame && !!framePlain && JSON.parse(framePlain).type === "hello", `status=${sseRes.status} buf=${buf.slice(0, 120)} plain=${framePlain}`);
+  ok("C1 SSE 鉴权后收到加密首帧（seq=1）且可用 K_resp 解密", sseRes.status === 200 && !!frame && !!framePlain && JSON.parse(framePlain).type === "hello" && JSON.parse(framePlain).seq === 1, `status=${sseRes.status} buf=${buf.slice(0, 120)} plain=${framePlain}`);
 
   adminCrypto.clearSessions();
   let closed = false;
@@ -396,6 +429,65 @@ async function rpcHttp(session, cmd, args, opts = {}) {
     closed = true; // 连接被服务端断开（流中断）同样算关闭
   }
   ok("C2 清空会话后 SSE 连接关闭", closed);
+
+  // ===== C3：SSE 帧 seq 单调递增（Ruling 19）：短心跳连读两帧 =====
+  admin.__setSseHeartbeatMs(200);
+  const sC3 = loginUnit(makeClient());
+  const tsC3 = nowMs();
+  const nonceC3 = b64(16);
+  const ctrlC3 = new AbortController();
+  const sseRes3 = await fetch(`${ADMIN_URL}/api/events?sessionId=${encodeURIComponent(sC3.sessionId)}&ts=${tsC3}&nonce=${encodeURIComponent(nonceC3)}&sig=${encodeURIComponent(reqSig(sC3.keys, sC3.sessionId, "GET", "/api/events", tsC3, nonceC3, ""))}`, { signal: ctrlC3.signal });
+  const reader3 = sseRes3.body.getReader();
+  const dec3 = new TextDecoder();
+  let buf3 = "";
+  while ((buf3.match(/\n\n/g) || []).length < 2) {
+    const chunk = await reader3.read();
+    if (chunk.done) break;
+    buf3 += dec3.decode(chunk.value, { stream: true });
+  }
+  const seqs = buf3
+    .split("\n")
+    .filter((l) => l.startsWith("data: "))
+    .map((l) => JSON.parse(l.slice(6)))
+    .map((f) => JSON.parse(openWith(sC3.keys.kResp, f.iv, f.ciphertext)).seq);
+  ok("C3 SSE 帧 seq 单调递增（hello=1、ping=2）", seqs.length >= 2 && seqs[0] === 1 && seqs[1] === 2 && seqs.every((s, i) => i === 0 || s > seqs[i - 1]), `seqs=${JSON.stringify(seqs)}`);
+  ctrlC3.abort();
+
+  // ===== C4：SSE 会话过期关闭：拨快服务端时钟超过 12 小时，心跳发现过期即断开 =====
+  const sC4 = loginUnit(makeClient());
+  const tsC4 = nowMs();
+  const nonceC4 = b64(16);
+  const ctrlC4 = new AbortController();
+  const sseRes4 = await fetch(`${ADMIN_URL}/api/events?sessionId=${encodeURIComponent(sC4.sessionId)}&ts=${tsC4}&nonce=${encodeURIComponent(nonceC4)}&sig=${encodeURIComponent(reqSig(sC4.keys, sC4.sessionId, "GET", "/api/events", tsC4, nonceC4, ""))}`, { signal: ctrlC4.signal });
+  const reader4 = sseRes4.body.getReader();
+  adminCrypto.__setNow(() => nowMs() + SESSION_TTL_MS + 60000);
+  let expiredClosed = false;
+  const t4 = setTimeout(() => ctrlC4.abort(), 5000);
+  try {
+    while (true) {
+      const next = await reader4.read(); // 先把 hello / ping 帧读掉，直到服务端结束流
+      if (next.done) {
+        expiredClosed = true;
+        break;
+      }
+    }
+  } catch {
+    expiredClosed = !ctrlC4.signal.aborted; // 流中断算关闭；超时 abort 不算（那是服务端没关）
+  }
+  clearTimeout(t4);
+  adminCrypto.__setNow(() => nowMs());
+  admin.__setSseHeartbeatMs(0);
+  ok("C4 会话过期后 SSE 连接被关闭（心跳发现过期）", expiredClosed);
+
+  // ===== Part D：登录限流（放最后：打满窗口配额后本进程不能再登录） =====
+  let first429 = 0;
+  let stuck429 = true;
+  for (let i = 1; i <= 30; i++) {
+    const r = await fetchJson("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientPubKey: "x", ts: nowMs(), nonce: "d" + i, sig: "x" }) });
+    if (r.status === 429 && !first429) first429 = i;
+    if (first429 && r.status !== 429) stuck429 = false;
+  }
+  ok("D1 登录限流：每 IP 每分钟 20 次，超出 429 且持续", first429 > 0 && first429 <= 21 && stuck429, `first429=${first429}`);
 
   await admin.stop();
   console.log("");

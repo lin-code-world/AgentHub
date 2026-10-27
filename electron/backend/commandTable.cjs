@@ -52,7 +52,9 @@ const DENY = {
 };
 
 /** browser 形态的独立 deny 文案（Ruling 11）：按浏览器视角逐条改写，不复用容器文案，
- *  禁止出现容器 / 编排 / docker / 宿主机 / gateway-data 等容器形态措辞与本骨架没有的接口名 */
+ *  禁止出现容器 / 编排 / docker / 宿主机 / gateway-data 等容器形态措辞与本骨架没有的接口名。
+ *  除与 DENY 同键的条目外，还含 browser 独有的桌面专用命令（Ruling 16）：令牌查看 / 修改、
+ *  目录选择与打开、整份配置读写都只在桌面窗口可用——admin_access_info 会吐出明文令牌，绝不能漏 */
 const DENY_BROWSER = {
   proxy_start: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
   proxy_stop: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
@@ -71,17 +73,29 @@ const DENY_BROWSER = {
   proxy_zcode_restore_mid: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
   proxy_zcode_switch_rollback: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
   proxy_zcode_solve_captcha: "浏览器访问时不可用：人机校验请在桌面号池页领取",
+  // —— browser 独有（Ruling 16）：桌面专用的框架命令，浏览器拿到就是越权（令牌明文 / 本机目录 / 整份配置）——
+  admin_access_info: "浏览器访问时不可用：请在桌面窗口查看令牌",
+  admin_set_token: "浏览器访问时不可用：请在桌面窗口修改令牌",
+  browse_dir: "浏览器访问时不可用：选择目录请在桌面窗口操作",
+  open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
+  get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",
+  get_app_version: "浏览器访问时不可用：版本信息请在桌面窗口查看",
+  load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
+  save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
 };
 
-// 两表同键：deny 命令只写一边就在某个形态静默缺文案，加载期 fail-fast
+// 两表同键（DENY → DENY_BROWSER 方向）：deny 命令只写一边就在某个形态静默缺文案，加载期 fail-fast。
+// 反方向刻意不要求：DENY_BROWSER 允许有 browser 独有的桌面专用命令（Ruling 16），那些命令容器形态照旧可用
 for (const cmd of Object.keys(DENY)) {
   if (!DENY_BROWSER[cmd]) throw new Error(`deny 文案缺失：${cmd} 没有 browser 形态文案`);
 }
 
 /** 形态参数 form："container"（容器 headless，默认）/ "browser"（浏览器管理页）。
- *  两形态 deny 集合相同（Ruling 11），差异只在文案；桌面 IPC 直接注册 handler，不套 deny */
+ *  共有 deny 集合见 DENY（Ruling 11：两形态同集、只差文案）；browser 另含桌面专用命令
+ *  （Ruling 16：DENY_BROWSER 独有键，令牌 / 目录 / 整份配置读写只在桌面窗口可用）；
+ *  桌面 IPC 直接注册 handler，不套 deny */
 function modeOf(cmd, form = "container") {
-  if (DENY[cmd]) return "deny";
+  if (DENY[cmd] || (form === "browser" && DENY_BROWSER[cmd])) return "deny";
   return READ.has(cmd) ? "read" : "write";
 }
 

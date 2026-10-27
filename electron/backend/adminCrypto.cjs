@@ -23,6 +23,7 @@
 //   · 请求签名 = HMAC(K_sig, sessionId \n METHOD \n path \n ts \n nonce \n bodyHash)；
 //     METHOD 大写；path 不含 query；bodyHash = SHA-256(密文字节) 的 base64，无请求体（SSE）时为空串。
 //   · 密文 = AES-256-GCM(iv 12 字节随机)，ciphertext 字段 = base64(密文‖tag)。
+//   · 随机数配额（Ruling 15）：单会话 1000 条、登录 100 条，各自独立计数；防重放窗口 5 分钟。
 // 令牌、会话密钥、随机数一律不写日志、不进崩溃日志；错误只回 { ok:false }，不区分失败原因。
 "use strict";
 
@@ -40,7 +41,9 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 会话 12 小时
 const MAX_SESSIONS = 100; // 并发会话上限，超出淘汰最旧
 const CLOCK_SKEW_MS = 5 * 60 * 1000; // 时间窗 ±5 分钟
 const NONCE_TTL_MS = 5 * 60 * 1000; // 随机数去重窗口 5 分钟
-const MAX_NONCES = 5000; // 随机数表上限，超出拒绝新请求（宁可拒绝也不放行重放）
+const MAX_SESSION_NONCES = 1000; // 单会话随机数上限（Ruling 15：配额按会话分摊，禁止全局共享）
+const MAX_LOGIN_NONCES = 100; // 登录随机数独立小配额（Ruling 15）：会话灌满配额不影响登录，反之亦然
+const K_TOKEN_TTL_MS = 60 * 1000; // K_token 缓存 60 秒（每次现算要读盘 + 解析 + safeStorage 解密，未鉴权的登录端点不能每请求都做）
 const CLEAN_INTERVAL_MS = 60 * 1000; // 定期清理周期
 
 // 时钟可注入（仅自测用）：12 小时过期用例拨快时钟验证，别让自测真等半天
@@ -50,7 +53,8 @@ function __setNow(fn) {
 }
 
 const sessions = new Map(); // sessionId → { keys, createdAt, expiresAt }（插入序 = 创建序，淘汰最旧）
-const nonces = new Map(); // `${scope}:${nonce}` → 过期时刻（登录 scope 用 "login"，会话请求用 sessionId）
+const nonces = new Map(); // scope → Map<nonce, 过期时刻>；scope = sessionId（会话请求）或 "login"（登录）
+let kTokenCache = { key: null, at: 0 }; // K_token 缓存（超时或令牌变更即失效）
 const clearedListeners = []; // 会话清空回调（admin.cjs 借此关闭 SSE 长连接）
 
 /** HKDF-SHA256 派生：ikm + 固定 salt（"agenthub-admin"）+ info → len 字节 */
@@ -63,11 +67,17 @@ function deriveKeys(shared) {
   return { kReq: hkdf(shared, INFO_REQ), kResp: hkdf(shared, INFO_RESP), kSig: hkdf(shared, INFO_SIG) };
 }
 
-/** K_token：令牌取 config.admin.token（缺省自动生成，与 adminAccessInfo 同源），每次登录现算 */
+/** K_token：令牌取 config.admin.token（缺省自动生成，与 adminAccessInfo 同源）。
+ *  结果缓存 60 秒：每次现算要读盘 + 解析 + safeStorage 解密，未鉴权的登录端点高频触发会打满主进程；
+ *  令牌变更（onAdminTokenChanged）时立即失效 */
 function kTokenOf() {
+  const now = nowFn();
+  if (kTokenCache.key && now - kTokenCache.at < K_TOKEN_TTL_MS) return kTokenCache.key;
   const cfg = config.loadConfig();
   const token = config.decryptSecret(cfg.admin && cfg.admin.token) || config.ensureAdminToken();
-  return hkdf(Buffer.from(String(token), "utf8"), INFO_TOKEN);
+  const key = hkdf(Buffer.from(String(token), "utf8"), INFO_TOKEN);
+  kTokenCache = { key, at: now };
+  return key;
 }
 
 /** HMAC-SHA256 签名：字段以 \n 分隔（字段本身不含 \n：base64 / 数字 / 路径），输出 base64 */
@@ -95,21 +105,32 @@ function sigEqual(a, b) {
 }
 
 function pruneNonces(now) {
-  for (const [k, exp] of nonces) if (exp <= now) nonces.delete(k);
+  for (const [scope, table] of nonces) {
+    for (const [nonce, exp] of table) if (exp <= now) table.delete(nonce);
+    if (table.size === 0) nonces.delete(scope);
+  }
 }
 
 function pruneSessions(now) {
   for (const [k, s] of sessions) if (s.expiresAt <= now) sessions.delete(k);
 }
 
-/** 随机数去重：已用过拒绝；超上限先清过期、仍满则拒绝（不淘汰——淘汰等于放行重放） */
-function takeNonce(key, now) {
-  if (nonces.has(key)) return false;
-  if (nonces.size >= MAX_NONCES) {
-    pruneNonces(now);
-    if (nonces.size >= MAX_NONCES) return false;
+/** 随机数去重（配额按 scope 分摊，Ruling 15）：已用过拒绝；超该 scope 上限先清过期、仍满则拒绝
+ *  （不淘汰——淘汰等于放行重放）。配额不跨 scope 共享：单会话灌满自己的配额不牵连其它会话与登录，
+ *  登录也灌不满会话配额（两边各有一条 DoS 路径，各设各的上限） */
+function takeNonce(scope, nonce, now) {
+  const cap = scope === "login" ? MAX_LOGIN_NONCES : MAX_SESSION_NONCES;
+  let table = nonces.get(scope);
+  if (!table) {
+    table = new Map();
+    nonces.set(scope, table);
   }
-  nonces.set(key, now + NONCE_TTL_MS);
+  if (table.has(nonce)) return false;
+  if (table.size >= cap) {
+    for (const [n, exp] of table) if (exp <= now) table.delete(n);
+    if (table.size >= cap) return false;
+  }
+  table.set(nonce, now + NONCE_TTL_MS);
   return true;
 }
 
@@ -125,7 +146,7 @@ function createSession({ clientPubKey, ts, nonce, sig } = {}) {
   if (!Number.isFinite(t) || Math.abs(now - t) > CLOCK_SKEW_MS) return { ok: false };
   const kToken = kTokenOf();
   if (!sigEqual(sig, sign(kToken, [clientPubKey, String(t), nonce]))) return { ok: false };
-  if (!takeNonce(`login:${nonce}`, now)) return { ok: false };
+  if (!takeNonce("login", nonce, now)) return { ok: false };
   let clientPub;
   try {
     clientPub = crypto.createPublicKey({ key: Buffer.from(clientPubKey, "base64"), format: "der", type: "spki" });
@@ -161,7 +182,7 @@ function verifyRequest({ sessionId, ts, nonce, sig, bodyHash, method, path } = {
   if (typeof nonce !== "string" || !nonce || typeof sig !== "string" || !sig) return { ok: false };
   const expect = sign(s.keys.kSig, [sessionId, String(method || "").toUpperCase(), String(path || ""), String(t), nonce, String(bodyHash || "")]);
   if (!sigEqual(sig, expect)) return { ok: false };
-  if (!takeNonce(`${sessionId}:${nonce}`, now)) return { ok: false };
+  if (!takeNonce(sessionId, nonce, now)) return { ok: false };
   return { ok: true, keys: s.keys, expiresAt: s.expiresAt };
 }
 
@@ -224,8 +245,11 @@ function onSessionsCleared(fn) {
   };
 }
 
-// 令牌变更 → 作废全部会话（Ruling 8：config.onAdminTokenChanged 钩子在此接线）
-config.onAdminTokenChanged(() => clearSessions());
+// 令牌变更 → 作废全部会话并失效 K_token 缓存（Ruling 8：config.onAdminTokenChanged 钩子在此接线）
+config.onAdminTokenChanged(() => {
+  kTokenCache = { key: null, at: 0 };
+  clearSessions();
+});
 
 // 随机数 / 过期会话定期清理（unref：不拖住进程退出）
 const cleaner = setInterval(() => {

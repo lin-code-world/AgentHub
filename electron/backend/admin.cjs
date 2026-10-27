@@ -31,6 +31,12 @@ let listenPort = 0; // 当前监听端口（= 反代端口 + 1），未启动为
 // 401 统一文案：令牌错误 / 签名错误 / 时间窗过期 / 随机数重放 / 会话失效 / 密文被篡改，一律同一句话
 const UNAUTHORIZED = "未授权";
 const SSE_HEARTBEAT_MS = 25000; // SSE 心跳（加密帧），同时顺带检查会话是否已过期
+const LOGIN_RATE_WINDOW_MS = 60 * 1000; // 登录限流固定窗口
+const LOGIN_RATE_MAX = 20; // 每 IP 每窗口最多 20 次登录尝试（登录未鉴权：不能让任何人无限触发读盘 / 验签 / ECDH）
+
+// SSE 心跳间隔（自测可调短：帧 seq 递增与会话过期关闭用例不想等 25 秒）
+let sseHeartbeatMs = SSE_HEARTBEAT_MS;
+const loginHits = new Map(); // ip → { count, windowStart }：登录限流计数（固定窗口）
 
 /** 反代端口 → 管理端口：0 / 65535 / 非整数拒绝（+1 后无意义或越界），错误带 code 便于调用方分辨 */
 function adminPortOf(proxyPort) {
@@ -75,9 +81,9 @@ function capabilitiesOf(commands, commandTable) {
     platform: platformForm(),
     version: appVersion(),
     modules: modulesOf(commands),
-    // 浏览器边界声明：服务启停 / 文件对话框在浏览器形态不可用；SSE 加密通道已提供（/api/events，
-    // 事件源与浏览器侧解码留到任务 11）
-    features: { serviceControl: false, sse: true, fileDialog: false },
+    // 浏览器边界声明（Ruling 17）：服务启停 / SSE / 文件对话框在浏览器形态都不可用。
+    // /api/events 加密通道已在，但真实事件源接通前不对外声明 SSE（任务 11 接通后再置 true）
+    features: { serviceControl: false, sse: false, fileDialog: false },
     commands: out,
   };
 }
@@ -102,12 +108,29 @@ function unauthorized(res) {
   return res.status(401).json({ ok: false, message: UNAUTHORIZED });
 }
 
+/** 登录限流（固定窗口，每 IP）：超限 429。计数放在验签之前——被拒的请求不该走到读盘 / 验签 / ECDH */
+function loginRateLimited(ip) {
+  const now = Date.now();
+  let hit = loginHits.get(ip);
+  if (!hit || now - hit.windowStart >= LOGIN_RATE_WINDOW_MS) {
+    hit = { count: 0, windowStart: now };
+    loginHits.set(ip, hit);
+  }
+  hit.count++;
+  if (loginHits.size > 1000) {
+    for (const [k, v] of loginHits) if (now - v.windowStart >= LOGIN_RATE_WINDOW_MS) loginHits.delete(k); // 过期条目惰性回收，防垃圾 IP 堆积
+  }
+  return hit.count > LOGIN_RATE_MAX;
+}
+
 // ===== SSE 长连接登记：改令牌清空会话时要连带关掉（否则旧会话的流还在推数据） =====
 const sseClients = new Set(); // { res, timer, sessionId }
 
 function sendFrame(client, keys, payload) {
   try {
-    const sealed = adminCrypto.seal(keys.kResp, JSON.stringify(payload));
+    client.seq += 1;
+    // 每帧带单调递增 seq（Ruling 19）：GCM 只保单帧完整性，客户端按 seq 递增校验，拒绝重放 / 重排 / 跳帧
+    const sealed = adminCrypto.seal(keys.kResp, JSON.stringify({ ...payload, seq: client.seq }));
     client.res.write(`data: ${JSON.stringify({ iv: sealed.iv, ciphertext: sealed.ciphertext })}\n\n`);
     return true;
   } catch {
@@ -132,6 +155,7 @@ adminCrypto.onSessionsCleared(() => {
 
 /** POST /api/login：ECDH 登录协商（令牌由服务端从 config.admin.token 读，请求不带令牌，Ruling 3/9） */
 function loginHandler(req, res) {
+  if (loginRateLimited(String(req.ip || (req.socket && req.socket.remoteAddress) || ""))) return res.status(429).json({ ok: false, message: "请求过于频繁，请稍后再试" });
   const b = req.body || {};
   const r = adminCrypto.createSession({ clientPubKey: b.clientPubKey, ts: b.ts, nonce: b.nonce, sig: b.sig });
   if (!r.ok) return unauthorized(res);
@@ -157,21 +181,31 @@ function rpcHandler({ commands, commandTable }) {
     const cmd = req2 && typeof req2.cmd === "string" ? req2.cmd : "";
     if (!cmd || !commands.has(cmd)) return res.status(404).json({ ok: false, message: "未知命令" });
     if (commandTable.modeOf(cmd, "browser") === "deny") return res.status(403).json({ ok: false, message: commandTable.denyReason(cmd, "browser") || "浏览器访问时不可用" });
-    let result;
+    // handler 执行、序列化、加密全包在 try 里：JSON.stringify 遇 BigInt / 循环引用会抛 TypeError，
+    // Express 4 不接 async 异常（unhandledRejection 会掀掉主进程）。异常统一转成加密的 { ok:false }
     try {
-      result = await commands.get(cmd)(null, req2.args && typeof req2.args === "object" ? req2.args : {});
+      let result = await commands.get(cmd)(null, req2.args && typeof req2.args === "object" ? req2.args : {});
+      if (result === undefined || result === null) result = { ok: true };
+      // handler 返回 { ok:false }（业务失败）也走加密响应，不降级成明文错误
+      const sealed = adminCrypto.seal(v.keys.kResp, JSON.stringify(result));
+      return res.json({ nonce, iv: sealed.iv, ciphertext: sealed.ciphertext });
     } catch (e) {
-      result = { ok: false, message: String((e && e.message) || e) };
+      try {
+        const sealed = adminCrypto.seal(v.keys.kResp, JSON.stringify({ ok: false, message: String((e && e.message) || e) }));
+        return res.json({ nonce, iv: sealed.iv, ciphertext: sealed.ciphertext });
+      } catch {
+        return res.status(500).json({ ok: false, message: "服务内部错误" }); // 连加密都失败（密钥材料异常）才走明文兜底
+      }
     }
-    if (result === undefined || result === null) result = { ok: true };
-    // handler 返回 { ok:false }（业务失败）也走加密响应，不降级成明文错误
-    const sealed = adminCrypto.seal(v.keys.kResp, JSON.stringify(result));
-    return res.json({ nonce, iv: sealed.iv, ciphertext: sealed.ciphertext });
   };
 }
 
 /** GET /api/events：SSE（鉴权参数走 query，签名覆盖 GET /api/events、bodyHash 为空串）。
- *  每帧都用 K_resp 加密；心跳顺带查会话，过期或被清空即关闭连接 */
+ *  每帧都用 K_resp 加密，明文带单调递增 seq（Ruling 19：客户端校验递增，拒绝重放 / 重排 / 跳帧）；
+ *  心跳顺带查会话，过期或被清空即关闭连接。
+ *  **连接契约（Ruling 18）**：鉴权随机数是一次性的（5 分钟防重放窗口），原生 EventSource 断线自动重连
+ *  会拿旧 query 原样重放、必挂 401——浏览器侧必须用 fetch 流式读 SSE，断线后重新签名（新 nonce）再连，
+ *  禁止 EventSource。任务 7 的浏览器传输层按此实现。 */
 function eventsHandler() {
   return (req, res) => {
     const q = req.query || {};
@@ -183,15 +217,20 @@ function eventsHandler() {
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     if (typeof res.flushHeaders === "function") res.flushHeaders();
-    const client = { res, timer: null, sessionId: q.sessionId };
+    const client = { res, timer: null, sessionId: q.sessionId, seq: 0 };
     sseClients.add(client);
     sendFrame(client, v.keys, { type: "hello", ts: Date.now() });
     client.timer = setInterval(() => {
       if (!adminCrypto.hasSession(client.sessionId) || !sendFrame(client, v.keys, { type: "ping", ts: Date.now() })) closeSse(client);
-    }, SSE_HEARTBEAT_MS);
+    }, sseHeartbeatMs);
     if (typeof client.timer.unref === "function") client.timer.unref();
     req.on("close", () => closeSse(client));
   };
+}
+
+/** 自测用：缩短 SSE 心跳间隔（帧 seq 递增与会话过期关闭用例不想等 25 秒），不传参恢复默认 */
+function __setSseHeartbeatMs(ms) {
+  sseHeartbeatMs = Number.isFinite(Number(ms)) && Number(ms) > 0 ? Number(ms) : SSE_HEARTBEAT_MS;
 }
 
 /** Express 应用：/api/capabilities、/api/status、/api/login、/api/rpc、/api/events、静态资源、SPA 回退 */
@@ -291,4 +330,4 @@ async function doStop() {
   });
 }
 
-module.exports = { start, stop, adminPortOf, listenPort: () => listenPort };
+module.exports = { start, stop, adminPortOf, listenPort: () => listenPort, __setSseHeartbeatMs };

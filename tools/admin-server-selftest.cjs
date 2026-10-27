@@ -84,15 +84,19 @@ async function reachable(p) {
   ok('capabilities.modules 含 "proxy"', Array.isArray(caps.modules) && caps.modules.includes("proxy"), JSON.stringify(caps.modules));
   ok("capabilities.commands 带 mode（proxy_status=read / proxy_start=deny）", !!caps.commands && !!caps.commands.proxy_status && caps.commands.proxy_status.mode === "read" && !!caps.commands.proxy_start && caps.commands.proxy_start.mode === "deny", JSON.stringify(caps.commands && caps.commands.proxy_start));
   ok("browser 形态 deny 原因带「浏览器访问时不可用」口径", !!(caps.commands && caps.commands.proxy_start) && typeof caps.commands.proxy_start.reason === "string" && caps.commands.proxy_start.reason.startsWith("浏览器访问时不可用"), String(caps.commands && caps.commands.proxy_start && caps.commands.proxy_start.reason));
+  ok("Ruling 17：capabilities.features.sse === false（事件源接通前不声明 SSE）", !!caps.features && caps.features.sse === false && caps.features.serviceControl === false && caps.features.fileDialog === false, JSON.stringify(caps.features));
 
   // ===== Ruling 11 + 评审 Critical 1：browser 独立文案表，容器形态措辞不得泄漏到浏览器文案 =====
   const containerReason = commandTable.denyReason("proxy_start", "container");
   ok('denyReason("proxy_start", "container") 保持原文案', typeof containerReason === "string" && !containerReason.includes("浏览器访问时不可用"), String(containerReason));
   ok("denyReason 默认形态 = container", commandTable.denyReason("proxy_start") === containerReason);
   ok(
-    "modeOf 的门控判定两形态一致",
-    ["proxy_start", "proxy_pool", "save_config"].every((c) => commandTable.modeOf(c, "browser") === commandTable.modeOf(c, "container"))
+    "modeOf 共有 deny 集合两形态一致（proxy_start / proxy_pool）",
+    ["proxy_start", "proxy_pool"].every((c) => commandTable.modeOf(c, "browser") === commandTable.modeOf(c, "container"))
   );
+  // Ruling 16：桌面专用命令在 browser 形态 deny（admin_access_info 会吐明文令牌，绝不能漏），container 形态照旧可用
+  const browserOnly = ["admin_access_info", "admin_set_token", "browse_dir", "open_data_dir", "get_data_dir", "get_app_version", "load_config", "save_config"];
+  ok("Ruling 16：8 条桌面专用命令 browser 形态 deny、container 形态不变", browserOnly.every((c) => commandTable.modeOf(c, "browser") === "deny") && browserOnly.every((c) => commandTable.modeOf(c, "container") !== "deny") && commandTable.modeOf("save_config", "container") === "write", JSON.stringify(browserOnly.map((c) => [c, commandTable.modeOf(c, "browser"), commandTable.modeOf(c, "container")])));
 
   const forbidden = ["容器", "编排", "docker", "宿主机", "gateway-data", "/api/accounts/import"];
   const denyCmds = Object.keys(commandTable.DENY);
@@ -106,6 +110,19 @@ async function reachable(p) {
     if (browserReason === container) leaks.push(`${cmd}: 与 container 同文案`);
   }
   ok("每条 browser deny 原因独立改写且不含容器形态措辞", leaks.length === 0, leaks.join("; "));
+  ok(
+    "Ruling 16：browser 专属 deny 文案面向用户且不含容器形态措辞",
+    browserOnly.every((c) => {
+      const r = String(commandTable.denyReason(c, "browser") || "");
+      return r.startsWith("浏览器访问时不可用") && !forbidden.some((w) => r.includes(w));
+    }),
+    browserOnly.map((c) => commandTable.denyReason(c, "browser")).join(" | ")
+  );
+  ok(
+    "Ruling 16：capabilities 里桌面专用命令同样下发 deny",
+    browserOnly.every((c) => caps.commands && caps.commands[c] && caps.commands[c].mode === "deny" && !!caps.commands[c].reason),
+    JSON.stringify(browserOnly.map((c) => caps.commands && caps.commands[c]))
+  );
   ok(
     "capabilities 里下发的 deny 原因同样是浏览器口径",
     Object.entries(caps.commands || {}).every(([cmd, v]) => v.mode !== "deny" || !forbidden.some((w) => String(v.reason || "").includes(w))),
