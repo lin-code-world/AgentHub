@@ -30,6 +30,8 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_start",
   "proxy_stop",
   "proxy_restart",
+  "proxy_config_get",
+  "proxy_config_save",
   "proxy_keys_list",
   "proxy_key_create",
   "proxy_key_update",

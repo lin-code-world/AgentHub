@@ -10,12 +10,12 @@
 -->
 <!-- 反代网关 · 配置页（右上「配置」按钮切换的模块页）：服务 / 请求与路由 / 额度监控 / 安全与数据 / 规则热加载
      内容承接原反代网关「设置」页签；页面内的二级子板块 tab 在这里切换；
-     设置统一读写框架整体配置（config.json 的 proxy 段）；
-     端口/绑定地址属例外：保存后同进程 stop→listen 秒级重启监听 -->
+     设置读写框架整体配置（config.json 的 proxy 段）：桌面走整份 save_config，浏览器形态走 proxy_config_get / proxy_config_save 只读写反代段；
+     端口/绑定地址属例外：改完点「重启服务」同进程 stop→listen 秒级重启监听（浏览器形态这两项置灰） -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import * as api from "../../api/ipc";
-import { denyState } from "../../api/caps";
+import { denyState, isWebTransport } from "../../api/caps";
 import type { ProxyModel, ProxyRuleFile } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { fmtAgo, fmtK } from "../../views/proxy/format";
@@ -29,11 +29,18 @@ const tab = ref<"service" | "monitor" | "rules">("service");
 const rules = ref<ProxyRuleFile[]>([]);
 const vault = ref<{ encrypted: boolean; driver: string; dataDir: string } | null>(null);
 const saving = ref(false);
+const restarting = ref(false);
 const msg = ref("");
 const msgErr = ref(false);
 const running = ref(false);
-/** 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰）：保存并重启 / 打开目录 / rules 目录 */
+/** 当前监听端口（refresh 时记下）：保存后端口改了要提示点「重启服务」才生效 */
+const listenPort = ref(0);
+/** 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰）：重启服务 / 打开目录 / rules 目录 */
 const restartGate = denyState("proxy_restart");
+/** 浏览器托管形态：load_config / save_config 被 deny，反代配置段走 proxy_config_get / proxy_config_save */
+const webForm = computed(() => isWebTransport());
+/** 端口 / 绑定地址置灰原因（不是 deny 命令，属字段级说明：保存会忽略这两项，改了也不生效） */
+const portBindHint = "浏览器端不改监听端口与绑定地址：保存会被忽略，请在桌面窗口修改";
 const dataDirGate = denyState("proxy_open_data_dir");
 const rulesDirGate = denyState("proxy_open_rules_dir");
 // 优先渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
@@ -77,12 +84,18 @@ const channelCooldownCapSec = computed({
 
 async function refresh() {
   try {
+    // 浏览器托管形态拿不到整份配置（load_config 被 deny），反代配置段单独读真实值回填表单
+    if (webForm.value) {
+      const remote = await api.proxyConfigGet().catch(() => null);
+      if (remote) app.config.proxy = remote;
+    }
     rules.value = await api.proxyRulesList();
     vault.value = await api.proxyVaultStatus();
     channels.value = await api.proxyPool().catch(() => channels.value);
     models.value = await api.proxyModels().catch(() => models.value);
     const st = await api.proxyStatus();
     running.value = st.running;
+    listenPort.value = st.running ? st.port : 0;
   } catch {
     /* 浏览器预览走 mock */
   }
@@ -92,7 +105,8 @@ async function refresh() {
 const active = computed(() => app.activeModule === "proxy" && app.activePage === "config");
 watch(active, (v) => { if (v) refresh(); }, { immediate: true });
 
-/** 保存：整体配置落盘；端口/绑定变化时重启监听，其余项热生效 */
+/** 保存：落盘即完成（桌面走整份 save_config，浏览器走 proxy_config_save 反代段），不重启监听——
+ *  改端口后点「重启服务」生效 */
 async function save() {
   if (saving.value) return;
   saving.value = true;
@@ -119,24 +133,36 @@ async function save() {
     app.config.proxy.usageRetentionDays = Number.isFinite(urd) && Math.round(urd) >= 1 ? Math.min(3650, Math.round(urd)) : 90;
     app.config.proxy.channelCooldownMs = Math.max(10000, Math.round(Number(app.config.proxy.channelCooldownMs) || 120000));
     app.config.proxy.channelCooldownCapMs = Math.max(app.config.proxy.channelCooldownMs, Math.round(Number(app.config.proxy.channelCooldownCapMs) || 900000));
-    const r = await app.save();
+    const r = webForm.value ? await api.proxyConfigSave(app.config.proxy).catch((e: Error) => ({ ok: false, message: String(e.message || e) })) : await app.save();
     if (r && r.ok === false) {
       msg.value = r.message || "保存失败";
       msgErr.value = true;
       return;
     }
-    if (running.value) {
-      const rr = await api.proxyRestart();
-      if (rr && (rr as { ok?: boolean }).ok === false) {
-        msg.value = (rr as { message?: string }).message || "重启监听失败";
-        msgErr.value = true;
-        return;
-      }
-    }
-    msg.value = running.value ? "已保存并重启监听" : "已保存（服务未启动，下次启动生效）";
+    msg.value = running.value ? (listenPort.value && listenPort.value !== app.config.proxy.port ? "已保存（端口已改，点「重启服务」生效）" : "已保存") : "已保存（服务未启动，下次启动生效）";
     msgErr.value = false;
   } finally {
     saving.value = false;
+    await refresh();
+  }
+}
+
+/** 重启监听（同进程 stop→listen，秒级，不中断应用）：浏览器形态被 deny，按钮置灰并展示原因 */
+async function restart() {
+  if (restarting.value) return;
+  restarting.value = true;
+  msg.value = "";
+  try {
+    const rr = await api.proxyRestart().catch((e: Error) => ({ ok: false, port: undefined, message: String(e.message || e) }));
+    if (rr && rr.ok === false) {
+      msg.value = rr.message || "重启监听失败";
+      msgErr.value = true;
+      return;
+    }
+    msg.value = `已重启监听（端口 ${rr.port ?? app.config.proxy.port}）`;
+    msgErr.value = false;
+  } finally {
+    restarting.value = false;
     await refresh();
   }
 }
@@ -159,8 +185,9 @@ function openDataDir() {
       <div class="cfg-sec-actions">
         <span v-if="msg" class="tag" :class="msgErr ? 'tag-err' : 'tag-ok'">{{ msg }}</span>
         <button class="btn btn-ghost" @click="upOpen = true"><i class="ph ph-plugs-connected"></i>上游启闭</button>
+        <button class="btn btn-cta" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存" }}</button>
         <el-tooltip :content="restartGate.reason || ''" :disabled="!restartGate.disabled" placement="top">
-          <span><button class="btn btn-cta" :disabled="saving || restartGate.disabled" @click="save">{{ saving ? "保存中…" : "保存并重启服务" }}</button></span>
+          <span><button class="btn btn-ghost" :disabled="restarting || restartGate.disabled" @click="restart">{{ restarting ? "重启中…" : "重启服务" }}</button></span>
         </el-tooltip>
       </div>
     </div>
@@ -179,19 +206,25 @@ function openDataDir() {
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">监听端口</div>
-            <div class="set-desc">默认 9527；改端口需重启监听（秒级，不中断应用）</div>
+            <div class="set-desc">默认 9527；改端口需重启监听（秒级，不中断应用）{{ webForm ? " · " + portBindHint : "" }}</div>
           </div>
-          <input v-model.number="app.config.proxy.port" class="input mono" style="width: 100px" type="number" min="1" max="65535" />
+          <el-tooltip :content="portBindHint" :disabled="!webForm" placement="top">
+            <span><input v-model.number="app.config.proxy.port" class="input mono" style="width: 100px" type="number" min="1" max="65535" :disabled="webForm" /></span>
+          </el-tooltip>
         </div>
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">绑定地址</div>
-            <div class="set-desc">局域网开放会强制要求 Key 鉴权，注意风险</div>
+            <div class="set-desc">局域网开放会强制要求 Key 鉴权，注意风险{{ webForm ? " · " + portBindHint : "" }}</div>
           </div>
-          <el-select v-model="app.config.proxy.bind" class="f-el-select" popper-class="glass-popper" style="width: 208px">
-            <el-option value="127.0.0.1" label="127.0.0.1（仅本机）" />
-            <el-option value="0.0.0.0" label="0.0.0.0（局域网开放）" />
-          </el-select>
+          <el-tooltip :content="portBindHint" :disabled="!webForm" placement="top">
+            <span>
+              <el-select v-model="app.config.proxy.bind" class="f-el-select" popper-class="glass-popper" style="width: 208px" :disabled="webForm">
+                <el-option value="127.0.0.1" label="127.0.0.1（仅本机）" />
+                <el-option value="0.0.0.0" label="0.0.0.0（局域网开放）" />
+              </el-select>
+            </span>
+          </el-tooltip>
         </div>
         <div class="set-row">
           <div class="set-info">

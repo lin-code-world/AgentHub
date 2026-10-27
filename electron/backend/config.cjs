@@ -319,6 +319,21 @@ function saveConfig(cfg) {
  *  注意：只应在这两个字段**各自的写入 IPC** 里绕过本名单；它们调的是 saveConfig。 */
 const OUT_OF_BAND_PROXY_FIELDS = ["channelEnabled", "checkinAutoRules", "enableAnthropic", "enableResponses"];
 
+/** out-of-band 合并：这四个字段以**磁盘当前值**为准——磁盘有该键就用磁盘值，磁盘没有
+ *  （= 用户从未设置过）则把提交值丢掉，界面 / 浏览器都无权代写。设置页整份提交
+ *  （saveConfigFromUI）与浏览器反代配置保存（proxy_config_save）共用这一份，不各抄一遍。
+ *  原地改 incoming 并返回（只动 incoming.proxy）。 */
+function mergeOutOfBandProxy(disk, incoming) {
+  const next = incoming && typeof incoming === "object" ? incoming : {};
+  if (!next.proxy || typeof next.proxy !== "object") next.proxy = {};
+  const diskProxy = (disk && disk.proxy) || {};
+  for (const k of OUT_OF_BAND_PROXY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
+    else delete next.proxy[k];
+  }
+  return next;
+}
+
 /** 设置页保存路径专用：先把 out-of-band 字段以**磁盘值**为准，再落盘。
  *
  *  为什么必须区分 saveConfig / saveConfigFromUI：
@@ -333,11 +348,7 @@ function saveConfigFromUI(cfg) {
   const next = cfg && typeof cfg === "object" ? cfg : {};
   try {
     const disk = loadConfig();
-    if (!next.proxy || typeof next.proxy !== "object") next.proxy = {};
-    const diskProxy = (disk && disk.proxy) || {};
-    for (const k of OUT_OF_BAND_PROXY_FIELDS) {
-      if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
-    }
+    mergeOutOfBandProxy(disk, next);
     // admin 令牌只经 admin_set_token 修改（不允许清空，也不能被设置页整份提交的旧快照覆盖回去）：以磁盘为准
     if (disk && disk.admin) next.admin = disk.admin;
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
@@ -436,6 +447,6 @@ module.exports = {
   dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   normalizeHm, normalizeJitter,
-  saveConfigFromUI, OUT_OF_BAND_PROXY_FIELDS,
+  saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS,
   ensureAdminToken, adminAccessInfo, setAdminToken, onAdminTokenChanged,
 };

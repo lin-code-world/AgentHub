@@ -12,6 +12,7 @@
 // 回退到本地 mock。命令清单与 electron/preload.cjs 白名单、backend/ipc.cjs 一一对应
 import type {
   AppConfig,
+  ProxyConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
@@ -137,6 +138,12 @@ export const proxyStatus = () => call<ProxyGatewayStatus>("proxy_status");
 export const proxyStart = () => call<{ ok: boolean; port?: number; already?: boolean; message?: string }>("proxy_start");
 export const proxyStop = () => call<{ ok: boolean }>("proxy_stop");
 export const proxyRestart = () => call<{ ok: boolean; port?: number; message?: string }>("proxy_restart");
+
+/** 反代配置段读写（浏览器托管形态专用）：load_config / save_config 在 browser 形态被 deny，
+ *  配置页改走这一对只操作 config.proxy 的命令；桌面仍走整份 load_config / save_config。
+ *  save 只写反代段：out-of-band 字段（上游启闭 / 签到规则 / 协议面止血开关）以磁盘为准，port / bind 被忽略 */
+export const proxyConfigGet = () => call<ProxyConfig>("proxy_config_get");
+export const proxyConfigSave = (cfg: ProxyConfig) => call<{ ok: boolean; message?: string }>("proxy_config_save", { config: JSON.parse(JSON.stringify(cfg)) });
 
 // ===== 反代网关：API Keys =====
 export const proxyKeysList = () => call<ProxyKeyRow[]>("proxy_keys_list");
