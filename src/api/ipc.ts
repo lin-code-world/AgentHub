@@ -256,6 +256,9 @@ export const proxyAccountImportJson = (channel: ProxyChannelId, json: string) =>
 /** 从 JSON/ZIP 文件添加账号（主进程弹文件选择框等用户操作；zip 读取包内全部 .json 合并导入） */
 export const proxyAccountImportFile = (channel: ProxyChannelId) =>
   call<{ ok: boolean; canceled?: boolean; added?: number; dup?: number; invalid?: number; file?: string; message?: string }>("proxy_account_import_file", { channel }, 0);
+/** 浏览器端上传 JSON 文件的文本导入（渲染层 input[type=file] 读成文本传入，只支持单个 .json，不做 ZIP） */
+export const proxyAccountImportText = (channel: ProxyChannelId, text: string) =>
+  call<{ ok: boolean; added?: number; dup?: number; invalid?: number; message?: string }>("proxy_account_import_text", { channel, text });
 
 // ===== 反代网关：模型 / 统计 / 规则 =====
 export const proxyModels = () => call<ProxyModel[]>("proxy_models");

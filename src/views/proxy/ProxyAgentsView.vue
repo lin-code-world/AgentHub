@@ -134,6 +134,8 @@ const pasteBusy = ref(false);
 const fileMsg = ref("");
 const fileErr = ref(false);
 const fileBusy = ref(false);
+// 浏览器端上传入口（隐藏 input[type=file]）：doImportFile 触发它的点击，选完文件走 onFilePicked
+const fileInput = ref<HTMLInputElement | null>(null);
 const oauthWaiting = ref(false);
 const oauthMsg = ref("");
 const oauthMode = ref("");
@@ -203,9 +205,12 @@ const SMS_PROFILES: Partial<Record<ProxyChannelId, SmsProfile>> = {
 };
 /** 添加方式的命令门控（浏览器形态服务端 deny 时置灰 + tooltip 展示下发原因，桌面无 caps 不置灰）：
  *  deny 的方式不再隐藏——不显示就成了静默缺失，用户不知道为什么没有这项 */
+// 浏览器端（Web 托管 / 纯前端预览）没有主进程弹框：「从文件添加」走 <input type="file"> 读文本导入
+// （proxy_account_import_text，只支持单个 .json）；桌面窗口仍走主进程弹框（proxy_account_import_file，含 ZIP）
+const browserFile = !api.isElectron();
 function methodGate(key: AddMethod): { disabled: boolean; reason: string | null } {
   if (key === "oauth") return denyState("proxy_oauth_begin", "proxy_oauth_submit_callback");
-  if (key === "file") return denyState("proxy_account_import_file");
+  if (key === "file") return denyState(browserFile ? "proxy_account_import_text" : "proxy_account_import_file");
   if (key === "local") return denyState("proxy_scan", "proxy_scan_import");
   return { disabled: false, reason: null };
 }
@@ -247,7 +252,7 @@ const METHOD_TABS = computed(
       { key: "oauth" as const, label: "OAuth 登录", icon: "ph-key" },
       { key: "sms" as const, label: "手机验证码", icon: "ph-device-mobile" },
       { key: "local" as const, label: "从本机软件导入", icon: "ph-desktop-tower" },
-      { key: "file" as const, label: "从 JSON/ZIP 文件", icon: "ph-file-arrow-up" },
+      { key: "file" as const, label: browserFile ? "从 JSON 文件" : "从 JSON/ZIP 文件", icon: "ph-file-arrow-up" },
       { key: "paste" as const, label: "粘贴 JSON", icon: "ph-clipboard-text" },
     ]
       // ModelScope 的「粘贴」是令牌而非 JSON，标签如实改名（避免误导用户去粘 JSON）
@@ -1402,9 +1407,14 @@ async function doPasteJson() {
   }
 }
 
-// 从 JSON/ZIP 文件添加：主进程弹文件框，zip 取包内全部 .json 合并导入
+// 从文件添加：桌面走主进程弹框（zip 取包内全部 .json 合并导入）；
+// 浏览器弹不了主进程文件框，改走隐藏 input[type=file] 读文本导入（只支持单个 .json）
 async function doImportFile() {
   if (fileBusy.value) return;
+  if (browserFile) {
+    fileInput.value?.click();
+    return;
+  }
   fileBusy.value = true;
   fileMsg.value = "";
   try {
@@ -1416,6 +1426,33 @@ async function doImportFile() {
   } catch (e) {
     fileErr.value = true;
     fileMsg.value = String((e as Error).message || e);
+  } finally {
+    fileBusy.value = false;
+  }
+}
+
+/** 浏览器端选完文件：只收单个 .json（ZIP 不支持），读成文本走 proxy_account_import_text——
+ *  解析与入库在主进程，与桌面导入同一份语义（channel:uid 去重、只新增不更新、入池即刷额度） */
+async function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files && input.files[0];
+  input.value = ""; // 清空选择，同一个文件再选一次也能触发 change
+  if (!file) return;
+  if (!/\.json$/i.test(file.name)) {
+    fileErr.value = true;
+    fileMsg.value = "只支持 .json 文件（浏览器不支持 .zip）——请把 JSON 合并成一个文件再选，或改用「粘贴 JSON」";
+    return;
+  }
+  fileBusy.value = true;
+  fileMsg.value = "";
+  try {
+    const r = await api.proxyAccountImportText(addChannel.value, await file.text());
+    fileErr.value = !r.ok;
+    fileMsg.value = r.message || (r.ok ? "导入完成" : "导入失败");
+    if (r.ok) await refresh();
+  } catch (err) {
+    fileErr.value = true;
+    fileMsg.value = String((err as Error).message || err);
   } finally {
     fileBusy.value = false;
   }
@@ -2132,14 +2169,22 @@ onUnmounted(() => {
               <div v-if="scanMsg" class="add-msg" :class="{ err: scanErr }">{{ scanMsg }}</div>
             </div>
 
-            <!-- 从 JSON/ZIP 文件添加 -->
+            <!-- 从文件添加：桌面 JSON/ZIP 走主进程弹框；浏览器单个 .json 上传（input[type=file] 读文本导入） -->
             <div v-else-if="addMethod === 'file'" class="add-pane center">
               <div class="add-pane-icon"><i class="ph ph-file-arrow-up"></i></div>
               <div class="add-pane-title">从导出文件批量入池</div>
               <div class="add-pane-desc">
-                <span class="mono">.json</span> 支持单对象 / 数组 / <span class="mono">{accounts:[]}</span> 包装；<br />
-                <span class="mono">.zip</span> 会读取包内全部 .json 合并导入，同渠道同 UID 自动跳过。
+                <template v-if="browserFile">
+                  选择单个 <span class="mono">.json</span> 文件（单对象 / 数组 / <span class="mono">{accounts:[]}</span> 包装），同渠道同 UID 自动跳过；<br />
+                  浏览器不支持 <span class="mono">.zip</span> —— 请把包内 JSON 合并成一个文件，或改用「粘贴 JSON」。
+                </template>
+                <template v-else>
+                  <span class="mono">.json</span> 支持单对象 / 数组 / <span class="mono">{accounts:[]}</span> 包装；<br />
+                  <span class="mono">.zip</span> 会读取包内全部 .json 合并导入，同渠道同 UID 自动跳过。
+                </template>
+                <br />自定义提供商的账号请<b>先建提供商再导账号</b>，否则会归到当前选中渠道。
               </div>
+              <input ref="fileInput" type="file" accept=".json,application/json" style="display: none" @change="onFilePicked" />
               <div v-if="fileMsg" class="add-msg" :class="{ err: fileErr }">{{ fileMsg }}</div>
             </div>
 

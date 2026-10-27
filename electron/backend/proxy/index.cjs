@@ -1225,6 +1225,23 @@ function register(ipcMain) {
     oplog.log("info", "号池账号", `文件导入（${path.basename(file)}）：${message}`);
     return ok({ added, dup, invalid, metaOnly, file: path.basename(file), message });
   }));
+  // 浏览器端「选择 JSON 文件」上传：文件框由渲染层 <input type="file"> 弹（浏览器到不了主进程弹框，
+  // 也不新增文件上传接口），读成文本走本命令——解析入库复用粘贴 JSON 同一份 parseAccountsJson +
+  // importAccounts（去重、只新增不更新、入池即刷额度的语义逐字一致）。只支持单个 JSON，ZIP 不做
+  ipcMain.handle("proxy_account_import_text", handle(({ channel, text }) => {
+    if (!String(text ?? "").trim()) return fail("导入内容为空：请选择包含账号凭据的 .json 文件");
+    const fallback = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
+    const { list, invalid, reason } = parseAccountsJson(text, fallback);
+    if (reason === "metadata-only") return fail(METADATA_ONLY_MESSAGE);
+    if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
+    const r = importAccounts(list);
+    const parts = [`成功导入 ${r.added} 个账号`];
+    if (r.dup) parts.push(`${r.dup} 个同 UID 已存在跳过`);
+    if (invalid) parts.push(`${invalid} 条记录缺 token 忽略`);
+    const message = parts.join("，");
+    oplog.log("info", "号池账号", `文本导入：${message}`, { channel });
+    return ok({ ...r, invalid, message });
+  }));
 
   // ===== 模型目录 =====
   // 合并视图 + 管理态（启停/渠道覆盖/回退模型/自定义参数）；管理态由渲染层写回整体配置（app.save），服务端每请求读盘热生效

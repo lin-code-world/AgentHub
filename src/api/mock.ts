@@ -567,6 +567,8 @@ export const mock = {
         return { ok: true, added: 2, dup: 1, invalid: 0, message: "成功导入 2 个账号，1 个同 UID 已存在跳过" };
       case "proxy_account_import_file":
         return { ok: true, canceled: true };
+      case "proxy_account_import_text":
+        return { ok: true, added: 1, dup: 0, invalid: 0, message: "成功导入 1 个账号" };
       case "proxy_models":
         return JSON.parse(JSON.stringify(PROXY_MODELS));
       case "proxy_models_sync":
