@@ -322,10 +322,11 @@ const OUT_OF_BAND_PROXY_FIELDS = ["channelEnabled", "checkinAutoRules", "enableA
 /** out-of-band 合并：这四个字段以**磁盘当前值**为准——磁盘有该键就用磁盘值，磁盘没有
  *  （= 用户从未设置过）则把提交值丢掉，界面 / 浏览器都无权代写。设置页整份提交
  *  （saveConfigFromUI）与浏览器反代配置保存（proxy_config_save）共用这一份，不各抄一遍。
- *  原地改 incoming 并返回（只动 incoming.proxy）。 */
+ *  proxy 段必须是普通对象：数组不算（typeof [] === "object" 会让它蒙混过关，落成 "proxy": []），
+ *  一律归为非法形状。原地改 incoming 并返回（只动 incoming.proxy）。 */
 function mergeOutOfBandProxy(disk, incoming) {
   const next = incoming && typeof incoming === "object" ? incoming : {};
-  if (!next.proxy || typeof next.proxy !== "object") next.proxy = {};
+  if (!next.proxy || typeof next.proxy !== "object" || Array.isArray(next.proxy)) next.proxy = {};
   const diskProxy = (disk && disk.proxy) || {};
   for (const k of OUT_OF_BAND_PROXY_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
@@ -346,6 +347,10 @@ function mergeOutOfBandProxy(disk, incoming) {
  *  返回 saveConfig 的结果（含校验失败时抛出的 toolErrors）。 */
 function saveConfigFromUI(cfg) {
   const next = cfg && typeof cfg === "object" ? cfg : {};
+  // proxy 段形状非法（数组 / null / 原始值）明确失败、不写盘（Ruling 27）：落成 "proxy": [] 后
+  // 回读 port / concurrency 全 undefined，属于写坏配置。放在读盘 try 之前——
+  // 那段 catch 的是「读盘失败不拦保存」，不能把这里的拒绝也一并吞掉
+  if ("proxy" in next && (!next.proxy || typeof next.proxy !== "object" || Array.isArray(next.proxy))) throw new Error("配置格式不正确：proxy 段必须是对象");
   try {
     const disk = loadConfig();
     mergeOutOfBandProxy(disk, next);

@@ -15,13 +15,35 @@
 // 命令实现只有一份：registerCommands(handle, deps) 里是全部框架命令 handler，
 // handle 可注入 ipcMain.handle（桌面）或收集器（管理服务，见 commandTable.cjs）。
 "use strict";
+const fs = require("node:fs");
 const path = require("node:path");
 const config = require("./config.cjs");
 
+// load_config 的内存快照：按 config.json 的 mtime+size 签名失效——proxy_config_save、渠道启闭、
+// 按渠道签到等独立 IPC 各自写盘后，快照必须跟着重读；否则桌面拿旧值再整份保存（切主题等）
+// 会把刚写下的改动回滚（Ruling 26）。签名比对不需要写盘方通知，天然没有 ipc.cjs ↔ proxy 的循环 require
 let cfg = null;
+let cfgSig = "";
+function sigOf() {
+  try {
+    const st = fs.statSync(config.configPath());
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "missing"; // 文件不存在（首份配置）：与任何已有签名都不同，下次强制重读
+  }
+}
 function C() {
-  if (!cfg) cfg = config.loadConfig();
+  const sig = sigOf();
+  if (!cfg || sig !== cfgSig) {
+    cfg = config.loadConfig();
+    cfgSig = sig;
+  }
   return cfg;
+}
+/** 本进程自己写盘后直接替换快照（省一次读盘），签名同步为落盘后的文件状态 */
+function setC(next) {
+  cfg = next;
+  cfgSig = sigOf();
 }
 
 function ok(data) {
@@ -75,7 +97,7 @@ function registerCommands(handle, deps) {
     // 否则渲染层的旧快照会把「上游启闭」「按渠道签到」的写入冲掉（issue #90）
     const r = config.saveConfigFromUI(merged);
     // 落盘成功才更新内存快照，写失败时别把脏数据留给 load_config
-    cfg = merged;
+    setC(merged);
     applyNativeTheme(api(deps, "nativeTheme"), merged);
     config.applyAutoStart(merged);
     return r;
@@ -100,7 +122,7 @@ function registerCommands(handle, deps) {
   handle("admin_set_token", wrap(({ token }) => {
     const r = config.setAdminToken(token);
     // 令牌变更后刷新内存快照，load_config 返回的 admin.token 才不会是旧密文
-    if (r && r.ok) cfg = config.loadConfig();
+    if (r && r.ok) setC(config.loadConfig());
     return r;
   }));
 }

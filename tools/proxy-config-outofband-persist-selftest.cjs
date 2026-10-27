@@ -157,6 +157,15 @@ console.log("=== 契约 C：兜底不得让保存本身失败 ===");
     const p = config.loadConfig().proxy;
     ok("C3 其余设置页字段照常生效（port 9601）", Number(p.port) === 9601, String(p.port));
   }
+  // C4/C5（Ruling 27）：proxy 段形状非法（数组 / null）必须明确失败、不写盘——
+  // 落成 "proxy": [] 会让回读的 port / concurrency 全 undefined，属于写坏配置
+  {
+    let threw = false;
+    try { config.saveConfigFromUI({ proxy: [1, 2, 3] }); } catch { threw = true; }
+    ok("C4 proxy 段为数组时明确失败（不写盘）", threw);
+    const raw = JSON.parse(fs.readFileSync(config.configPath(), "utf8"));
+    ok("C5 拒绝后 config.json 的 proxy 未被写坏", !Array.isArray(raw.proxy) && typeof raw.proxy === "object", JSON.stringify(Array.isArray(raw.proxy) ? "proxy 是数组" : typeof raw.proxy));
+  }
 }
 
 console.log("");

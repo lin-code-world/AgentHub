@@ -768,20 +768,25 @@ function register(ipcMain) {
 
   // ===== 反代配置段读写（浏览器配置页专用）=====
   // 浏览器形态下整份配置读写被 DENY_BROWSER 禁掉（load_config / save_config 会吐 / 改整份配置），
-  // 反代配置页改走这一对只操作 config.proxy 的命令：
+  // 反代配置页改走这一对只操作 config.proxy 的命令。{ config } 就是**反代配置段本身**
+  // （Ruling 25，与前端提交、命令名一致），不是整份配置：
+  //  · 以磁盘段为底逐键覆盖：只提交部分字段时，没提交的字段保持磁盘值，不会被重置成默认值（Critical 1）；
   //  · out-of-band 字段（上游启闭 / 按渠道签到 / 协议面止血开关）以磁盘为准——页面持有的是旧快照，
   //    与设置页整份提交共用 config.mergeOutOfBandProxy（issue #90 同源风险）；
-  //  · port / bind 忽略：浏览器改了也不生效（重启监听在 browser 形态被 deny），以磁盘为准
+  //  · port / bind 忽略：浏览器改了也不生效（重启监听在 browser 形态被 deny），以磁盘为准；
+  //  · 入参必须是普通对象：数组 / null / 原始值一律拒绝、不写盘（Ruling 27）
   ipcMain.handle("proxy_config_get", handle(() => settings()));
   ipcMain.handle("proxy_config_save", handle(({ config: incoming }) => {
-    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return fail("配置格式不正确");
+    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) return fail("配置格式不正确：反代配置段必须是对象");
     try {
       const cfg = config.loadConfig();
-      const next = JSON.parse(JSON.stringify(incoming));
-      config.mergeOutOfBandProxy(cfg, next);
       const diskProxy = cfg.proxy || {};
-      next.proxy.port = diskProxy.port;
-      next.proxy.bind = diskProxy.bind;
+      const next = { proxy: { ...diskProxy, ...JSON.parse(JSON.stringify(incoming)) } };
+      config.mergeOutOfBandProxy(cfg, next);
+      for (const k of ["port", "bind"]) {
+        if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
+        else delete next.proxy[k];
+      }
       cfg.proxy = next.proxy;
       config.saveConfig(cfg);
     } catch (e) {

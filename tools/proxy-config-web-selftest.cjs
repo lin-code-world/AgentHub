@@ -45,8 +45,9 @@ console.log("  配置路径 = " + cfgPath);
 ok("配置路径在沙箱内（绝不写真实配置）", inSandbox);
 if (!inSandbox) { console.error("拒绝运行：配置路径不在沙箱内"); process.exit(2); }
 
-// 收集器注入空 handle：只拿 { 命令 → handler }，与桌面 IPC / 管理服务同一份实现
-const commands = commandTable.collect({});
+// 收集器注入空 handle：只拿 { 命令 → handler }，与桌面 IPC / 管理服务同一份实现；
+// 注入 deps.nativeTheme 是给 load_config 用的（纯 Node 没有 electron，取不到 nativeTheme 会走 fail 收口）
+const commands = commandTable.collect({ deps: { nativeTheme: {} } });
 
 console.log("");
 console.log("=== 1 命令存在与形态门控（Ruling 24）===");
@@ -71,6 +72,10 @@ console.log("=== 2 磁盘初始状态 ===");
   cfg.proxy.concurrency = 3;
   cfg.proxy.port = 9527;
   cfg.proxy.bind = "127.0.0.1";
+  // 三个「提交后要被改掉」的基准值（都取非默认值，防默认值撞车假绿）+ 一个「不许被重置」的字段
+  cfg.proxy.debugStatus = false;
+  cfg.proxy.usageRetentionDays = 77;
+  cfg.proxy.channelCooldownMs = 45000;
   cfg.schedule.minimizeToTray = true;
   config.saveConfig(cfg);
 }
@@ -95,23 +100,29 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
   }
 
   console.log("");
-  console.log("=== 4 proxy_config_save：旧快照不得冲掉 out-of-band 字段 ===");
+  console.log("=== 4 proxy_config_save：真实前端入参形状（{ config: <反代配置段> }）===");
   if (!saveFn) {
     ok("proxy_config_save 可执行", false, "命令未注册");
     ok("proxy_config_save 拒绝非法入参", false, "命令未注册");
   } else {
     const badInput = await saveFn(null, { config: null });
     ok("非法入参返回 { ok:false }（不裸抛）", !!(badInput && badInput.ok === false), JSON.stringify(badInput));
+    const arrInput = await saveFn(null, { config: [1, 2, 3] });
+    ok("proxy 段为数组时拒绝（Ruling 27）", !!(arrInput && arrInput.ok === false), JSON.stringify(arrInput));
 
-    // 旧快照：out-of-band 四字段是「过期的错值」，port/bind 是浏览器不该改的两项
-    const stale = JSON.parse(JSON.stringify(config.defaultConfig().proxy));
-    stale.channelEnabled = { lobster: true };
-    stale.checkinAutoRules = {};
-    stale.enableAnthropic = true;
-    stale.enableResponses = true;
-    stale.port = 9600;
-    stale.bind = "0.0.0.0";
-    stale.concurrency = 8;
+    // 前端（ConfigProxySection.vue）提交的就是反代配置段本身（表单快照），不是整份配置；
+    // 值一律取非默认值（concurrency 默认恰好是 8，用 8 会撞默认值假绿）
+    const stale = {
+      channelEnabled: { lobster: true },
+      checkinAutoRules: {},
+      enableAnthropic: true,
+      enableResponses: true,
+      port: 9600,
+      bind: "0.0.0.0",
+      concurrency: 9,
+      debugStatus: true,
+      usageRetentionDays: 30,
+    };
     const r = await saveFn(null, { config: stale });
     ok("保存成功", !!(r && r.ok === true), JSON.stringify(r));
 
@@ -120,11 +131,15 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
     ok("checkinAutoRules 以磁盘为准（lobster 规则未被冲掉）", !!(after.checkinAutoRules && after.checkinAutoRules.lobster && after.checkinAutoRules.lobster.enabled === true), JSON.stringify(after.checkinAutoRules));
     ok("enableAnthropic 以磁盘为准（仍 false）", after.enableAnthropic === false, JSON.stringify(after.enableAnthropic));
     ok("enableResponses 以磁盘为准（仍 false）", after.enableResponses === false, JSON.stringify(after.enableResponses));
-    ok("concurrency=8 生效（设置页拥有的字段照常写入）", Number(after.concurrency) === 8, String(after.concurrency));
+    ok("concurrency=9 真正落盘", Number(after.concurrency) === 9, String(after.concurrency));
+    ok("debugStatus=true 真正落盘", after.debugStatus === true, String(after.debugStatus));
+    ok("usageRetentionDays=30 真正落盘", Number(after.usageRetentionDays) === 30, String(after.usageRetentionDays));
+    ok("未提交字段保持磁盘值（channelCooldownMs=45000 不被重置）", Number(after.channelCooldownMs) === 45000, String(after.channelCooldownMs));
     ok("port 被忽略（仍 9527，浏览器改了不生效）", Number(after.port) === 9527, String(after.port));
     ok("bind 被忽略（仍 127.0.0.1）", after.bind === "127.0.0.1", String(after.bind));
     const whole = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
     ok("只写 config.proxy（schedule.minimizeToTray 保持磁盘值）", whole.schedule && whole.schedule.minimizeToTray === true, JSON.stringify(whole.schedule));
+    ok("数组入参被拒后 config.json 未被写坏（proxy 仍是对象）", !Array.isArray(whole.proxy) && typeof whole.proxy === "object", JSON.stringify(Array.isArray(whole.proxy) ? "proxy 是数组" : typeof whole.proxy));
   }
 
   console.log("");
@@ -145,6 +160,20 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
     ok("磁盘无键时提交的伪值不落盘", !("enableAnthropic" in after) && !("enableResponses" in after), JSON.stringify({ enableAnthropic: after.enableAnthropic, enableResponses: after.enableResponses }));
     const whole = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
     ok("落盘文件里也没有这两个键", !("enableAnthropic" in whole.proxy) && !("enableResponses" in whole.proxy));
+  }
+
+  console.log("");
+  console.log("=== 6 写盘后 load_config 快照立即反映（Ruling 26）===");
+  const loadFn = commands.get("load_config");
+  if (!saveFn || !loadFn) {
+    ok("load_config / proxy_config_save 可执行", false, "命令未注册");
+  } else {
+    const c1 = await loadFn(null, {});
+    ok("load_config 返回整份配置（含 proxy 段）", !!(c1 && c1.ok !== false && c1.proxy && c1.schedule), JSON.stringify(c1 && Object.keys(c1).slice(0, 6)));
+    await saveFn(null, { config: { concurrency: 6 } });
+    const c2 = await loadFn(null, {});
+    ok("proxy_config_save 写盘后 load_config 立即拿到新值（concurrency=6）", !!(c2 && c2.proxy && Number(c2.proxy.concurrency) === 6), JSON.stringify(c2 && c2.proxy && c2.proxy.concurrency));
+    ok("快照同步不破坏其余段（schedule.minimizeToTray 仍 true）", !!(c2 && c2.schedule && c2.schedule.minimizeToTray === true), JSON.stringify(c2 && c2.schedule));
   }
 
   console.log("");
