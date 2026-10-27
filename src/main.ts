@@ -12,7 +12,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { isElectron } from "./api/ipc";
 import { probeCaps } from "./api/caps";
-import { getToken } from "./api/web-transport";
+import { hasSession } from "./api/adminCrypto";
 // 服务式 API 不经模板渲染，插件接管不到它们的样式：全库只用到这两个（② 段重数）。
 // 中文 locale 的注入点随全量注册一起没了，改由 App.vue 的 <el-config-provider> 承接。
 import "element-plus/es/components/message/style/css";
@@ -30,14 +30,14 @@ const app = createApp(App);
 app.use(createPinia());
 
 // 启动形态三选一：Electron 直接挂载（IPC）；浏览器先探测网关托管（有后端走 RPC，
-// 无令牌先挂登录页）；纯静态预览（dev:web）回落挂载走 mock
+// 无本地会话或会话已过期先挂登录页）；纯静态预览（dev:web）回落挂载走 mock
 async function bootstrap() {
   if (isElectron()) {
     app.mount("#app");
     return;
   }
   const caps = await probeCaps();
-  if (caps && !getToken()) {
+  if (caps && !hasSession()) {
     const { default: WebLogin } = await import("./views/WebLogin.vue");
     createApp(WebLogin).mount("#app");
     return;

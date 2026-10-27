@@ -9,10 +9,11 @@
   ============================================================
 -->
 <script setup lang="ts">
-// 网关托管形态的登录页：校验管理令牌 → 存 localStorage → 重进主界面。
+// 网关托管形态的登录页：ECDH 登录协商（adminCrypto.login）→ 成功后重进主界面。
+// 令牌只在登录瞬间参与密钥派生与签名，用完即丢，不落 localStorage。
 // 独立挂载（不经主 App）：主界面挂载即发一堆请求，未登录会全 401 把界面打花
 import { ref } from "vue";
-import { setToken } from "../api/web-transport";
+import { login } from "../api/adminCrypto";
 
 const token = ref("");
 const busy = ref(false);
@@ -24,17 +25,10 @@ async function submit() {
   busy.value = true;
   error.value = "";
   try {
-    const res = await fetch("/api/status", { headers: { authorization: `Bearer ${t}` } });
-    if (res.status === 401) {
-      error.value = "令牌不正确";
-    } else if (!res.ok) {
-      error.value = `网关返回 HTTP ${res.status}`;
-    } else {
-      setToken(t);
-      window.location.reload();
-    }
+    await login(t);
+    window.location.reload();
   } catch (e) {
-    error.value = "无法连接网关：" + ((e as Error).message || e);
+    error.value = (e as Error).message || "登录失败";
   } finally {
     busy.value = false;
   }
@@ -45,15 +39,8 @@ async function submit() {
   <div class="login-wrap">
     <form class="login-card" @submit.prevent="submit">
       <div class="login-title">AgentApiGateway 网关控制台</div>
-      <div class="login-sub">输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）</div>
-      <input
-        v-model="token"
-        type="password"
-        class="login-input"
-        placeholder="管理令牌"
-        autocomplete="current-password"
-        autofocus
-      />
+      <div class="login-sub">输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只用于登录验证，不会保存在浏览器</div>
+      <input v-model="token" type="password" class="login-input" placeholder="管理令牌" autocomplete="current-password" autofocus />
       <button type="submit" class="login-btn" :disabled="busy || !token.trim()">
         {{ busy ? "验证中…" : "进入控制台" }}
       </button>
