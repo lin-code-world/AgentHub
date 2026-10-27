@@ -735,6 +735,8 @@ function vaultOk() {
 
 /** 网关启停只作用于本次会话：设置里已没有「记住网关开关」，
  *  下次打开应用一律重新拉起，故这里不再写回任何配置 */
+// 参数可注入：只用 ipcMain.handle(channel, fn) 这一个 API，传 ipcMain（桌面）或
+// { handle }（命令表收集器，见 backend/commandTable.cjs）都成立
 function register(ipcMain) {
   // 请求流水保留期从设置灌入号池存储模块：gc() 只在 open()（首次摸库）时跑，register 先行不踩空。
   // 改完设置后启动 GC 要等下次开库才按新值清；想立刻按新值删一轮，用用量统计页的「清理」按钮

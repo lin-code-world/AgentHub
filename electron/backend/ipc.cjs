@@ -11,11 +11,12 @@
 // IPC 命令注册：主进程 ipcMain.handle 处理器，对应前端 src/api/ipc.ts
 // 框架命令（配置 / 版本 / 数据目录）+ 反代网关命令（proxy/index.cjs 注册）
 // preload 白名单和这里要一一对应
+//
+// 命令实现只有一份：registerCommands(handle, deps) 里是全部框架命令 handler，
+// handle 可注入 ipcMain.handle（桌面）或收集器（管理服务，见 commandTable.cjs）。
 "use strict";
 const path = require("node:path");
-const { app, shell, dialog, BrowserWindow } = require("electron");
 const config = require("./config.cjs");
-const proxy = require("./proxy/index.cjs");
 
 let cfg = null;
 function C() {
@@ -32,7 +33,7 @@ function fail(message) {
 }
 
 // 异常统一收口，渲染层拿到 { ok:false } 而不是 rejected promise
-function handle(fn) {
+function wrap(fn) {
   return async (_event, args) => {
     try {
       return await fn(args || {});
@@ -42,25 +43,32 @@ function handle(fn) {
   };
 }
 
+/** electron API：deps 由桌面 register() 注入（app/shell/dialog/BrowserWindow/nativeTheme）；
+ *  命令表收集不注入——收集只注册闭包不执行，这里惰性 require electron，
+ *  容器里没装 electron 包也能收集（handler 真被调用时才取，届时按 fail 收口） */
+function api(deps, name) {
+  return (deps && deps[name]) || require("electron")[name];
+}
+
 /** 应用主题同步到原生窗口框架（标题栏/边框）颜色；主题变化时调用 */
 function applyNativeTheme(nativeTheme, cfgObj) {
   const theme = cfgObj && cfgObj.theme;
   if (theme === "dark" || theme === "light") nativeTheme.themeSource = theme;
 }
 
-/** 注册所有 IPC handler。ctx = { ipcMain, app, shell, nativeTheme } */
-function register(ctx) {
-  const { ipcMain, nativeTheme } = ctx;
-
+/** 注册全部框架命令实现（反代网关命令在 proxy/index.cjs 的 register 里，
+ *  由 commandTable.collect 组装到同一张表）。handle(cmd, fn) 可注入 ipcMain.handle 或收集器；
+ *  deps = { app, shell, dialog, BrowserWindow, nativeTheme }，可省（惰性取 electron） */
+function registerCommands(handle, deps) {
   // ===== 框架：配置 =====
-  ipcMain.handle("load_config", handle(() => {
+  handle("load_config", wrap(() => {
     const c = C();
-    applyNativeTheme(nativeTheme, c);
+    applyNativeTheme(api(deps, "nativeTheme"), c);
     return JSON.parse(JSON.stringify(c));
   }));
   // 保存时不做深合并（渲染层持完整配置快照）：仅对已知键做归一化，
   // 主题写回时同步原生标题栏，开机自启即时生效
-  ipcMain.handle("save_config", handle(({ config: next }) => {
+  handle("save_config", wrap(({ config: next }) => {
     if (!next || typeof next !== "object" || Array.isArray(next)) return fail("配置格式不正确");
     const merged = JSON.parse(JSON.stringify(next));
     // 设置页整份提交：out-of-band 字段（channelEnabled/checkinAutoRules）以磁盘为准，
@@ -68,37 +76,39 @@ function register(ctx) {
     const r = config.saveConfigFromUI(merged);
     // 落盘成功才更新内存快照，写失败时别把脏数据留给 load_config
     cfg = merged;
-    applyNativeTheme(nativeTheme, merged);
+    applyNativeTheme(api(deps, "nativeTheme"), merged);
     config.applyAutoStart(merged);
     return r;
   }));
 
   // ===== 框架：其它 =====
-  ipcMain.handle("get_app_version", () => app.getVersion());
-  ipcMain.handle("get_data_dir", () => config.dataDir());
-  ipcMain.handle("open_data_dir", async () => {
-    await shell.openPath(config.dataDir());
+  handle("get_app_version", () => api(deps, "app").getVersion());
+  handle("get_data_dir", () => config.dataDir());
+  handle("open_data_dir", async () => {
+    await api(deps, "shell").openPath(config.dataDir());
   });
   // 便携版判断：开机自启提示用（便携副本是临时解压路径，注册自启无意义）
-  ipcMain.handle("get_is_portable", () => config.isPortable());
-  ipcMain.handle("browse_dir", handle(async () => {
-    const r = await dialog.showOpenDialog(BrowserWindow.getAllWindows()[0], { properties: ["openDirectory"] });
+  handle("get_is_portable", () => config.isPortable());
+  handle("browse_dir", wrap(async () => {
+    const r = await api(deps, "dialog").showOpenDialog(api(deps, "BrowserWindow").getAllWindows()[0], { properties: ["openDirectory"] });
     return { ok: true, canceled: r.canceled, path: r.canceled ? null : r.filePaths[0] };
   }));
 
   // ===== 局域网管理访问（管理地址与令牌；管理 HTTP 服务另行提供） =====
   // 令牌明文只经这条桌面 IPC 交给设置页展示，不进日志
-  ipcMain.handle("admin_access_info", handle(() => config.adminAccessInfo()));
-  ipcMain.handle("admin_set_token", handle(({ token }) => {
+  handle("admin_access_info", wrap(() => config.adminAccessInfo()));
+  handle("admin_set_token", wrap(({ token }) => {
     const r = config.setAdminToken(token);
     // 令牌变更后刷新内存快照，load_config 返回的 admin.token 才不会是旧密文
     if (r && r.ok) cfg = config.loadConfig();
     return r;
   }));
-
-  // ===== 反代网关（命令实现见 backend/proxy/index.cjs） =====
-  proxy.register(ipcMain);
-
 }
 
-module.exports = { register };
+/** 桌面注册入口：ctx = { ipcMain, app, shell, nativeTheme }；
+ *  走 commandTable.collect 注入真实 ipcMain，注册路径与管理服务收集是同一份 handler */
+function register(ctx) {
+  require("./commandTable.cjs").collect({ handle: (cmd, fn) => ctx.ipcMain.handle(cmd, fn), deps: ctx });
+}
+
+module.exports = { register, registerCommands };
