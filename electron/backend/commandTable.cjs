@@ -51,14 +51,19 @@ const DENY = {
   proxy_zcode_solve_captcha: "人机校验需要图形环境，容器里无法弹窗——请在桌面版号池页手动领取",
 };
 
-function modeOf(cmd) {
+/** 形态参数 form："container"（容器 headless，默认）/ "browser"（浏览器管理页）。
+ *  两形态 deny 集合相同（Ruling 11），差异只在文案；桌面 IPC 直接注册 handler，不套 deny */
+function modeOf(cmd, form = "container") {
   if (DENY[cmd]) return "deny";
   return READ.has(cmd) ? "read" : "write";
 }
 
-/** deny 命令的面向用户原因；非 deny 命令返回 null */
-function denyReason(cmd) {
-  return DENY[cmd] || null;
+/** deny 命令的面向用户原因；非 deny 命令返回 null。
+ *  container 保持现有文案；browser 在前面加「浏览器访问时不可用：」（前端提示与 403 共用） */
+function denyReason(cmd, form = "container") {
+  const reason = DENY[cmd];
+  if (!reason) return null;
+  return form === "browser" ? `浏览器访问时不可用：${reason}` : reason;
 }
 
 /** 全量命令表（框架命令 + 反代网关命令）。注册副作用：proxy 的 register 首行会执行

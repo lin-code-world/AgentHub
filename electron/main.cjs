@@ -112,6 +112,9 @@ const config = require("./backend/config.cjs");
 const ipc = require("./backend/ipc.cjs");
 // 反代网关模块：本地 OpenAI 兼容服务（默认 127.0.0.1:9527），托盘常驻期间持续提供 API
 const proxy = require("./backend/proxy/index.cjs");
+// 管理服务骨架：局域网浏览器入口（端口 = 反代端口 + 1）；命令表与桌面 IPC 是同一份
+const admin = require("./backend/admin.cjs");
+const commandTable = require("./backend/commandTable.cjs");
 // 关窗决策（纯逻辑，可自测）+ 窗口几何持久化（销毁窗口后唤回重建要回到原位）
 const windowMode = require("./backend/window-mode.cjs");
 const windowState = require("./backend/window-state.cjs");
@@ -353,6 +356,66 @@ function createTray() {
   tray.on("double-click", showWindow);
 }
 
+// ===== 局域网管理服务（端口 = 反代端口 + 1） =====
+// 管理页是辅助入口：启动失败只提示留痕，绝不影响反代网关本身。
+// 端口联动：反代启停/换端口都会广播 status 事件，这里按配置端口先停旧服务再启新服务，
+// 新端口起失败（被占用等）就用旧端口把服务拉回来（回滚），提示里带明确原因。
+let adminProxyPort = 0; // 当前管理服务对应的反代端口（0 = 未启动）
+let adminSyncChain = Promise.resolve();
+function adminStaticDir() {
+  // 开发态项目 dist、打包态 app.getAppPath()/dist（vite outDir=dist，打包后在 asar 内）
+  return path.join(app.getAppPath(), "dist");
+}
+function queueAdminSync(trigger) {
+  // 串行化：boot 与 status 事件可能并发触发，避免两次 start 抢同一端口
+  adminSyncChain = adminSyncChain.then(() => syncAdminService(trigger)).catch((e) => __crashLog("admin-sync-failed", __describe(e)));
+  return adminSyncChain;
+}
+async function syncAdminService(trigger) {
+  let cfg;
+  try {
+    cfg = config.loadConfig();
+  } catch (e) {
+    __crashLog("admin-config-load-failed", __describe(e));
+    return;
+  }
+  const proxyPort = Number(cfg.proxy && cfg.proxy.port);
+  const validPort = Number.isInteger(proxyPort) && proxyPort >= 1 && proxyPort <= 65534;
+  if (!validPort) {
+    // 反代端口非法（0 / 65535 之类）：管理端口无从谈起，停掉旧服务并留痕
+    if (adminProxyPort) {
+      await admin.stop().catch(() => {});
+      adminProxyPort = 0;
+      __crashLog("admin-stopped-invalid-port", `trigger=${trigger} proxyPort=${proxyPort}`);
+    }
+    return;
+  }
+  if (proxyPort === adminProxyPort) return; // 端口没变：不折腾已在跑的服务
+  const oldPort = adminProxyPort;
+  try {
+    await admin.stop();
+    await admin.start({ port: proxyPort, commandTable, staticDir: adminStaticDir() });
+    adminProxyPort = proxyPort;
+    __crashLog("admin-started", `trigger=${trigger} adminPort=${proxyPort + 1}`);
+  } catch (e) {
+    __crashLog("admin-start-failed", `trigger=${trigger} ${__describe(e)}`);
+    if (oldPort) {
+      // 回滚：旧端口还能用就把服务拉回来，别让端口联动失败把管理页整个弄没了
+      try {
+        await admin.start({ port: oldPort, commandTable, staticDir: adminStaticDir() });
+        adminProxyPort = oldPort;
+      } catch (e2) {
+        __crashLog("admin-rollback-failed", __describe(e2));
+      }
+    }
+    try {
+      require("electron").dialog.showErrorBox("AgentApiGateway 管理服务启动失败", `局域网管理页未启动（不影响反代网关）：${(e && e.message) || e}\n日志：${crashLogFile()}`);
+    } catch {
+      /* 无 GUI 时只留痕 */
+    }
+  }
+}
+
 // ===== 单实例锁 =====
 // 开发旁路：AGENTHUB_ALLOW_MULTI=1 时跳过单实例锁，并隔离 userData，
 // 使 `npm run dev` 能在安装版 AgentHub 仍在运行时并存（否则新实例拿不到锁会干净退出，
@@ -388,7 +451,18 @@ if (!gotLock) {
     // boot() 是 async：rules.init() / store.open() / credits.startScheduler() / startCheckinAuto()
     // 都是裸调用，抛错会变成 rejected promise。原先这里没有任何 catch，
     // 未处理的 rejection 会让主进程直接退出——症状是「窗口凭空消失、无崩溃事件、无 dump、无日志」。
-    proxy.boot().catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
+    proxy
+      .boot()
+      .then(() => queueAdminSync("boot"))
+      .catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
+    // 反代启停/换端口都会广播 status 事件：管理端口 = 反代端口 + 1，按配置端口联动重启
+    try {
+      require("./backend/proxy/platform/index.cjs").onEmit((payload) => {
+        if (payload && payload.type === "status") queueAdminSync("proxy-status");
+      });
+    } catch (e) {
+      __crashLog("admin-event-hook-failed", __describe(e));
+    }
     createWindow();
     createTray();
 
@@ -415,6 +489,7 @@ if (!gotLock) {
     // 统一收尾：原先两条分支各自重复一遍 stop 调用，新增模块时极易漏改一处
     const cleanup = () => {
       proxy.shutdown();
+      void admin.stop();
     };
     quitting = true;
     cleanup();
