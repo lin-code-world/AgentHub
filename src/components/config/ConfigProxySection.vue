@@ -15,6 +15,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import * as api from "../../api/ipc";
+import { denyState } from "../../api/caps";
 import type { ProxyModel, ProxyRuleFile } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { fmtAgo, fmtK } from "../../views/proxy/format";
@@ -31,6 +32,10 @@ const saving = ref(false);
 const msg = ref("");
 const msgErr = ref(false);
 const running = ref(false);
+/** 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰）：保存并重启 / 打开目录 / rules 目录 */
+const restartGate = denyState("proxy_restart");
+const dataDirGate = denyState("proxy_open_data_dir");
+const rulesDirGate = denyState("proxy_open_rules_dir");
 // 优先渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
 const channels = ref<{ id: string; display: string }[]>([]);
 // 全局回退模型候选 = 合并模型目录
@@ -154,7 +159,9 @@ function openDataDir() {
       <div class="cfg-sec-actions">
         <span v-if="msg" class="tag" :class="msgErr ? 'tag-err' : 'tag-ok'">{{ msg }}</span>
         <button class="btn btn-ghost" @click="upOpen = true"><i class="ph ph-plugs-connected"></i>上游启闭</button>
-        <button class="btn btn-cta" :disabled="saving" @click="save">{{ saving ? "保存中…" : "保存并重启服务" }}</button>
+        <el-tooltip :content="restartGate.reason || ''" :disabled="!restartGate.disabled" placement="top">
+          <button class="btn btn-cta" :disabled="saving || restartGate.disabled" @click="save">{{ saving ? "保存中…" : "保存并重启服务" }}</button>
+        </el-tooltip>
       </div>
     </div>
 
@@ -338,7 +345,9 @@ function openDataDir() {
             <div class="set-name">数据目录</div>
             <div class="set-desc">{{ vault?.dataDir || "（浏览器预览）" }} · 存储驱动 {{ vault?.driver || "-" }}</div>
           </div>
-          <button class="btn btn-sm" @click="openDataDir">打开目录</button>
+          <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
+            <button class="btn btn-sm" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button>
+          </el-tooltip>
         </div>
       </div>
     </div>
@@ -347,7 +356,7 @@ function openDataDir() {
     <div class="card" v-else>
       <div class="card-title">
         规则文件热加载
-        <span class="right">改文件即时生效，无需重启 · <button class="btn-link btn-sm" @click="openRulesDir">打开 rules 目录</button></span>
+        <span class="right">改文件即时生效，无需重启 · <el-tooltip :content="rulesDirGate.reason || ''" :disabled="!rulesDirGate.disabled" placement="top"><button class="btn-link btn-sm" :disabled="rulesDirGate.disabled" @click="openRulesDir">打开 rules 目录</button></el-tooltip></span>
       </div>
       <div class="tbl-wrap">
         <table class="tbl">

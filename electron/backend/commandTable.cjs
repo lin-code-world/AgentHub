@@ -64,6 +64,9 @@ const DENY_BROWSER = {
   proxy_account_import_file: "浏览器访问时不可用：请用页面上的「选择文件」上传，或粘贴 JSON 导入",
   proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
   proxy_oauth_begin: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
+  // 补漏（任务 8）：粘贴回调是 OAuth 登录的收尾命令，begin 被 deny 后它同样不该放行。
+  // 刻意只进 browser 表：容器表（DENY）保持 17 条不动，容器形态口径不在本任务调整
+  proxy_oauth_submit_callback: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
   proxy_ide_status: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
   proxy_ide_switch: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
   proxy_oplog_export: "浏览器访问时不可用：导出日志请在桌面窗口操作",

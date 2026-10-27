@@ -64,3 +64,14 @@ export function denyReason(cmd: string): string | null {
   const c = caps?.commands[cmd];
   return c && c.mode === "deny" ? c.reason || "该操作在容器形态不可用" : null;
 }
+
+/** 按钮门控（置灰 + 原因展示）：任一命令被服务端 deny 即 disabled，reason 原样取服务端下发文案（前端不另写）。
+ *  桌面窗口（无 caps）恒为可用——deny 只针对浏览器管理页，桌面行为不变。
+ *  一个按钮覆盖多条命令时（如「打开登录页」含 begin 与回调收尾）并列传入，命中第一条就停 */
+export function denyState(...cmds: string[]): { disabled: boolean; reason: string | null } {
+  for (const cmd of cmds) {
+    const reason = denyReason(cmd);
+    if (reason) return { disabled: true, reason };
+  }
+  return { disabled: false, reason: null };
+}

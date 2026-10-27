@@ -18,6 +18,7 @@ import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
 import type { ModuleKey } from "../types";
 import * as api from "../api/ipc";
+import { denyState } from "../api/caps";
 import { coalesceAsync } from "../utils/timing";
 import { toast } from "../utils/toast";
 import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
@@ -28,6 +29,8 @@ import pkg from "../../package.json";
 const app = useAppStore();
 const version = `v${pkg.version}`;
 const gwBusy = ref(false);
+/** 网关启停门控：浏览器形态被服务端 deny 时置灰并展示下发原因，桌面（无 caps）不置灰 */
+const gwGate = denyState("proxy_start", "proxy_stop");
 
 /** 网关服务开关（覆盖在反代网关卡右上角）：启停 + 状态经 proxy status 事件回流 */
 async function toggleGw() {
@@ -178,15 +181,16 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
                 <i class="ph ph-plugs-connected"></i>上游启闭
               </button>
             </el-tooltip>
-            <!-- 网关服务开关（stop 与卡片点击互不影响） -->
+            <!-- 网关服务开关（stop 与卡片点击互不影响）；浏览器形态被服务端 deny 时置灰并展示原因 -->
             <div
               v-if="mod.key === 'proxy'"
               class="switch mc-gw-switch"
-              :class="{ on: proxyRunning, busy: gwBusy }"
+              :class="{ on: proxyRunning, busy: gwBusy, disabled: gwGate.disabled }"
               role="switch"
               :aria-checked="proxyRunning"
-              :title="proxyRunning ? '点击停止网关服务' : '点击启动网关服务'"
-              @click.stop="toggleGw()"
+              :aria-disabled="gwGate.disabled"
+              :title="gwGate.disabled ? gwGate.reason || '' : proxyRunning ? '点击停止网关服务' : '点击启动网关服务'"
+              @click.stop="!gwGate.disabled && toggleGw()"
             >
               <span class="mc-gw-switch-text">{{ gwBusy ? "切换中…" : proxyRunning ? "服务开" : "服务关" }}</span>
             </div>
@@ -421,6 +425,11 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 .mc-gw-switch.busy {
   opacity: 0.5;
   pointer-events: none;
+}
+/* 浏览器形态被服务端 deny：置灰不可点；刻意不关 pointer-events，hover 的 title 要能展示原因 */
+.mc-gw-switch.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* 单个统计列：标签行 + 数字行纵向排布，行高锁定后各列基线天然对齐 */
 .mc-stat {

@@ -21,7 +21,7 @@ import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES
 // 顶部渠道切换（收起态方块）与「上游启闭」弹窗共用同一份渠道图标映射
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
-import { commandMode } from "../../api/caps";
+import { denyState } from "../../api/caps";
 import { solveCaptcha, cancelCaptcha, CaptchaCancelledError } from "../../utils/aliyunCaptcha";
 
 const app = useAppStore();
@@ -201,11 +201,16 @@ const SMS_PROFILES: Partial<Record<ProxyChannelId, SmsProfile>> = {
     phoneRe: /^1[3-9]\d{9}$/,
   },
 };
+/** 添加方式的命令门控（浏览器形态服务端 deny 时置灰 + tooltip 展示下发原因，桌面无 caps 不置灰）：
+ *  deny 的方式不再隐藏——不显示就成了静默缺失，用户不知道为什么没有这项 */
+function methodGate(key: AddMethod): { disabled: boolean; reason: string | null } {
+  if (key === "oauth") return denyState("proxy_oauth_begin", "proxy_oauth_submit_callback");
+  if (key === "file") return denyState("proxy_account_import_file");
+  if (key === "local") return denyState("proxy_scan", "proxy_scan_import");
+  return { disabled: false, reason: null };
+}
+
 function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.value): boolean {
-  // 容器形态：服务端 deny 的入口直接隐藏，避免用户点了才看到错误文案
-  if (key === "oauth" && commandMode("proxy_oauth_begin") === "deny") return false;
-  if (key === "file" && commandMode("proxy_account_import_file") === "deny") return false;
-  if (key === "local" && (commandMode("proxy_scan") === "deny" || commandMode("proxy_scan_import") === "deny")) return false;
   if (key === "oauth" && NO_OAUTH_CHANNELS.includes(channel)) return false;
   // 手机验证码页签只给 AutoClaw 国内版；它自身也没有 OAuth 页签可放
   if (key === "sms") return SMS_ONLY_CHANNELS.includes(channel);
@@ -221,8 +226,19 @@ function allowedMethods(channel: ProxyChannelId): AddMethod[] {
   return (["oauth", "sms", "local", "file", "paste"] as AddMethod[]).filter((key) => addTabAllowed(key, channel));
 }
 
-// 容器形态（OAuth 被服务端 deny）：添加弹窗只保留粘贴 JSON，并给出号池同步引导
-const containerForm = computed(() => commandMode("proxy_oauth_begin") === "deny");
+// deny 的原因统一展示服务端下发的 reason（见 methodGate）：前端不自维护形态口径的禁用/引导文案
+
+// ===== 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰） =====
+/** IDE 切号（预检 proxy_ide_status 与执行 proxy_ide_switch 一起门控） */
+const ideGate = denyState("proxy_ide_switch", "proxy_ide_status");
+/** ZCode 过码 / 领取模式 */
+const captchaGate = denyState("proxy_zcode_solve_captcha");
+const claimGate = denyState("proxy_zcode_claim_mode");
+/** ZCode 设备指纹诊断与修复 */
+const deviceGate = denyState("proxy_zcode_device_status", "proxy_zcode_device_repair");
+/** ZCode 恢复本机指纹 / 切号回滚 */
+const restoreGate = denyState("proxy_zcode_restore_mid");
+const rollbackGate = denyState("proxy_zcode_switch_rollback");
 
 // 渠道允许的添加方式（分段控件按渠道过滤）
 const METHOD_TABS = computed(
@@ -1062,8 +1078,9 @@ async function doDelete() {
 function openAdd(ch: ProxyChannelView) {
   addChannel.value = ch.id;
   // 默认落该渠道**第一个可用**方式：无 OAuth 的渠道（CatPaw）落「从本机软件导入」，
-  // AutoClaw 国内版落「手机验证码」。写死 "oauth" 会让弹窗停在一个已被隐藏的页签上
-  addMethod.value = allowedMethods(ch.id)[0] || "oauth";
+  // AutoClaw 国内版落「手机验证码」。写死 "oauth" 会让弹窗停在一个不可用的页签上；
+  // 服务端 deny 的方式只是置灰（见 methodGate），默认页签同样要跳过它们，否则一进来就是灰页签
+  addMethod.value = allowedMethods(ch.id).find((k) => !methodGate(k).disabled) || "paste";
   pasteJson.value = "";
   pasteMsg.value = "";
   pasteErr.value = false;
@@ -1096,6 +1113,7 @@ function closeAdd() {
 
 function switchMethod(m: AddMethod) {
   if (oauthWaiting.value) return; // OAuth 等待回调期间不许切走，避免状态丢失
+  if (methodGate(m).disabled) return; // deny 置灰的页签不可进入，原因在页签 tooltip
   addMethod.value = m;
   if (m === "local" && !scanList.value.length) loadScan();
 }
@@ -1251,15 +1269,15 @@ function reauthAccount(acc: ProxyAccount) {
   // 无 OAuth 的渠道（CatPaw）：重登 = 重新导入客户端登录态，绝不能弹授权页
   // （后端 beginOAuth 已显式挡住该渠道，前端也不该把用户带到那个入口上）
   if (NO_OAUTH_CHANNELS.includes(acc.channel)) {
-    addMethod.value = allowedMethods(acc.channel)[0] || "paste";
+    addMethod.value = allowedMethods(acc.channel).find((k) => !methodGate(k).disabled) || "paste";
     scanMsg.value = "CatPaw 凭证过期时：先在 CatPaw 客户端重新登录，再点上方「重新扫描」→「导入」覆盖本机登录态";
     scanErr.value = false;
     loadScan();
     return;
   }
   // 默认落该渠道第一个可用方式：AutoClaw 国内版落「手机验证码」（短信登录需用户填手机号，
-  // 不适合自动发起），其余渠道落 OAuth 并直接发起
-  addMethod.value = allowedMethods(acc.channel)[0] || "oauth";
+  // 不适合自动发起），其余渠道落 OAuth 并直接发起；deny 置灰的方式同样跳过（不自动发起被禁的命令）
+  addMethod.value = allowedMethods(acc.channel).find((k) => !methodGate(k).disabled) || "oauth";
   if (addMethod.value === "oauth") beginOauth();
 }
 
@@ -1671,24 +1689,25 @@ onUnmounted(() => {
                 <i class="ph ph-clock"></i>{{ labelsOf(ch.id).auto }}
               </button>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode'" content="设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹" placement="top">
+            <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹'" placement="top">
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-warning': devHasIssue }"
-                :disabled="devBusy"
+                :disabled="devBusy || deviceGate.disabled"
                 @click="openDeviceDiag"
               >{{ devBusy ? "检测中…" : devHasIssue ? "指纹异常" : "指纹诊断" }}</button>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode' && devClaimMode" content="本机指纹当前借出给某账号领周末套餐（领取模式），手机远程连接不可用；点击写回本机锚定指纹并重启客户端，远程即恢复" placement="top">
+            <el-tooltip v-if="ch.id === 'zcode' && devClaimMode" :content="restoreGate.reason || '本机指纹当前借出给某账号领周末套餐（领取模式），手机远程连接不可用；点击写回本机锚定指纹并重启客户端，远程即恢复'" placement="top">
               <button
                 class="btn btn-sm btn-warning"
-                :disabled="devBusy"
+                :disabled="devBusy || restoreGate.disabled"
                 @click="restoreRemoteMid"
               >{{ devBusy ? "恢复中…" : "恢复本机指纹" }}</button>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode'" content="切号出问题或移动端远程连接异常时，一键还原到最近一次切换前的状态" placement="top">
+            <el-tooltip v-if="ch.id === 'zcode'" :content="rollbackGate.reason || '切号出问题或移动端远程连接异常时，一键还原到最近一次切换前的状态'" placement="top">
               <button
                 class="btn btn-sm"
+                :disabled="rollbackGate.disabled"
                 @click="zcodeRollback"
               >切号回滚</button>
             </el-tooltip>
@@ -1855,13 +1874,13 @@ onUnmounted(() => {
                     </el-tooltip>
                     <el-tooltip
                       v-if="acc.channel === 'zcode'"
-                      :content="isNeedCaptcha(acc) ? '触发了上游阿里云人机校验，点击弹出验证码窗口进行过码' : '手动完成一次阿里云人机校验以刷新上游风控信誉'"
+                      :content="captchaGate.reason || (isNeedCaptcha(acc) ? '触发了上游阿里云人机校验，点击弹出验证码窗口进行过码' : '手动完成一次阿里云人机校验以刷新上游风控信誉')"
                       placement="top"
                     >
                       <button
                         class="btn-link btn-sm"
                         :class="{ 'btn-captcha-warn': isNeedCaptcha(acc) }"
-                        :disabled="solvingCaptchaId === acc.id"
+                        :disabled="solvingCaptchaId === acc.id || captchaGate.disabled"
                         @click="runSolveCaptcha(acc)"
                       >
                         {{ solvingCaptchaId === acc.id ? "过码中…" : (isNeedCaptcha(acc) ? "需过码" : "过码") }}
@@ -1869,21 +1888,21 @@ onUnmounted(() => {
                     </el-tooltip>
                     <el-tooltip
                       v-if="acc.channel === 'zcode'"
-                      content="领取模式（人工操作）：把本机指纹临时借出为该账号专属指纹并重启客户端，之后在官方客户端里点「限时可领取」人工领取周末套餐；领完回工具栏点「恢复本机指纹」。期间手机远程不可用"
+                      :content="claimGate.reason || '领取模式（人工操作）：把本机指纹临时借出为该账号专属指纹并重启客户端，之后在官方客户端里点「限时可领取」人工领取周末套餐；领完回工具栏点「恢复本机指纹」。期间手机远程不可用'"
                       placement="top"
                     >
                       <button
                         class="btn-link btn-sm"
-                        :disabled="ideSwitching === acc.id"
+                        :disabled="ideSwitching === acc.id || claimGate.disabled"
                         @click="enterClaimMode(acc)"
                       >
                         {{ ideSwitching === acc.id ? "处理中…" : "领取模式" }}
                       </button>
                     </el-tooltip>
-                    <el-tooltip :content="ideTitle(acc)" :disabled="!ideTitle(acc)" placement="top">
+                    <el-tooltip :content="ideGate.reason || ideTitle(acc)" :disabled="!ideGate.disabled && !ideTitle(acc)" placement="top">
                       <button
                         class="btn-link btn-sm"
-                        :disabled="ideSwitching === acc.id || !ideSupported(acc)"
+                        :disabled="ideSwitching === acc.id || !ideSupported(acc) || ideGate.disabled"
                         @click="ideSwitch(acc)"
                       >
                         {{ ideSwitching === acc.id ? "切换中…" : "切换" }}
@@ -1985,23 +2004,21 @@ onUnmounted(() => {
             </el-tooltip>
           </header>
 
-          <!-- 方式切换：分段控件 -->
+          <!-- 方式切换：分段控件（服务端 deny 的方式置灰 + tooltip 展示下发原因，不隐藏） -->
           <div class="add-tabs">
-            <button
-              v-for="t in METHOD_TABS"
-              :key="t.key"
-              class="add-tab"
-              :class="{ active: addMethod === t.key, disabled: oauthWaiting && addMethod === 'oauth' && t.key !== 'oauth' }"
-              @click="switchMethod(t.key)"
-            >
-              <i class="ph" :class="t.icon"></i>{{ t.label }}
-            </button>
+            <el-tooltip v-for="t in METHOD_TABS" :key="t.key" :content="methodGate(t.key).reason || ''" :disabled="!methodGate(t.key).disabled" placement="top">
+              <button
+                class="add-tab"
+                :class="{ active: addMethod === t.key, disabled: methodGate(t.key).disabled || (oauthWaiting && addMethod === 'oauth' && t.key !== 'oauth') }"
+                :disabled="methodGate(t.key).disabled"
+                @click="switchMethod(t.key)"
+              >
+                <i class="ph" :class="t.icon"></i>{{ t.label }}
+              </button>
+            </el-tooltip>
           </div>
 
-          <!-- 容器形态的可行路径：OAuth/本机扫描/文件选择都被服务端禁用，先把话说清楚 -->
-          <div v-if="containerForm" class="add-msg">
-            容器形态灌号：粘贴含 token/refreshToken 的凭据 JSON，或调用管理 API <code>/api/accounts/import</code>。桌面端号池「导出」按钮的产物已含明文凭据（<code>format=agenthub-credentials</code>），可以直接拿来灌号。
-          </div>
+          <!-- deny 原因不再在这里写死文案：各方式页签置灰并在 tooltip 展示服务端下发的 reason -->
 
           <!-- 方式内容：各面板共用固定高度，切换时弹窗不跳高度 -->
           <div class="add-body">
@@ -2018,7 +2035,7 @@ onUnmounted(() => {
                   style="flex: 1"
                   :placeholder="addChannel === 'raccoon' ? '授权窗没自动完成？把 office-raccoon://auth/callback?code=… 整段粘到这里' : addChannel === 'zcode' ? '授权完成后一般无需操作；若停在回调页，把地址栏整段粘到这里（zcode://…）' : '浏览器没跳回？把地址栏整段粘到这里'"
                 />
-                <button class="btn btn-sm" :disabled="!callbackInput.trim() || callbackBusy" @click="submitCallback">
+                <button class="btn btn-sm" :disabled="!callbackInput.trim() || callbackBusy || methodGate('oauth').disabled" @click="submitCallback">
                   {{ callbackBusy ? "提交中…" : "提交" }}
                 </button>
               </div>
@@ -2067,7 +2084,7 @@ onUnmounted(() => {
               <div class="scan-head">
                 <span class="scan-hint">读取本机已登录客户端的登录态，凭据不出本机</span>
                 <button class="btn btn-sm" :disabled="scanBusy" @click="loadScan">{{ scanBusy ? "扫描中…" : "重新扫描" }}</button>
-                <button class="btn btn-sm" :disabled="scanBusy || !scanRows.length" @click="importAllScan">全部导入</button>
+                <button class="btn btn-sm" :disabled="scanBusy || methodGate('local').disabled || !scanRows.length" @click="importAllScan">全部导入</button>
               </div>
               <div class="scan-list">
                 <div v-for="(c, i) in scanRows" :key="`${c.channel}-${c.uid || i}`" class="scan-row" :class="{ dim: c.imported || c.encrypted }">
@@ -2082,7 +2099,7 @@ onUnmounted(() => {
                   <el-tooltip :content="c.encrypted ? '本机登录态已加密，请改用 OAuth 登录' : ''" :disabled="!c.encrypted" placement="top">
                     <button
                       class="btn btn-sm"
-                      :disabled="c.imported || c.encrypted || !!scanImporting"
+                      :disabled="c.imported || c.encrypted || !!scanImporting || methodGate('local').disabled"
                       @click="importScan(c)"
                     >
                       {{ scanImporting === scanKey(c) ? "导入中…" : c.imported ? "已导入" : "导入" }}
@@ -2153,7 +2170,7 @@ onUnmounted(() => {
             <button
               v-if="addMethod === 'oauth'"
               class="btn btn-cta"
-              :disabled="oauthWaiting"
+              :disabled="oauthWaiting || methodGate('oauth').disabled"
               @click="beginOauth"
             >{{ oauthWaiting ? "等待授权…" : "打开登录页" }}</button>
             <button
@@ -2165,7 +2182,7 @@ onUnmounted(() => {
             <button
               v-else-if="addMethod === 'file'"
               class="btn btn-cta"
-              :disabled="fileBusy"
+              :disabled="fileBusy || methodGate('file').disabled"
               @click="doImportFile"
             >{{ fileBusy ? "导入中…" : "选择文件…" }}</button>
             <button
@@ -2177,7 +2194,7 @@ onUnmounted(() => {
             <button
               v-else
               class="btn btn-cta"
-              :disabled="scanBusy || !scanRows.some((c) => !c.imported && !c.encrypted)"
+              :disabled="scanBusy || methodGate('local').disabled || !scanRows.some((c) => !c.imported && !c.encrypted)"
               @click="importAllScan"
             >加入号池</button>
           </footer>
@@ -2454,8 +2471,12 @@ onUnmounted(() => {
             <div v-if="!devRows.length" class="checkin-empty">号池里还没有 zcode 账号</div>
           </div>
           <div class="p-actions">
-            <button class="btn" :disabled="devBusy" @click="runDeviceRepair(true)">{{ devBusy ? "处理中…" : "全部换随机指纹" }}</button>
-            <button class="btn btn-primary" :disabled="devBusy || !devHasIssue" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button>
+            <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
+              <button class="btn" :disabled="devBusy || deviceGate.disabled" @click="runDeviceRepair(true)">{{ devBusy ? "处理中…" : "全部换随机指纹" }}</button>
+            </el-tooltip>
+            <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
+              <button class="btn btn-primary" :disabled="devBusy || !devHasIssue || deviceGate.disabled" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button>
+            </el-tooltip>
           </div>
         </div>
       </div>

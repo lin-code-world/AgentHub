@@ -14,9 +14,12 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
+import { denyState } from "../../api/caps";
 import type { ProxyOpLogRow } from "../../types";
 
 const app = useAppStore();
+/** 「导出 Excel」门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
+const exportGate = denyState("proxy_oplog_export");
 
 const filter = reactive({
   from: "", // "YYYY-MM-DD"，空为不限
@@ -165,7 +168,9 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
         <el-tooltip v-else-if="exportMsg" :content="exportMsg.text" placement="top">
           <span :style="{ fontSize: '12px', color: exportMsg.ok ? 'var(--ok)' : 'var(--err)', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">{{ exportMsg.text }}</span>
         </el-tooltip>
-        <button class="btn-outline" @click="doExport">导出 Excel</button>
+        <el-tooltip :content="exportGate.reason || ''" :disabled="!exportGate.disabled" placement="top">
+          <button class="btn-outline" :disabled="exportGate.disabled" @click="doExport">导出 Excel</button>
+        </el-tooltip>
       </div>
 
       <div class="card">

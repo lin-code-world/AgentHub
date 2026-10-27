@@ -16,9 +16,12 @@
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
+import { denyState } from "../../api/caps";
 import type { AdminAccessInfo } from "../../api/ipc";
 
 const app = useAppStore();
+/** 令牌查看 / 复制 / 修改的命令门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
+const tokenGate = denyState("admin_access_info", "admin_set_token");
 
 const info = ref<AdminAccessInfo | null>(null);
 const tokenShown = ref(false);
@@ -121,12 +124,14 @@ async function saveToken() {
           <div class="set-name">访问令牌</div>
           <div class="set-desc">登录管理页用；修改后浏览器需重新登录</div>
         </div>
-        <div class="lan-ctl">
-          <span class="mono lan-text">{{ tokenShown ? info?.token || "" : tokenMask }}</span>
-          <button class="btn btn-ghost" :disabled="!info" @click="tokenShown = !tokenShown">{{ tokenShown ? "隐藏" : "查看" }}</button>
-          <button class="btn btn-ghost" :disabled="!info" @click="info && copyText(info.token, '令牌')">复制</button>
-          <button class="btn btn-ghost" @click="startEdit">修改</button>
-        </div>
+        <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top">
+          <div class="lan-ctl">
+            <span class="mono lan-text">{{ tokenShown ? info?.token || "" : tokenMask }}</span>
+            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled" @click="tokenShown = !tokenShown">{{ tokenShown ? "隐藏" : "查看" }}</button>
+            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled" @click="info && copyText(info.token, '令牌')">复制</button>
+            <button class="btn btn-ghost" :disabled="tokenGate.disabled" @click="startEdit">修改</button>
+          </div>
+        </el-tooltip>
       </div>
     </div>
 
@@ -138,7 +143,7 @@ async function saveToken() {
         </div>
         <div class="lan-ctl">
           <input v-model="newToken" class="input mono" style="width: 240px" placeholder="输入新令牌（≥16 位）" @keyup.enter="saveToken" />
-          <button class="btn btn-primary" @click="saveToken">保存</button>
+          <button class="btn btn-primary" :disabled="tokenGate.disabled" @click="saveToken">保存</button>
           <button class="btn btn-ghost" @click="editing = false">取消</button>
         </div>
       </div>

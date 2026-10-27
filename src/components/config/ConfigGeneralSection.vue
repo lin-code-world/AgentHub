@@ -4,6 +4,7 @@
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
+import { denyState } from "../../api/caps";
 // 版本号唯一事实源 = 仓库根 package.json 的 version（Electron 打包态 app.getVersion 同源）
 import pkg from "../../../package.json";
 
@@ -11,6 +12,8 @@ const app = useAppStore();
 const version = `v${pkg.version}`;
 const dataDir = ref("");
 const isPortable = ref(false);
+/** 「打开目录」门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
+const dataDirGate = denyState("open_data_dir");
 
 /** 仅在设置弹窗 · 通用可见时刷新数据（数据目录保持最新） */
 const active = computed(() => app.settingsOpen && app.settingsTab === "general");
@@ -105,7 +108,9 @@ async function openDataDir() {
           <div class="set-name">数据目录</div>
           <div class="set-desc">{{ dataDir || "（浏览器预览）" }}</div>
         </div>
-        <button class="btn btn-ghost" @click="openDataDir">打开目录</button>
+        <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
+          <button class="btn btn-ghost" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button>
+        </el-tooltip>
       </div>
       
     </div>
