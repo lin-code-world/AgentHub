@@ -82,11 +82,11 @@ function registerCommands(handle, deps) {
   }));
 
   // ===== 框架：其它 =====
-  handle("get_app_version", () => api(deps, "app").getVersion());
+  handle("get_app_version", wrap(() => api(deps, "app").getVersion()));
   handle("get_data_dir", () => config.dataDir());
-  handle("open_data_dir", async () => {
+  handle("open_data_dir", wrap(async () => {
     await api(deps, "shell").openPath(config.dataDir());
-  });
+  }));
   // 便携版判断：开机自启提示用（便携副本是临时解压路径，注册自启无意义）
   handle("get_is_portable", () => config.isPortable());
   handle("browse_dir", wrap(async () => {

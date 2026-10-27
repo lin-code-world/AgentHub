@@ -54,15 +54,52 @@ ok('denyReason("proxy_pool") 为空（非 deny 命令无原因）', commandTable
 
 ok("任务 3 的管理命令在命令表里（桌面形态）", commands.has("admin_access_info") && commands.has("admin_set_token"), `admin_access_info=${commands.has("admin_access_info")} admin_set_token=${commands.has("admin_set_token")}`);
 
-console.log("");
-console.log(`RESULT: ${pass} passed / ${fail} failed`);
-if (bad.length) {
-  console.log("失败项：");
-  for (const b of bad) console.log("  - " + b);
-}
-try {
-  fs.rmSync(SANDBOX, { recursive: true, force: true });
-} catch {
-  /* 沙箱残留不影响结论 */
-}
-process.exit(fail ? 1 : 0);
+(async () => {
+  // 取 electron 的命令抛错时必须走 wrap 的 fail 收口（返回 { ok:false }），不能裸抛 reject 到调用方：
+  // 注入必抛的 deps 模拟 electron 不可用，handler 没包 wrap 时这里会接到裸抛
+  const boom = {
+    app: {
+      getVersion: () => {
+        throw new Error("模拟 electron 不可用");
+      },
+    },
+    shell: {
+      openPath: async () => {
+        throw new Error("模拟 electron 不可用");
+      },
+    },
+    dialog: {
+      showOpenDialog: async () => {
+        throw new Error("模拟 electron 不可用");
+      },
+    },
+    BrowserWindow: { getAllWindows: () => [] },
+    nativeTheme: {},
+  };
+  const boomTable = commandTable.collect({ deps: boom });
+  for (const cmd of ["get_app_version", "open_data_dir", "browse_dir"]) {
+    try {
+      const r = await boomTable.get(cmd)(null, {});
+      ok(`${cmd} 抛错时走 fail 收口（不裸抛）`, !!r && r.ok === false, JSON.stringify(r));
+    } catch (e) {
+      ok(`${cmd} 抛错时走 fail 收口（不裸抛）`, false, "裸抛: " + ((e && e.message) || e));
+    }
+  }
+  // 补 wrap 不改成功路径的返回值：get_app_version 仍回版本字符串
+  const good = commandTable.collect({ deps: { app: { getVersion: () => "1.2.3" } } });
+  const ver = await good.get("get_app_version")(null, {});
+  ok("get_app_version 成功路径仍返回版本字符串（wrap 不改返回值）", ver === "1.2.3", JSON.stringify(ver));
+
+  console.log("");
+  console.log(`RESULT: ${pass} passed / ${fail} failed`);
+  if (bad.length) {
+    console.log("失败项：");
+    for (const b of bad) console.log("  - " + b);
+  }
+  try {
+    fs.rmSync(SANDBOX, { recursive: true, force: true });
+  } catch {
+    /* 沙箱残留不影响结论 */
+  }
+  process.exit(fail ? 1 : 0);
+})();
