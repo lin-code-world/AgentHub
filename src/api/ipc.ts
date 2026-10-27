@@ -32,7 +32,6 @@ export type {
 import { mock } from "./mock";
 import { denyReason, isWebTransport } from "./caps";
 import { subscribeWebEvents } from "./events";
-import { remoteActive } from "./remote";
 import { webInvoke } from "./web-transport";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -89,26 +88,8 @@ function unwrapResult<T>(cmd: string, res: unknown): T {
   return res as T;
 }
 
-/** 框架级命令永远走本地主进程：远程模式下也不能转发（否则「拉目标列表」会被转发到远程，成环） */
-const LOCAL_ONLY_CMDS = new Set([
-  "remote_targets_list",
-  "remote_targets_save",
-  "remote_targets_delete",
-  "remote_targets_activate",
-  "remote_test",
-]);
-
 async function call<T>(cmd: string, args?: Record<string, unknown>, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<T> {
   if (isElectron()) {
-    // 远程模式：命令经主进程转发到远程网关（令牌不进渲染进程，地址校验也在主进程）
-    if (remoteActive() && !LOCAL_ONLY_CMDS.has(cmd)) {
-      const res = await invokeWithTimeout(
-        window.agenthub!.invoke("remote_invoke", { cmd, args: toPlain(args) }),
-        cmd,
-        timeoutMs + 5_000, // 远程多一跳网络往返，看门狗同步放宽
-      );
-      return unwrapResult<T>(cmd, res);
-    }
     const res = await invokeWithTimeout(window.agenthub!.invoke(cmd, toPlain(args)), cmd, timeoutMs);
     return unwrapResult<T>(cmd, res);
   }
@@ -383,15 +364,3 @@ export const proxyRulesList = () => call<ProxyRuleFile[]>("proxy_rules_list");
 export const proxyOpenRulesDir = () => call<{ ok: boolean }>("proxy_open_rules_dir");
 export const proxyOpenDataDir = () => call<{ ok: boolean }>("proxy_open_data_dir");
 export const proxyVaultStatus = () => call<{ encrypted: boolean; driver: string; dataDir: string }>("proxy_vault_status");
-
-// ===== 远程网关（桌面连远程 Docker 版）=====
-// 目标 CRUD 与切换永远走本地主进程（call 的 LOCAL_ONLY_CMDS）；业务命令在远程模式下由
-// call() 自动经 remote_invoke 转发，页面无感知
-type RemoteTargetsResult = { activeId: string; targets: import("../types").RemoteTarget[] };
-export const remoteTargetsList = () => call<RemoteTargetsResult>("remote_targets_list");
-export const remoteTargetsSave = (p: { id?: string; alias: string; baseUrl: string; token: string }) =>
-  call<RemoteTargetsResult>("remote_targets_save", p as unknown as Record<string, unknown>);
-export const remoteTargetsDelete = (id: string) => call<RemoteTargetsResult>("remote_targets_delete", { id });
-export const remoteTargetsActivate = (id: string) => call<RemoteTargetsResult>("remote_targets_activate", { id });
-export const remoteTest = (p: { id?: string; baseUrl?: string; token?: string }) =>
-  call<import("../types").RemoteTestResult>("remote_test", p as unknown as Record<string, unknown>, 15000);

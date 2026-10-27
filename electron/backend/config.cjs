@@ -108,9 +108,6 @@ function defaultConfig() {
     theme: "dark",
     // 动效（fx*）与软件更新（update）字段已随对应功能移除；
     // 旧配置里的残留字段由 loadConfig 剔除，无需迁移
-    /** 远程网关实例（桌面连远程 Docker 版）：tokenEnc 以 enc:v1: 加密落盘，列表接口只回 hasToken */
-    remoteTargets: [],
-    remoteActiveId: "local",
     // 后台与调度
     schedule: {
       // 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务（反代网关）照常运行，
@@ -276,6 +273,10 @@ function loadConfig() {
   delete merged.webdav;
   delete merged.webdavShared;
   if (merged.proxy) delete merged.proxy.poolsyncSchedule;
+  // 远程实例（桌面连远程 Docker 版的目标管理与命令转发）已随功能移除：
+  // remoteTargets / remoteActiveId 与上面同理，旧配置残留字段一律剔除，不再读写
+  delete merged.remoteTargets;
+  delete merged.remoteActiveId;
   return merged;
 }
 
@@ -321,10 +322,6 @@ function saveConfigFromUI(cfg) {
     for (const k of OUT_OF_BAND_PROXY_FIELDS) {
       if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
     }
-    // 远程网关目标同样磁盘优先：唯一写入口是 remote_targets_save/delete/activate（主进程读改写），
-    // 设置页整份提交携带的是启动时的旧快照，不保护会像 issue #90 一样把变更冲回去
-    if (disk && Array.isArray(disk.remoteTargets)) next.remoteTargets = disk.remoteTargets;
-    if (disk && typeof disk.remoteActiveId === "string") next.remoteActiveId = disk.remoteActiveId;
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
   return saveConfig(next);
 }

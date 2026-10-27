@@ -96,13 +96,6 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_open_rules_dir",
   "proxy_open_data_dir",
   "proxy_vault_status",
-  // ===== 远程网关（桌面连远程 Docker 版）=====
-  "remote_targets_list",
-  "remote_targets_save",
-  "remote_targets_delete",
-  "remote_targets_activate",
-  "remote_test",
-  "remote_invoke",
 ]);
 
 contextBridge.exposeInMainWorld("agenthub", {
