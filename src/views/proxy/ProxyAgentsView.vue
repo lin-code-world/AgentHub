@@ -10,8 +10,7 @@
 -->
 <!-- 反代网关 · 号池：顶部三渠道主按钮（各自独立成区，选中即点亮），下方整块切换为当前渠道面板。
      面板内自带工具栏（策略 / 添加账号 / 一键签到或领加油包 / 刷新），全部只作用于当前渠道，互不关联；
-     签到结果按渠道各自记忆；账号经四途径添加（OAuth / 本机导入 / 文件 / 粘贴）。
-     号池多设备 WebDAV 同步已移至独立「号池同步」页 -->
+     签到结果按渠道各自记忆；账号经四途径添加（OAuth / 本机导入 / 文件 / 粘贴） -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
@@ -22,6 +21,7 @@ import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
 import { denyState } from "../../api/caps";
+import { loadPhaseOf } from "./loadState";
 import { solveCaptcha, cancelCaptcha, CaptchaCancelledError } from "../../utils/aliyunCaptcha";
 
 const app = useAppStore();
@@ -444,6 +444,8 @@ function openStrategy(ch: ProxyChannelView) {
 }
 
 const loading = ref(false);
+/** 最近一次号池拉取的失败原因：空表时要区分「确实没有账号」与「加载失败」，失败给重试（I6） */
+const loadErr = ref("");
 const zcodeHasReward = ref(false);
 
 async function checkZcodeReward() {
@@ -475,6 +477,7 @@ async function refresh() {
   if (!pool.value.length) loading.value = true;
   try {
     pool.value = await api.proxyPool();
+    loadErr.value = "";
     // 渠道启闭：当前渠道被关闭时回落第一个启用渠道（上游启闭后号池页立即跟随）
     if (pool.value.length && !pool.value.some((c) => c.id === activeChannel.value)) {
       activeChannel.value = pool.value[0].id as ProxyChannelId;
@@ -482,10 +485,17 @@ async function refresh() {
     ideStatus.value = await api.proxyIdeStatus().catch(() => null);
     void checkZcodeReward();
   } catch (e) {
+    loadErr.value = String((e as Error).message || e);
     toast(String((e as Error).message || e), "err");
   } finally {
     loading.value = false;
   }
+}
+
+/** 空态三态（按渠道算）：骨架屏负责 loading 观感，这里区分「确实没有账号」与「加载失败」——
+ *  后者必须能重试，不能和空号池显示成同一句话（I6） */
+function poolPhaseOf(ch: ProxyChannelView) {
+  return loadPhaseOf({ loading: loading.value, error: loadErr.value, count: ch.accounts.length });
 }
 
 /** 右上角刷新按钮：只刷当前渠道（不是全量），结果走 Toast 提示 */
@@ -1446,7 +1456,9 @@ async function onFilePicked(e: Event) {
   fileBusy.value = true;
   fileMsg.value = "";
   try {
-    const r = await api.proxyAccountImportText(addChannel.value, await file.text());
+    // 去掉 UTF-8 BOM：Windows 记事本 / 部分导出工具会在文件头写 \uFEFF，JSON.parse 会直接报错
+    const text = (await file.text()).replace(/^\uFEFF/, "");
+    const r = await api.proxyAccountImportText(addChannel.value, text);
     fileErr.value = !r.ok;
     fileMsg.value = r.message || (r.ok ? "导入完成" : "导入失败");
     if (r.ok) await refresh();
@@ -1552,6 +1564,9 @@ async function copyErr() {
 // 事件合流：批量签到/额度刷新时主进程逐账号广播 credits 事件，逐条全量 refresh 会打满 IPC
 // （事件风暴 → 刷新风暴）；合流后同刻只在跑一次、间隔内合并为末尾一次
 const scheduleRefresh = coalesceAsync(refresh, 1200);
+// 号池结构变化（I5）：账号增删改 / 导入落库 / 渠道启闭后后端发 {type:"pool"}，
+// 与余额类噪音分开走 2 秒节流——桌面改号后浏览器号池页自动跟上，又不会被额度刷新刷屏
+const schedulePoolRefresh = coalesceAsync(refresh, 2000);
 
 onMounted(() => {
   nowTimer = window.setInterval(tickNow, 1000);
@@ -1571,6 +1586,12 @@ onMounted(() => {
         addOpen.value = false;
         refresh();
       }
+    } else if (p.type === "pool") {
+      // 号池结构变了（增删改 / 导入 / 渠道启闭）：进号池页才重拉，后台页切回时 watch(active) 会补
+      if (active.value) schedulePoolRefresh();
+    } else if (p.type === "resync") {
+      // SSE 断线重连后的补偿信号：断线期间的 pool 事件可能全丢了，补一次全量
+      if (active.value) schedulePoolRefresh();
     } else if (p.type === "credits" || p.type === "status" || p.type === "channel-health") {
       if (active.value) scheduleRefresh(); // 页面不在前台就不拉不渲染，切回时 watch(active) 会补一次
     }
@@ -1579,6 +1600,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (offEvent) offEvent();
   scheduleRefresh.cancel();
+  schedulePoolRefresh.cancel();
   if (nowTimer) clearInterval(nowTimer);
   if (smsTimer) clearTimeout(smsTimer);
   cancelCaptcha(); // 弹窗外销毁时滑块等待也不该悬挂
@@ -1817,7 +1839,9 @@ onUnmounted(() => {
               </template>
               <tr v-else-if="!ch.accounts.length">
                 <td colspan="7" style="text-align: center; color: var(--text-3); padding: 24px 0">
-                  号池为空 —— 点「添加账号」：OAuth 登录 / 从本机软件导入 / 文件导入 / 手动粘贴
+                  <template v-if="poolPhaseOf(ch) === 'failed'">加载失败：{{ loadErr }} <button class="btn-link btn-sm" @click="refresh">重试</button></template>
+                  <template v-else-if="poolPhaseOf(ch) === 'loading'">加载中…</template>
+                  <template v-else>号池为空 —— 点「添加账号」：OAuth 登录 / 从本机软件导入 / 文件导入 / 手动粘贴</template>
                 </td>
               </tr>
               <template v-else>
@@ -3371,8 +3395,6 @@ onUnmounted(() => {
   width: 100%;
   max-width: 420px;
 }
-
-/* 号池同步卡片已移至独立「号池同步」页；此处样式不再使用 */
 
 /* ===== 签到结果弹窗：逐账号一行，多行限高滚动 ===== */
 .checkin-head {

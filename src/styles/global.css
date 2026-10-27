@@ -249,6 +249,35 @@ body {
   grid-template-areas: "tabs" "main";
 }
 
+/* ===== 断线横幅（I6）：Web 托管形态 SSE 断开时盖在窗口顶部一条 =====
+   固定定位不参与 .app 的 grid 轨道（加为一个 grid item 会把侧栏挤下去），
+   只提示不遮挡操作；恢复后由 v-if 移除 */
+.conn-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: var(--r-pill);
+  border: 1px solid rgba(229, 180, 84, 0.45);
+  background: var(--warn-dim);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+.conn-banner-lost {
+  border-color: rgba(242, 109, 109, 0.45);
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
 /* ===== 主舞台 ===== */
 .main {
   grid-area: main;

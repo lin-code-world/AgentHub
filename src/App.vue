@@ -31,6 +31,10 @@ const app = useAppStore();
 
 let dispose: (() => void)[] = [];
 
+/** Web 事件流连接状态（I6）：空串 = 正常；断开时顶部横幅提示「正在重连」，
+ *  恢复（含重连成功）后由 events.ts 给各订阅方补发 {type:"resync"} 触发一次全量刷新 */
+const connState = ref<"" | "reconnecting" | "lost">("");
+
 onMounted(() => {
   app.load();
   // 更新事件全局唯一监听：main 侧（托盘直写配置、浏览器端 proxy_config_save）的广播（config-changed）→
@@ -42,6 +46,10 @@ onMounted(() => {
     }
   });
   if (offConfigChanged) dispose.push(offConfigChanged);
+  const offConn = api.onConnectionState((s) => {
+    connState.value = s === "connected" ? "" : s;
+  });
+  if (offConn) dispose.push(offConn);
 });
 onUnmounted(() => {
   dispose.forEach((fn) => fn());
@@ -77,6 +85,14 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
        provider 自身不渲染 DOM 节点（config-provider 直接 renderSlot default），
        包一层不改变结构与 .app 的背景层叠。 -->
   <div class="app" :class="{ 'side-collapsed': app.sideCollapsed }">
+    <!-- 断线横幅（I6）：只盖顶部一条，不挡操作；恢复（connected）后自动消失，
+         各页由 events.ts 重连补发的 {type:"resync"} 触发一次全量刷新 -->
+    <div v-if="connState === 'reconnecting'" class="conn-banner" role="status" aria-live="polite">
+      <i class="ph ph-wifi-slash"></i>与服务器的连接已断开，正在重连…
+    </div>
+    <div v-else-if="connState === 'lost'" class="conn-banner conn-banner-lost" role="alert">
+      <i class="ph ph-lock-key"></i>登录已失效，请重新输入管理令牌
+    </div>
     <Sidebar v-if="!app.sideCollapsed" />
     <PageTabs />
     <main class="main glass">

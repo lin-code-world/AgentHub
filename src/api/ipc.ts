@@ -32,7 +32,7 @@ export type {
 
 import { mock } from "./mock";
 import { denyReason, isWebTransport } from "./caps";
-import { subscribeWebEvents } from "./events";
+import { onWebEventState, subscribeWebEvents, type WebEventState } from "./events";
 import { webInvoke } from "./web-transport";
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -131,6 +131,13 @@ export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | un
   if (window.agenthub?.onUpdateEvent) return window.agenthub.onUpdateEvent((payload) => cb(payload));
   if (isWebTransport()) return subscribeWebEvents(cb);
   return undefined;
+}
+
+/** 订阅 Web 事件流的连接状态（I6 断线横幅）：桌面窗口没有 SSE，直接返回 undefined。
+ *  容器的 Bearer 流与桌面局域网控制台的 ECDH 流共用同一套状态机（events.ts） */
+export function onConnectionState(cb: (s: WebEventState) => void): (() => void) | undefined {
+  if (!isWebTransport() || window.agenthub) return undefined;
+  return onWebEventState(cb);
 }
 
 // ===== 反代网关：服务启停 / 状态 =====

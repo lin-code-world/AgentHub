@@ -20,6 +20,7 @@ import { useAppStore } from "../../stores/app";
 import { fmtInt, fmtK, fmtMs, fmtTime, fmtDate, fmtAgo, channelName, statusCls } from "./format";
 import { coalesceAsync } from "../../utils/timing";
 import { toast as ElMessage } from "../../utils/toast";
+import { loadPhaseOf } from "./loadState";
 import StatsTrendChart from "../../components/proxy/StatsTrendChart.vue";
 import StatsDonutChart from "../../components/proxy/StatsDonutChart.vue";
 
@@ -112,6 +113,8 @@ const detail = ref<ProxyStatsDetail | null>(null);
 const page = ref(1);
 const pageSize = 15;
 const err = ref("");
+/** 首屏 / 切档时在飞：空表期间显示「加载中」而不是「当前区间暂无数据」（I6 空态三态） */
+const busy = ref(false);
 const filters = reactive({ key: "", model: "", channel: "", status: "" }); // key 存 Key 的 keyId（明细筛选是下拉精确选择）
 
 const s = computed(() => ov.value?.summary);
@@ -140,6 +143,9 @@ const topRows = computed(() => {
 const keyRows = computed(() => [...(ov.value?.keys || [])].sort((a, b) => b.tokens - a.tokens));
 
 const totalPages = computed(() => Math.max(1, Math.ceil((detail.value?.total || 0) / pageSize)));
+/** 空态三态：加载中 / 确实没有请求 / 加载失败（失败给「重试」，别把断网当成「当前区间无数据」）。
+ *  是否为空看「概览请求数 + 明细总数」，任一有数就按有数据处理 */
+const phase = computed(() => loadPhaseOf({ loading: busy.value, error: err.value, count: (s.value?.req || 0) + (detail.value?.total || 0) }));
 
 const rateCls = (r: number) => (r < 95 ? "rate-bad" : r < 99 ? "rate-warn" : "");
 
@@ -174,7 +180,12 @@ async function loadDetail() {
 
 async function reload() {
   nowTick.value = Date.now(); // 先推进时间锚再取数：手动刷新要看到「此刻」为止的数据
-  await Promise.all([refresh(), loadDetail()]);
+  busy.value = true;
+  try {
+    await Promise.all([refresh(), loadDetail()]);
+  } finally {
+    busy.value = false;
+  }
 }
 
 function goPage(p: number) {
@@ -271,10 +282,12 @@ let offEvent: (() => void) | undefined;
 
 onMounted(() => {
   reload();
-  // 明细/趋势/排行全部实时直查 usage_requests 流水，事件即变更信号
+  // 明细/趋势/排行全部实时直查 usage_requests 流水，事件即变更信号；
+  // resync = SSE 断线重连后的补偿信号（断线期间漏掉的事件用一次全量刷新补上）
   offEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string };
-    if (p.event !== "proxy" || p.type !== "stats") return;
+    if (p.event !== "proxy") return;
+    if (p.type !== "stats" && p.type !== "resync") return;
     if (!active.value) return;
     scheduleLiveRefresh();
   });
@@ -311,7 +324,7 @@ onUnmounted(() => {
       </div>
 
       <div v-if="err" class="card err-card">
-        <div class="set-desc err-text">{{ err }}</div>
+        <div class="set-desc err-text">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></div>
       </div>
 
       <!-- KPI：区间口径（与下方所有模块同一区间） -->
@@ -398,7 +411,7 @@ onUnmounted(() => {
                 <td class="mono">{{ fmtMs(r.ttftAvg) }}</td>
               </tr>
               <tr v-if="!topRows.length">
-                <td colspan="8" class="empty-cell">当前时间区间暂无请求数据</td>
+                <td colspan="8" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前时间区间暂无请求数据</template></td>
               </tr>
             </tbody>
           </table>
@@ -436,7 +449,7 @@ onUnmounted(() => {
                 <td><button class="btn btn-sm" @click="drillToKey(k)">筛选</button></td>
               </tr>
               <tr v-if="!keyRows.length">
-                <td colspan="9" class="empty-cell">当前时间区间暂无 Key 用量</td>
+                <td colspan="9" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前时间区间暂无 Key 用量</template></td>
               </tr>
             </tbody>
           </table>
@@ -509,7 +522,7 @@ onUnmounted(() => {
                 <td class="mono">{{ fmtMs(r.latencyMs) }}</td>
               </tr>
               <tr v-if="!(detail?.rows || []).length">
-                <td colspan="11" class="empty-cell">当前筛选条件下没有请求明细（改一下筛选或点「重置」）</td>
+                <td colspan="11" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前筛选条件下没有请求明细（改一下筛选或点「重置」）</template></td>
               </tr>
             </tbody>
           </table>

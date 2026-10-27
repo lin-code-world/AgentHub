@@ -18,6 +18,7 @@ import { denyState } from "../../api/caps";
 import { coalesceAsync } from "../../utils/timing";
 import { applyIncrement, isSnapshotCurrent, planIncrement, snapshotKey } from "../../utils/oplogIncrement";
 import type { IncrementSnapshot } from "../../utils/oplogIncrement";
+import { loadPhaseOf } from "./loadState";
 import type { ProxyOpLogRow } from "../../types";
 
 const app = useAppStore();
@@ -54,6 +55,10 @@ let rowsKey = "";
 /** 全量在飞标志：期间增量让路（不递增序号、不改 rows），防止增量抢序号把全量挤成过期响应、旧行残留不自愈（Ruling 35） */
 let fullLoading = false;
 const error = ref("");
+/** 全量在飞（首屏 / 筛选切换）：空表期间要显示「加载中」而不是「没有日志」（I6 空态三态） */
+const busy = ref(false);
+/** 空态三态：加载中 / 确实没有 / 加载失败（失败给重试入口，别把断网写成「暂无数据」） */
+const phase = computed(() => loadPhaseOf({ loading: busy.value, error: error.value, count: rows.value.length }));
 const page = ref(0);
 const pageSize = 20;
 const opOptions = ref<string[]>([]);
@@ -83,6 +88,7 @@ function formatTs(ts: number) {
 async function load() {
   const issued = beginFetch();
   fullLoading = true;
+  busy.value = true;
   const { from, to } = rangeToMs();
   try {
     const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, limit: pageSize, offset: page.value * pageSize });
@@ -97,7 +103,10 @@ async function load() {
     error.value = e instanceof Error ? e.message : "加载失败";
   } finally {
     // 只有最新一次全量收尾才放行增量：并发 load 时提前清标志，会让增量插进未完成的全量里
-    if (issued.seq === fetchSeq) fullLoading = false;
+    if (issued.seq === fetchSeq) {
+      fullLoading = false;
+      busy.value = false;
+    }
   }
 }
 
@@ -143,10 +152,16 @@ let offEvent: (() => void) | undefined;
 onMounted(() => {
   load();
   loadOps();
-  // 新日志落库（后端 300ms 节流为 {type:"oplog"}，事件体不带内容）→ 拉增量，页面不可见不处理
+  // 新日志落库（后端 300ms 节流为 {type:"oplog"}，事件体不带内容）→ 拉增量，页面不可见不处理；
+  // resync = SSE 断线重连后的补偿信号（断线期间可能漏了事件，也可能被清理过），走一次全量
   offEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string };
-    if (p.event !== "proxy" || p.type !== "oplog") return;
+    if (p.event !== "proxy") return;
+    if (p.type === "resync") {
+      if (active.value) load();
+      return;
+    }
+    if (p.type !== "oplog") return;
     if (!active.value) return;
     scheduleLiveRefresh();
   });
@@ -272,7 +287,11 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
                 </td>
               </tr>
               <tr v-if="!rows.length">
-                <td colspan="6" class="empty">当前筛选条件下没有日志{{ error ? "" : "（改一下筛选或点「刷新」）" }}</td>
+                <td colspan="6" class="empty">
+                  <template v-if="phase === 'loading'">加载中…</template>
+                  <template v-else-if="phase === 'failed'">加载失败：{{ error }} <button class="btn-link btn-sm" @click="load">重试</button></template>
+                  <template v-else>当前筛选条件下没有日志（改一下筛选或点「刷新」）</template>
+                </td>
               </tr>
             </tbody>
           </table>

@@ -22,7 +22,7 @@
 //   S6  响应密文被篡改 → GCM 解密失败（清会话 + 跳登录）
 //   S7  401 → 清会话 + 可注入跳转函数被调，错误文案不泄漏校验细节
 //   S8  SSE 帧 seq 严格递增：跳帧 / 重放被拒，新解码器基线清零
-//   S9  SSE 重连后 seq 基线清零（重连首帧 seq=1 不被误判跳帧，Ruling 19）
+//   S9  SSE 重连后 seq 基线清零（重连首帧 seq=1 不被误判跳帧），且重连成功补发一条 {type:"resync"}
 //   S10 一次性签名 eventsUrl 可连真实 /api/events，首帧 seq=1 可解密
 //   S11 本地会话过期判断（登录时间超 12 小时 → hasSession false）
 //   S12 旧版令牌存储（agenthub.adminToken）登录后被清除
@@ -312,16 +312,22 @@ const fakeTable = {
   // ===== S9：SSE 重连后 seq 基线清零（连接 2 的首帧 seq=1 不被误判跳帧） =====
   console.log("S9 SSE 重连基线清零");
   const seen = [];
+  const resyncs = [];
   let conns = 0;
   adminCrypto.__setFetch(async () => {
     conns++;
     return sseStreamResponse(conns === 1 ? [frameOf(1, "hello"), frameOf(2)] : [frameOf(1, "hello")]);
   });
-  const unsub = eventsApi.subscribeWebEvents((p) => seen.push(p));
+  const unsub = eventsApi.subscribeWebEvents((p) => {
+    // 重连成功时框架会先补发一条 {type:"resync"}（无 seq，I6 的断线补偿信号）：单独收集，不干扰 seq 断言
+    if (p && p.type === "resync") resyncs.push(p);
+    else seen.push(p);
+  });
   await waitFor(() => seen.length >= 3, 6000);
   unsub();
   adminCrypto.__setFetch(relayFetch);
   ok("S9 重连后 seq 基线清零：重连首帧（seq=1）被接受", seen.length >= 3 && seen[2] && seen[2].seq === 1, `conns=${conns} seqs=${JSON.stringify(seen.map((p) => p && p.seq))}`);
+  ok("S9 重连成功补发一条 {type:'resync'}（I6 断线补偿）", resyncs.length === 1, `resyncs=${JSON.stringify(resyncs)}`);
 
   // ===== S11：本地会话过期判断 =====
   console.log("S11 本地会话过期");

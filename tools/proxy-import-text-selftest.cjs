@@ -150,6 +150,9 @@ async function main() {
     ok("上传入口只接受 .json", /accept="[^"]*\.json/.test(vue));
     ok("前端调用 proxyAccountImportText（读文本后导入）", /proxyAccountImportText/.test(vue));
     ok("前端不自写解析入库（JSON.parse 不喂文件内容）", !/JSON\.parse\(\s*(await\s+)?file/i.test(vue));
+    // 顺手项：文件头的 UTF-8 BOM（Windows 记事本 / 部分导出工具会写）必须在交给后端前剥掉，
+    // 否则 JSON.parse 直接报错、用户只看到「解析失败」却看不出文件没问题
+    ok("前端读文件后剥掉 UTF-8 BOM", /\.replace\(\/\^\\uFEFF\//.test(vue), "未找到 \\uFEFF 剥离");
     const deny = String(commandTable.denyReason("proxy_account_import_file", "browser"));
     ok("Ruling 29：browser 文案改指「选择 JSON 文件上传」", /选择 JSON 文件上传/.test(deny), deny);
     ok("Ruling 29：browser 文案不提前承诺 ZIP", !/zip/i.test(deny), deny);
