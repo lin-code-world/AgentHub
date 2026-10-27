@@ -205,6 +205,17 @@ export function clearSession(): void {
   }
 }
 
+/** 只清旧版明文令牌（升级残留）：桌面浏览器形态启动时无条件调用，
+ *  不必等一次登录成功才删——旧键放着的就是完整管理令牌（I4）。
+ *  容器形态（Bearer 登录）仍需要这个键，调用方必须先判形态 */
+export function clearLegacyToken(): void {
+  try {
+    storageOf()?.removeItem(LEGACY_TOKEN_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 会话失效收口：清会话 → 回登录页（reload 后 main.ts 看到无会话即挂登录页）→ 抛统一文案。
  *  并发请求同时失效会各自触发一次跳转（reload 幂等），不另设闸。 */
 export function handleAuthLost(): never {

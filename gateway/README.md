@@ -92,6 +92,8 @@ curl -s http://127.0.0.1:9528/api/status                 # 版本 / 平台 / 加
 > 现状说明：容器的管理 REST 路由（`gateway/src/index.cjs`）与桌面版局域网网页控制台的管理服务
 > （`electron/backend/admin.cjs`）是**两套独立实现**——共享同一份网关核心，管理面各维护一份路由与鉴权
 > （容器走 bearer token，桌面走 ECDH 会话加密），能力边界与文案以此文档描述的容器口径为准。
+> 前端按 `/api/capabilities` 的 `form` 字段选通道：`container` = Bearer + 明文 RPC/SSE，
+> `browser` = ECDH 会话 + 密文；两套实现刻意不互相复用。
 
 ### 4.2 改端口
 

@@ -9,12 +9,17 @@
   ============================================================
 -->
 <script setup lang="ts">
-// 网关托管形态的登录页：ECDH 登录协商（adminCrypto.login）→ 成功后重进主界面。
-// 令牌只在登录瞬间参与密钥派生与签名，用完即丢，不落 localStorage。
+// 网关托管形态的登录页，按服务端形态分流（Ruling 36）：
+//  · container（gateway/src/index.cjs）：Bearer 校验（带令牌打一次 /api/status），令牌存 localStorage
+//  · browser（electron/backend/admin.cjs）：ECDH 登录协商（adminCrypto.login），令牌只在登录瞬间参与
+//    密钥派生与签名，用完即丢，不落 localStorage
 // 独立挂载（不经主 App）：主界面挂载即发一堆请求，未登录会全 401 把界面打花
 import { ref } from "vue";
 import { login } from "../api/adminCrypto";
+import { isContainerWeb } from "../api/caps";
+import { loginWithToken } from "../api/web-transport";
 
+const containerForm = isContainerWeb();
 const token = ref("");
 const busy = ref(false);
 const error = ref("");
@@ -25,7 +30,8 @@ async function submit() {
   busy.value = true;
   error.value = "";
   try {
-    await login(t);
+    if (containerForm) await loginWithToken(t);
+    else await login(t);
     window.location.reload();
   } catch (e) {
     error.value = (e as Error).message || "登录失败";
@@ -39,7 +45,7 @@ async function submit() {
   <div class="login-wrap">
     <form class="login-card" @submit.prevent="submit">
       <div class="login-title">AgentApiGateway 网关控制台</div>
-      <div class="login-sub">输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只用于登录验证，不会保存在浏览器</div>
+      <div class="login-sub">{{ containerForm ? "输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只保存在本机浏览器，用于后续请求鉴权" : "输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只用于登录验证，不会保存在浏览器" }}</div>
       <input v-model="token" type="password" class="login-input" placeholder="管理令牌" autocomplete="current-password" autofocus />
       <button type="submit" class="login-btn" :disabled="busy || !token.trim()">
         {{ busy ? "验证中…" : "进入控制台" }}

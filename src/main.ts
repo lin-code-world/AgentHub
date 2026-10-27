@@ -11,8 +11,9 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import { isElectron } from "./api/ipc";
-import { probeCaps } from "./api/caps";
-import { hasSession } from "./api/adminCrypto";
+import { isContainerWeb, probeCaps } from "./api/caps";
+import { clearLegacyToken, hasSession } from "./api/adminCrypto";
+import { getToken } from "./api/web-transport";
 // 服务式 API 不经模板渲染，插件接管不到它们的样式：全库只用到这两个（② 段重数）。
 // 中文 locale 的注入点随全量注册一起没了，改由 App.vue 的 <el-config-provider> 承接。
 import "element-plus/es/components/message/style/css";
@@ -30,14 +31,20 @@ const app = createApp(App);
 app.use(createPinia());
 
 // 启动形态三选一：Electron 直接挂载（IPC）；浏览器先探测网关托管（有后端走 RPC，
-// 无本地会话或会话已过期先挂登录页）；纯静态预览（dev:web）回落挂载走 mock
+// 无本地会话或会话已过期先挂登录页）；纯静态预览（dev:web）回落挂载走 mock。
+// 托管形态内部再按 form 分流（Ruling 36）：容器走 Bearer 令牌，桌面局域网控制台走 ECDH 会话
 async function bootstrap() {
   if (isElectron()) {
     app.mount("#app");
     return;
   }
   const caps = await probeCaps();
-  if (caps && !hasSession()) {
+  // 升级残留清理（I4）：桌面浏览器形态改用 ECDH 会话后不再需要明文令牌，探测到形态即无条件删掉
+  // 旧键——不等一次成功登录才删（那时令牌已经在浏览器里躺了整个升级周期）。
+  // 容器形态仍靠这个键做 Bearer 鉴权，不能清；探测失败（无后端 / 纯静态预览）时无从判断，保守不动
+  if (caps && !isContainerWeb()) clearLegacyToken();
+  const authed = isContainerWeb() ? !!getToken() : hasSession();
+  if (caps && !authed) {
     const { default: WebLogin } = await import("./views/WebLogin.vue");
     createApp(WebLogin).mount("#app");
     return;

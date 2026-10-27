@@ -314,10 +314,15 @@ function registerRpcRoutes(app) {
   app.get("/api/capabilities", (req, res) => {
     res.json({
       ok: true,
+      // 形态分流（Ruling 36）：容器管理面是 Bearer + 明文（本文件），桌面局域网控制台是
+      // ECDH 会话 + 密文（electron/backend/admin.cjs，返回 form:"browser"）。前端据此选传输层，
+      // 不改后端实现、也不走同一份 admin.cjs
+      form: "container",
       platform: platform.form(),
       version: platform.version(),
       modules: ["proxy"],
-      features: { serviceControl: false, sse: false, fileDialog: false },
+      // SSE 已接通真实事件源（registerEventRoutes 的 /api/events），按实际能力置 true
+      features: { serviceControl: false, sse: true, fileDialog: false },
       // deny 的文案随清单下发（前端不重复维护提示语）
       commands: Object.fromEntries(
         [...commandTable.keys()].map((cmd) => {
