@@ -16,7 +16,7 @@ import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
 import { denyState } from "../../api/caps";
 import { coalesceAsync } from "../../utils/timing";
-import { applyIncrement, isSnapshotCurrent, snapshotKey } from "../../utils/oplogIncrement";
+import { applyIncrement, isSnapshotCurrent, planIncrement, snapshotKey } from "../../utils/oplogIncrement";
 import type { IncrementSnapshot } from "../../utils/oplogIncrement";
 import type { ProxyOpLogRow } from "../../types";
 
@@ -49,6 +49,10 @@ function beginFetch(): IncrementSnapshot {
   fetchSeq++;
   return snapshotNow();
 }
+/** 最近一次成功全量对应的筛选/分页指纹：与当前 key 不一致时 rows 不是当前视图的基底，增量必须回退全量（Ruling 35） */
+let rowsKey = "";
+/** 全量在飞标志：期间增量让路（不递增序号、不改 rows），防止增量抢序号把全量挤成过期响应、旧行残留不自愈（Ruling 35） */
+let fullLoading = false;
 const error = ref("");
 const page = ref(0);
 const pageSize = 20;
@@ -78,6 +82,7 @@ function formatTs(ts: number) {
 
 async function load() {
   const issued = beginFetch();
+  fullLoading = true;
   const { from, to } = rangeToMs();
   try {
     const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, limit: pageSize, offset: page.value * pageSize });
@@ -85,10 +90,14 @@ async function load() {
     rows.value = r?.rows || [];
     total.value = r?.total || 0;
     error.value = "";
+    rowsKey = issued.key; // rows 从此对应这份筛选/分页
     if (page.value === 0 && rows.value.length) lastId.value = Math.max(lastId.value, rows.value[0].id);
   } catch (e) {
     if (!isSnapshotCurrent(issued, snapshotNow())) return;
     error.value = e instanceof Error ? e.message : "加载失败";
+  } finally {
+    // 只有最新一次全量收尾才放行增量：并发 load 时提前清标志，会让增量插进未完成的全量里
+    if (issued.seq === fetchSeq) fullLoading = false;
   }
 }
 
@@ -101,9 +110,11 @@ async function loadOps() {
   }
 }
 
-/** 增量拉取：第 0 页用 sinceId 只取新日志（id 升序）交给 applyIncrement 去重拼表头；其它页新行会挤动分页，整页重拉 */
+/** 增量拉取：入口先走 planIncrement（Ruling 35）——全量在飞让路、基底不匹配回退全量；可增量才拉 sinceId 交给 applyIncrement 去重拼表头 */
 async function loadIncremental() {
-  if (page.value !== 0 || lastId.value <= 0) return load();
+  const plan = planIncrement({ fullLoading, rowsKey, currentKey: snapshotNow().key, lastId: lastId.value, page: page.value });
+  if (plan === "skip") return; // 全量在飞：不递增序号、不改 rows
+  if (plan === "full") return load(); // rows 不是当前视图基底（含非第 0 页 / 无基线）：回退全量
   const issued = beginFetch();
   const { from, to } = rangeToMs();
   try {

@@ -96,6 +96,36 @@ const KEY_P2 = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 2 });
   ok("snapshotKey 按筛选/分页区分", KEY_A !== KEY_B && KEY_A !== KEY_P2 && KEY_A === inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 0 }));
 }
 
+// ===== ⑦ Ruling 35：全量在飞时增量让路 + rowsKey 不匹配回退全量（评审新破坏的回归） =====
+{
+  const st = { seq: 3, rows: rows(3, 2, 1), lastId: 3, rowsKey: KEY_A, fullLoading: true };
+  const before = JSON.stringify(st);
+  const plan = inc.planIncrement({ fullLoading: st.fullLoading, rowsKey: st.rowsKey, currentKey: KEY_B, lastId: st.lastId, page: 0 });
+  ok("全量在飞时增量被跳过（不递增序号、不改 rows）", plan === "skip" && JSON.stringify(st) === before, `plan=${plan}`);
+  ok("全量在飞时的跳过优先于其它条件（有无基线都让路）", inc.planIncrement({ fullLoading: true, rowsKey: KEY_A, currentKey: KEY_A, lastId: 3, page: 0 }) === "skip" && inc.planIncrement({ fullLoading: true, rowsKey: KEY_A, currentKey: KEY_A, lastId: 0, page: 0 }) === "skip");
+}
+
+// ===== ⑧ rowsKey 不是当前视图基底 → 回退全量（旧行不再被增量污染） =====
+{
+  ok("rowsKey 与当前筛选不匹配时回退全量", inc.planIncrement({ fullLoading: false, rowsKey: KEY_A, currentKey: KEY_B, lastId: 3, page: 0 }) === "full");
+  ok("rowsKey 与分页不匹配时同样回退全量", inc.planIncrement({ fullLoading: false, rowsKey: KEY_A, currentKey: KEY_P2, lastId: 3, page: 2 }) === "full");
+  ok("无基线（lastId=0）或非第 0 页回退全量", inc.planIncrement({ fullLoading: false, rowsKey: KEY_A, currentKey: KEY_A, lastId: 0, page: 0 }) === "full" && inc.planIncrement({ fullLoading: false, rowsKey: KEY_P2, currentKey: KEY_P2, lastId: 3, page: 2 }) === "full");
+}
+
+// ===== ⑨ 正常增量仍工作（防修过头）+ 时序回归 =====
+{
+  const plan = inc.planIncrement({ fullLoading: false, rowsKey: KEY_A, currentKey: KEY_A, lastId: 3, page: 0 });
+  const r = inc.applyIncrement({ issued: { seq: 4, key: KEY_A }, current: { seq: 4, key: KEY_A }, rows: rows(3, 2, 1), added: rows(4, 5), lastId: 3, pageSize: 20, limit: 200 });
+  ok("正常增量仍走增量分支并正常合并", plan === "increment" && r.applied && r.rows.map((x) => x.id).join(",") === "5,4,3,2,1" && r.lastId === 5, `plan=${plan} rows=${JSON.stringify(r.rows.map((x) => x.id))}`);
+  // 时序回归（评审给的病灶时序）：全量在飞 → 增量 skip 且序号不前进 → 全量完成写 rowsKey → 增量恢复
+  let seq = 1;
+  const plan1 = inc.planIncrement({ fullLoading: true, rowsKey: KEY_A, currentKey: KEY_B, lastId: 3, page: 0 });
+  if (plan1 !== "skip") seq++; // 页面约定：skip 分支在 beginFetch 之前 return，不递增序号、不改 rows
+  ok("时序 1：全量在飞时事件触发的增量被跳过且序号不前进", plan1 === "skip" && seq === 1, `plan=${plan1} seq=${seq}`);
+  const plan2 = inc.planIncrement({ fullLoading: false, rowsKey: KEY_B, currentKey: KEY_B, lastId: 3, page: 0 });
+  ok("时序 2：全量完成写 rowsKey 后增量恢复", plan2 === "increment", `plan=${plan2}`);
+}
+
 console.log("");
 console.log(`RESULT: ${pass} passed / ${fail} failed`);
 if (bad.length) {

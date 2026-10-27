@@ -68,3 +68,20 @@ export function applyIncrement<T extends { id: number }>(args: { issued: Increme
   const lastId = args.added.reduce((m, r) => (r.id > m ? r.id : m), args.lastId);
   return { applied: true, rows, lastId, needFullReload: args.added.length >= args.limit };
 }
+
+/** 增量入口动作：skip = 全量在飞，让路不动状态；full = 回退整页加载；increment = 走增量拉取 */
+export type IncrementPlan = "skip" | "full" | "increment";
+
+/**
+ * 增量入口决策（纯函数，Ruling 35）：
+ *   · fullLoading（全量在飞）→ skip 让路：调用方不得递增序号、不得改 rows——
+ *     否则增量会抢先递增序号，把新筛选的全量挤成过期响应，旧行残留且永不自愈；
+ *   · rowsKey ≠ 当前 key：现有行不是当前筛选/分页的基底 → full 回退全量（不许拿旧行当合并基底）；
+ *   · 非第 0 页 / 无基线（lastId ≤ 0）→ full。
+ */
+export function planIncrement(args: { fullLoading: boolean; rowsKey: string; currentKey: string; lastId: number; page: number }): IncrementPlan {
+  if (args.fullLoading) return "skip";
+  if (args.rowsKey !== args.currentKey) return "full";
+  if (args.page !== 0 || args.lastId <= 0) return "full";
+  return "increment";
+}
