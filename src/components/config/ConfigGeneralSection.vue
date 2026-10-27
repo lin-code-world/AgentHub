@@ -109,7 +109,7 @@ async function openDataDir() {
           <div class="set-desc">{{ dataDir || "（浏览器预览）" }}</div>
         </div>
         <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
-          <button class="btn btn-ghost" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button>
+          <span><button class="btn btn-ghost" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button></span>
         </el-tooltip>
       </div>
       

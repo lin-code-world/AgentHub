@@ -61,7 +61,9 @@ const DENY_BROWSER = {
   proxy_restart: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
   proxy_open_data_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
   proxy_open_rules_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
-  proxy_account_import_file: "浏览器访问时不可用：请用页面上的「选择文件」上传，或粘贴 JSON 导入",
+  // Ruling 22：browser 文案不得自指「选择文件」（那正是被本命令禁用的按钮），只提粘贴 JSON；
+  // 任务 10 加浏览器上传入口后，再回来同步更新这条文案
+  proxy_account_import_file: "浏览器访问时不可用：请改用「粘贴 JSON」导入",
   proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
   proxy_oauth_begin: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
   // 补漏（任务 8）：粘贴回调是 OAuth 登录的收尾命令，begin 被 deny 后它同样不该放行。

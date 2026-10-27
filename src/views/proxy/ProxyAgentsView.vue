@@ -1690,26 +1690,32 @@ onUnmounted(() => {
               </button>
             </el-tooltip>
             <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹'" placement="top">
-              <button
-                class="btn btn-sm"
-                :class="{ 'btn-warning': devHasIssue }"
-                :disabled="devBusy || deviceGate.disabled"
-                @click="openDeviceDiag"
-              >{{ devBusy ? "检测中…" : devHasIssue ? "指纹异常" : "指纹诊断" }}</button>
+              <span>
+                <button
+                  class="btn btn-sm"
+                  :class="{ 'btn-warning': devHasIssue }"
+                  :disabled="devBusy || deviceGate.disabled"
+                  @click="openDeviceDiag"
+                >{{ devBusy ? "检测中…" : devHasIssue ? "指纹异常" : "指纹诊断" }}</button>
+              </span>
             </el-tooltip>
             <el-tooltip v-if="ch.id === 'zcode' && devClaimMode" :content="restoreGate.reason || '本机指纹当前借出给某账号领周末套餐（领取模式），手机远程连接不可用；点击写回本机锚定指纹并重启客户端，远程即恢复'" placement="top">
-              <button
-                class="btn btn-sm btn-warning"
-                :disabled="devBusy || restoreGate.disabled"
-                @click="restoreRemoteMid"
-              >{{ devBusy ? "恢复中…" : "恢复本机指纹" }}</button>
+              <span>
+                <button
+                  class="btn btn-sm btn-warning"
+                  :disabled="devBusy || restoreGate.disabled"
+                  @click="restoreRemoteMid"
+                >{{ devBusy ? "恢复中…" : "恢复本机指纹" }}</button>
+              </span>
             </el-tooltip>
             <el-tooltip v-if="ch.id === 'zcode'" :content="rollbackGate.reason || '切号出问题或移动端远程连接异常时，一键还原到最近一次切换前的状态'" placement="top">
-              <button
-                class="btn btn-sm"
-                :disabled="rollbackGate.disabled"
-                @click="zcodeRollback"
-              >切号回滚</button>
+              <span>
+                <button
+                  class="btn btn-sm"
+                  :disabled="rollbackGate.disabled"
+                  @click="zcodeRollback"
+                >切号回滚</button>
+              </span>
             </el-tooltip>
             <button class="btn btn-sm btn-primary" :disabled="refreshingChannel" @click="refreshCurrentChannel">
               {{ refreshingChannel ? "刷新中…" : "刷新" }}
@@ -1877,36 +1883,42 @@ onUnmounted(() => {
                       :content="captchaGate.reason || (isNeedCaptcha(acc) ? '触发了上游阿里云人机校验，点击弹出验证码窗口进行过码' : '手动完成一次阿里云人机校验以刷新上游风控信誉')"
                       placement="top"
                     >
-                      <button
-                        class="btn-link btn-sm"
-                        :class="{ 'btn-captcha-warn': isNeedCaptcha(acc) }"
-                        :disabled="solvingCaptchaId === acc.id || captchaGate.disabled"
-                        @click="runSolveCaptcha(acc)"
-                      >
-                        {{ solvingCaptchaId === acc.id ? "过码中…" : (isNeedCaptcha(acc) ? "需过码" : "过码") }}
-                      </button>
+                      <span>
+                        <button
+                          class="btn-link btn-sm"
+                          :class="{ 'btn-captcha-warn': isNeedCaptcha(acc) }"
+                          :disabled="solvingCaptchaId === acc.id || captchaGate.disabled"
+                          @click="runSolveCaptcha(acc)"
+                        >
+                          {{ solvingCaptchaId === acc.id ? "过码中…" : (isNeedCaptcha(acc) ? "需过码" : "过码") }}
+                        </button>
+                      </span>
                     </el-tooltip>
                     <el-tooltip
                       v-if="acc.channel === 'zcode'"
                       :content="claimGate.reason || '领取模式（人工操作）：把本机指纹临时借出为该账号专属指纹并重启客户端，之后在官方客户端里点「限时可领取」人工领取周末套餐；领完回工具栏点「恢复本机指纹」。期间手机远程不可用'"
                       placement="top"
                     >
-                      <button
-                        class="btn-link btn-sm"
-                        :disabled="ideSwitching === acc.id || claimGate.disabled"
-                        @click="enterClaimMode(acc)"
-                      >
-                        {{ ideSwitching === acc.id ? "处理中…" : "领取模式" }}
-                      </button>
+                      <span>
+                        <button
+                          class="btn-link btn-sm"
+                          :disabled="ideSwitching === acc.id || claimGate.disabled"
+                          @click="enterClaimMode(acc)"
+                        >
+                          {{ ideSwitching === acc.id ? "处理中…" : "领取模式" }}
+                        </button>
+                      </span>
                     </el-tooltip>
                     <el-tooltip :content="ideGate.reason || ideTitle(acc)" :disabled="!ideGate.disabled && !ideTitle(acc)" placement="top">
-                      <button
-                        class="btn-link btn-sm"
-                        :disabled="ideSwitching === acc.id || !ideSupported(acc) || ideGate.disabled"
-                        @click="ideSwitch(acc)"
-                      >
-                        {{ ideSwitching === acc.id ? "切换中…" : "切换" }}
-                      </button>
+                      <span>
+                        <button
+                          class="btn-link btn-sm"
+                          :disabled="ideSwitching === acc.id || !ideSupported(acc) || ideGate.disabled"
+                          @click="ideSwitch(acc)"
+                        >
+                          {{ ideSwitching === acc.id ? "切换中…" : "切换" }}
+                        </button>
+                      </span>
                     </el-tooltip>
                     <el-tooltip
                       v-if="acc.status === 'cooling' || (acc.modelCool && acc.modelCool.length)"
@@ -2004,18 +2016,19 @@ onUnmounted(() => {
             </el-tooltip>
           </header>
 
-          <!-- 方式切换：分段控件（服务端 deny 的方式置灰 + tooltip 展示下发原因，不隐藏） -->
+          <!-- 方式切换：分段控件（deny 的方式置灰不隐藏；分段控件不夹包裹层，原因走原生 title） -->
           <div class="add-tabs">
-            <el-tooltip v-for="t in METHOD_TABS" :key="t.key" :content="methodGate(t.key).reason || ''" :disabled="!methodGate(t.key).disabled" placement="top">
-              <button
-                class="add-tab"
-                :class="{ active: addMethod === t.key, disabled: methodGate(t.key).disabled || (oauthWaiting && addMethod === 'oauth' && t.key !== 'oauth') }"
-                :disabled="methodGate(t.key).disabled"
-                @click="switchMethod(t.key)"
-              >
-                <i class="ph" :class="t.icon"></i>{{ t.label }}
-              </button>
-            </el-tooltip>
+            <button
+              v-for="t in METHOD_TABS"
+              :key="t.key"
+              class="add-tab"
+              :class="{ active: addMethod === t.key, disabled: methodGate(t.key).disabled || (oauthWaiting && addMethod === 'oauth' && t.key !== 'oauth') }"
+              :disabled="methodGate(t.key).disabled"
+              :title="methodGate(t.key).reason || ''"
+              @click="switchMethod(t.key)"
+            >
+              <i class="ph" :class="t.icon"></i>{{ t.label }}
+            </button>
           </div>
 
           <!-- deny 原因不再在这里写死文案：各方式页签置灰并在 tooltip 展示服务端下发的 reason -->
@@ -2035,9 +2048,11 @@ onUnmounted(() => {
                   style="flex: 1"
                   :placeholder="addChannel === 'raccoon' ? '授权窗没自动完成？把 office-raccoon://auth/callback?code=… 整段粘到这里' : addChannel === 'zcode' ? '授权完成后一般无需操作；若停在回调页，把地址栏整段粘到这里（zcode://…）' : '浏览器没跳回？把地址栏整段粘到这里'"
                 />
-                <button class="btn btn-sm" :disabled="!callbackInput.trim() || callbackBusy || methodGate('oauth').disabled" @click="submitCallback">
-                  {{ callbackBusy ? "提交中…" : "提交" }}
-                </button>
+                <el-tooltip :content="methodGate('oauth').reason || ''" :disabled="!methodGate('oauth').disabled" placement="top">
+                  <span><button class="btn btn-sm" :disabled="!callbackInput.trim() || callbackBusy || methodGate('oauth').disabled" @click="submitCallback">
+                    {{ callbackBusy ? "提交中…" : "提交" }}
+                  </button></span>
+                </el-tooltip>
               </div>
               <div v-if="callbackMsg" class="add-msg">{{ callbackMsg }}</div>
               <!-- Cline 设备授权：用户码（授权页已预填；换设备/手动输码时需要这串） -->
@@ -2084,7 +2099,9 @@ onUnmounted(() => {
               <div class="scan-head">
                 <span class="scan-hint">读取本机已登录客户端的登录态，凭据不出本机</span>
                 <button class="btn btn-sm" :disabled="scanBusy" @click="loadScan">{{ scanBusy ? "扫描中…" : "重新扫描" }}</button>
-                <button class="btn btn-sm" :disabled="scanBusy || methodGate('local').disabled || !scanRows.length" @click="importAllScan">全部导入</button>
+                <el-tooltip :content="methodGate('local').reason || ''" :disabled="!methodGate('local').disabled" placement="top">
+                  <span><button class="btn btn-sm" :disabled="scanBusy || methodGate('local').disabled || !scanRows.length" @click="importAllScan">全部导入</button></span>
+                </el-tooltip>
               </div>
               <div class="scan-list">
                 <div v-for="(c, i) in scanRows" :key="`${c.channel}-${c.uid || i}`" class="scan-row" :class="{ dim: c.imported || c.encrypted }">
@@ -2096,14 +2113,16 @@ onUnmounted(() => {
                     </div>
                     <div class="scan-file">{{ c.file }}<template v-if="c.credits"> · 余额 {{ fmtInt(c.credits) }}</template></div>
                   </div>
-                  <el-tooltip :content="c.encrypted ? '本机登录态已加密，请改用 OAuth 登录' : ''" :disabled="!c.encrypted" placement="top">
-                    <button
-                      class="btn btn-sm"
-                      :disabled="c.imported || c.encrypted || !!scanImporting || methodGate('local').disabled"
-                      @click="importScan(c)"
-                    >
-                      {{ scanImporting === scanKey(c) ? "导入中…" : c.imported ? "已导入" : "导入" }}
-                    </button>
+                  <el-tooltip :content="methodGate('local').reason || (c.encrypted ? '本机登录态已加密，请改用 OAuth 登录' : '')" :disabled="!methodGate('local').disabled && !c.encrypted" placement="top">
+                    <span>
+                      <button
+                        class="btn btn-sm"
+                        :disabled="c.imported || c.encrypted || !!scanImporting || methodGate('local').disabled"
+                        @click="importScan(c)"
+                      >
+                        {{ scanImporting === scanKey(c) ? "导入中…" : c.imported ? "已导入" : "导入" }}
+                      </button>
+                    </span>
                   </el-tooltip>
                 </div>
                 <div v-if="!scanRows.length" class="scan-empty">
@@ -2167,36 +2186,27 @@ onUnmounted(() => {
             </span>
             <button class="btn" @click="closeAdd()">{{ addMethod === "oauth" && oauthWaiting ? "取消登录" : "取消" }}</button>
 
-            <button
-              v-if="addMethod === 'oauth'"
-              class="btn btn-cta"
-              :disabled="oauthWaiting || methodGate('oauth').disabled"
-              @click="beginOauth"
-            >{{ oauthWaiting ? "等待授权…" : "打开登录页" }}</button>
+            <el-tooltip v-if="addMethod === 'oauth'" :content="methodGate('oauth').reason || ''" :disabled="!methodGate('oauth').disabled" placement="top">
+              <span><button class="btn btn-cta" :disabled="oauthWaiting || methodGate('oauth').disabled" @click="beginOauth">{{ oauthWaiting ? "等待授权…" : "打开登录页" }}</button></span>
+            </el-tooltip>
             <button
               v-else-if="addMethod === 'sms'"
               class="btn btn-cta"
               :disabled="smsBusy || !smsTicket || !smsCode.trim()"
               @click="submitSms"
             >{{ smsBusy ? "登录中…" : "验证并加入号池" }}</button>
-            <button
-              v-else-if="addMethod === 'file'"
-              class="btn btn-cta"
-              :disabled="fileBusy || methodGate('file').disabled"
-              @click="doImportFile"
-            >{{ fileBusy ? "导入中…" : "选择文件…" }}</button>
+            <el-tooltip v-else-if="addMethod === 'file'" :content="methodGate('file').reason || ''" :disabled="!methodGate('file').disabled" placement="top">
+              <span><button class="btn btn-cta" :disabled="fileBusy || methodGate('file').disabled" @click="doImportFile">{{ fileBusy ? "导入中…" : "选择文件…" }}</button></span>
+            </el-tooltip>
             <button
               v-else-if="addMethod === 'paste'"
               class="btn btn-cta"
               :disabled="!pasteJson.trim() || pasteBusy"
               @click="doPasteJson"
             >{{ pasteBusy ? "导入中…" : addChannel === "modelscope" ? "校验令牌并加入号池" : "解析并加入号池" }}</button>
-            <button
-              v-else
-              class="btn btn-cta"
-              :disabled="scanBusy || methodGate('local').disabled || !scanRows.some((c) => !c.imported && !c.encrypted)"
-              @click="importAllScan"
-            >加入号池</button>
+            <el-tooltip v-else :content="methodGate('local').reason || ''" :disabled="!methodGate('local').disabled" placement="top">
+              <span><button class="btn btn-cta" :disabled="scanBusy || methodGate('local').disabled || !scanRows.some((c) => !c.imported && !c.encrypted)" @click="importAllScan">加入号池</button></span>
+            </el-tooltip>
           </footer>
         </div>
       </div>
@@ -2472,10 +2482,10 @@ onUnmounted(() => {
           </div>
           <div class="p-actions">
             <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
-              <button class="btn" :disabled="devBusy || deviceGate.disabled" @click="runDeviceRepair(true)">{{ devBusy ? "处理中…" : "全部换随机指纹" }}</button>
+              <span><button class="btn" :disabled="devBusy || deviceGate.disabled" @click="runDeviceRepair(true)">{{ devBusy ? "处理中…" : "全部换随机指纹" }}</button></span>
             </el-tooltip>
             <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
-              <button class="btn btn-primary" :disabled="devBusy || !devHasIssue || deviceGate.disabled" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button>
+              <span><button class="btn btn-primary" :disabled="devBusy || !devHasIssue || deviceGate.disabled" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button></span>
             </el-tooltip>
           </div>
         </div>

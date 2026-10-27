@@ -14,7 +14,10 @@
 //     原因逐字等于服务端下发的 reason（文案单一事实源在服务端，前端不得改写）；
 //   3 桌面（无 caps）全部可用：任何按钮都不置灰；
 //   4 页面接线：每个入口按钮所在文件必须消费 denyState 并把 reason 用于展示；
-//   5 前端不得自维护禁用文案（.vue 里不得出现服务端口径的固定文案）。
+//   4b 结构断言（vue/compiler-dom 解析模板 AST）：tooltip 不得直接挂 disabled 控件
+//     （disabled 控件不派发鼠标事件，hover 原因提示会失效），deny 控件必须经包裹层接 tooltip 或自带原生 title；
+//   5 前端不得自维护禁用文案（.vue 里不得出现服务端口径的固定文案），
+//     且服务端 browser 文案不得自指（如叫用户去点被禁的「选择文件」按钮）。
 // caps.ts 是无 import 的纯 TS，esbuild 直译成 CJS 后在 Node 里执行，不加载 Vue 运行时。
 // 用法：node tools/admin-deny-ui-selftest.cjs
 "use strict";
@@ -146,7 +149,42 @@ async function main() {
     ok(`${file} 展示服务端原因（模板消费 .reason）`, /\.reason/.test(src), "未找到 .reason 绑定");
   }
 
-  // ===== 5 前端不得自维护禁用文案 =====
+  // ===== 4b 结构断言（vue/compiler-dom 解析模板 AST，不查字符串） =====
+  // tooltip 的 hover 事件到不了 disabled 控件：deny 原因的 tooltip 必须经 span/div 包裹层接 hover，
+  // 或干脆用原生 title（title 由浏览器渲染，不受 disabled 影响）。
+  const compilerDom = require(path.join(ROOT, "node_modules", "@vue", "compiler-dom", "dist", "compiler-dom.cjs.js"));
+  const FORM_TAGS = ["button", "input", "select", "textarea"];
+  const propOf = (el, name) => (el.props || []).find((p) => (p.name === "bind" && p.arg && p.arg.content === name) || p.name === name) || null;
+  const exprOf = (el, name) => {
+    const p = (el.props || []).find((q) => q.name === "bind" && q.arg && q.arg.content === name);
+    return (p && p.exp && p.exp.content) || "";
+  };
+  /** 取 .vue 顶层 <template> 的内层（嵌套 <template v-if/#slot>` 用深度匹配收口；先剥注释防伪匹配） */
+  function templateOf(src) {
+    const s = src.replace(/<!--[\s\S]*?-->/g, "");
+    const start = s.indexOf("<template>");
+    if (start < 0) return null;
+    const body = s.slice(start + "<template>".length);
+    const re = /<\/?template\b[^>]*>/g;
+    let depth = 1,
+      m;
+    while ((m = re.exec(body))) {
+      if (m[0].startsWith("</")) {
+        if (--depth === 0) return body.slice(0, m.index);
+      } else depth++;
+    }
+    return null;
+  }
+  function walkEls(node, fn, chain = []) {
+    if (!node) return;
+    if (node.type === 1) {
+      fn(node, chain);
+      for (const c of node.children || []) walkEls(c, fn, chain.concat(node));
+    } else {
+      for (const c of node.children || []) walkEls(c, fn, chain);
+    }
+  }
+
   const vueFiles = [];
   (function walk(dir) {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -155,10 +193,53 @@ async function main() {
       else if (ent.name.endsWith(".vue")) vueFiles.push(p);
     }
   })(path.join(ROOT, "src"));
+
+  for (const file of vueFiles) {
+    const tpl = templateOf(fs.readFileSync(file, "utf8"));
+    if (!tpl) continue;
+    const rel = path.relative(ROOT, file).replace(/\\/g, "/");
+    const tipBad = [];
+    const showBad = [];
+    const switchBad = [];
+    let ast;
+    try {
+      ast = compilerDom.parse(tpl);
+    } catch (e) {
+      ok(`${rel} 模板可解析`, false, String((e && e.message) || e));
+      continue;
+    }
+    walkEls(ast, (el, chain) => {
+      // A：deny 原因 tooltip 的直接子节点不得是 disabled 控件（需要 span/div 包裹层）。
+      // 只查 deny 入口（content 带 .reason 或子控件带门控表达式），非门控的存量 tooltip 不在本任务范围
+      if (el.tag === "el-tooltip") {
+        const direct = (el.children || []).find((c) => c.type === 1);
+        const denyTip = /\.reason/.test(exprOf(el, "content")) || (direct && /Gate\.disabled|methodGate\(/.test(exprOf(direct, "disabled")));
+        if (denyTip && direct && FORM_TAGS.includes(direct.tag) && propOf(direct, "disabled")) tipBad.push(`${direct.tag} 直挂 disabled`);
+      }
+      // B：deny 门控控件必须有原因展示途径：被 tooltip 包裹（且非其直接子节点）或自带 title
+      const gateExpr = exprOf(el, "disabled");
+      if (FORM_TAGS.includes(el.tag) && /Gate\.disabled|methodGate\(/.test(gateExpr)) {
+        const inTip = chain.some((a) => a.tag === "el-tooltip");
+        const directOfTip = chain.length > 0 && chain[chain.length - 1].tag === "el-tooltip";
+        if (!((inTip && !directOfTip) || propOf(el, "title"))) showBad.push(`${el.tag}[${gateExpr}]`);
+      }
+      // C：deny 的 div[role=switch]（如网关启停开关）走原生 title 承接原因
+      if (el.tag === "div" && /Gate\.disabled/.test(exprOf(el, "class"))) {
+        const role = propOf(el, "role");
+        if (role && role.value && role.value.content === "switch" && !propOf(el, "title")) switchBad.push("div[role=switch] 无 title");
+      }
+    });
+    ok(`${rel} tooltip 有包裹层（直接子节点不是 disabled 控件）`, tipBad.length === 0, tipBad.join("; "));
+    ok(`${rel} deny 控件有原因展示（包裹层 tooltip 或原生 title）`, showBad.length === 0, showBad.join("; "));
+    if (switchBad.length) ok(`${rel} deny 开关有原生 title`, false, switchBad.join("; "));
+  }
+
+  // ===== 5 前端不得自维护禁用文案 =====
   const selfWritten = vueFiles.filter((p) => fs.readFileSync(p, "utf8").includes("浏览器访问时不可用"));
   ok("前端 .vue 无自写的 deny 文案（统一取服务端 reason）", selfWritten.length === 0, selfWritten.map((p) => path.relative(ROOT, p)).join(","));
   const agentsSrc = fs.readFileSync(path.join(ROOT, "src", "views", "proxy", "ProxyAgentsView.vue"), "utf8");
   ok("ProxyAgentsView 无自维护的形态灌号引导文案", !agentsSrc.includes("容器形态灌号"), "仍含「容器形态灌号」文案块");
+  ok("Ruling 22：proxy_account_import_file 的 browser 文案不自指「选择文件」", !String(commandTable.denyReason("proxy_account_import_file", "browser")).includes("选择文件"), String(commandTable.denyReason("proxy_account_import_file", "browser")));
 
   console.log("");
   console.log(`RESULT: ${pass} passed / ${fail} failed`);

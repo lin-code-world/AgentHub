@@ -169,7 +169,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
           <span :style="{ fontSize: '12px', color: exportMsg.ok ? 'var(--ok)' : 'var(--err)', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">{{ exportMsg.text }}</span>
         </el-tooltip>
         <el-tooltip :content="exportGate.reason || ''" :disabled="!exportGate.disabled" placement="top">
-          <button class="btn-outline" :disabled="exportGate.disabled" @click="doExport">导出 Excel</button>
+          <span><button class="btn-outline" :disabled="exportGate.disabled" @click="doExport">导出 Excel</button></span>
         </el-tooltip>
       </div>
 

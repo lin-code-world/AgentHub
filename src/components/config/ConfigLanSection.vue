@@ -143,7 +143,7 @@ async function saveToken() {
         </div>
         <div class="lan-ctl">
           <input v-model="newToken" class="input mono" style="width: 240px" placeholder="输入新令牌（≥16 位）" @keyup.enter="saveToken" />
-          <button class="btn btn-primary" :disabled="tokenGate.disabled" @click="saveToken">保存</button>
+          <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top"><span><button class="btn btn-primary" :disabled="tokenGate.disabled" @click="saveToken">保存</button></span></el-tooltip>
           <button class="btn btn-ghost" @click="editing = false">取消</button>
         </div>
       </div>

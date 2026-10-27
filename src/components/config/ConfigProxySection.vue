@@ -160,7 +160,7 @@ function openDataDir() {
         <span v-if="msg" class="tag" :class="msgErr ? 'tag-err' : 'tag-ok'">{{ msg }}</span>
         <button class="btn btn-ghost" @click="upOpen = true"><i class="ph ph-plugs-connected"></i>上游启闭</button>
         <el-tooltip :content="restartGate.reason || ''" :disabled="!restartGate.disabled" placement="top">
-          <button class="btn btn-cta" :disabled="saving || restartGate.disabled" @click="save">{{ saving ? "保存中…" : "保存并重启服务" }}</button>
+          <span><button class="btn btn-cta" :disabled="saving || restartGate.disabled" @click="save">{{ saving ? "保存中…" : "保存并重启服务" }}</button></span>
         </el-tooltip>
       </div>
     </div>
@@ -346,7 +346,7 @@ function openDataDir() {
             <div class="set-desc">{{ vault?.dataDir || "（浏览器预览）" }} · 存储驱动 {{ vault?.driver || "-" }}</div>
           </div>
           <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
-            <button class="btn btn-sm" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button>
+            <span><button class="btn btn-sm" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button></span>
           </el-tooltip>
         </div>
       </div>
@@ -356,7 +356,7 @@ function openDataDir() {
     <div class="card" v-else>
       <div class="card-title">
         规则文件热加载
-        <span class="right">改文件即时生效，无需重启 · <el-tooltip :content="rulesDirGate.reason || ''" :disabled="!rulesDirGate.disabled" placement="top"><button class="btn-link btn-sm" :disabled="rulesDirGate.disabled" @click="openRulesDir">打开 rules 目录</button></el-tooltip></span>
+        <span class="right">改文件即时生效，无需重启 · <el-tooltip :content="rulesDirGate.reason || ''" :disabled="!rulesDirGate.disabled" placement="top"><span><button class="btn-link btn-sm" :disabled="rulesDirGate.disabled" @click="openRulesDir">打开 rules 目录</button></span></el-tooltip></span>
       </div>
       <div class="tbl-wrap">
         <table class="tbl">
