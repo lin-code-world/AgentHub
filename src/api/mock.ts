@@ -28,6 +28,7 @@ const TODAY = (() => {
 function defaultConfig(): AppConfig {
   return {
     theme: "dark",
+    admin: { token: "" },
     schedule: { minimizeToTray: true, autoStart: true },
     proxy: {
       port: 9527,
@@ -421,6 +422,10 @@ export const mock = {
         return;
       case "browse_dir":
         return { ok: true, canceled: true, path: null };
+      case "admin_access_info":
+        return { url: `http://127.0.0.1:${(read().proxy.port || 9527) + 1}`, token: "mock-admin-token-0123456789abcdef" };
+      case "admin_set_token":
+        return String(args?.token || "").trim().length >= 16 ? { ok: true, message: "令牌已更新，浏览器需重新登录" } : { ok: false, message: "令牌至少 16 位" };
 
       // ===== 反代网关（预览数据，语义对齐 backend/proxy） =====
       case "proxy_status":

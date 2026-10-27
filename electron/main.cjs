@@ -374,6 +374,8 @@ if (!gotLock) {
     // 建窗前先应用主题，避免深色配置下标题栏先白后黑闪烁
     const bootCfg = config.loadConfig();
     applyNativeTheme(bootCfg.theme);
+    // 管理令牌：首次启动自动生成（24 字节随机串，加密落盘），供局域网管理页登录
+    config.ensureAdminToken();
 
     ipc.register({ ipcMain, app, shell, nativeTheme });
     // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）

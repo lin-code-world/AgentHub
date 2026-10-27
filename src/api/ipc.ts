@@ -116,6 +116,11 @@ export const openDataDir = () => call<void>("open_data_dir");
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
 export const getIsPortable = () => call<boolean>("get_is_portable");
 
+/** 局域网管理访问信息：管理地址（反代端口 + 1）与令牌明文（只交本机设置页展示 / 复制） */
+export const adminAccessInfo = () => call<{ url: string; token: string }>("admin_access_info");
+/** 修改管理令牌（非空且 ≥16 位）：成功后浏览器里的管理会话全部作废，需重新登录 */
+export const adminSetToken = (token: string) => call<{ ok: boolean; message?: string }>("admin_set_token", { token });
+
 /** 订阅主进程广播（网关状态 / 额度刷新 / 配置变更），返回退订函数。
  *  Web 托管形态走 SSE（信封同形）；纯静态预览（mock）没有事件源 */
 export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | undefined {

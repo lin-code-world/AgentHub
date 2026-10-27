@@ -28,17 +28,20 @@ export interface ModuleDef {
 
 // ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
 
-export type SettingsTab = "general" | "timing";
+export type SettingsTab = "general" | "timing" | "lan";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
   { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 应用行为" },
   { key: "timing", name: "刷新周期", icon: "ph-clock-countdown", desc: "额度刷新周期 / 自动签到" },
+  { key: "lan", name: "局域网访问", icon: "ph-plugs-connected", desc: "管理地址 · 访问令牌" },
 ];
 
 // ===== 应用配置：框架（主题 / 行为）=====
 
 export interface AppConfig {
   theme: Theme;
+  /** 局域网管理访问令牌（落盘密文）：明文只经 admin_access_info 下发给设置页，只经 admin_set_token 修改（不允许清空） */
+  admin: { token: string };
   schedule: {
     /** 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务照常运行，唤回时重新加载；
      *  关=关窗即退出应用。 */

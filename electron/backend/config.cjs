@@ -166,6 +166,14 @@ function defaultConfig() {
       dedupeWaitMs: 45000,         // 去重排队等待上限（毫秒，1000~300000）：到点无条件放行，
                                    // 宁可多一个并发，也不让用户被一个卡住的前序请求挂住
     },
+    // 局域网管理访问：浏览器登录管理页的令牌（落盘密文；明文只经桌面 IPC admin_access_info 交给设置页）。
+    // 首次启动由 main.cjs 调 ensureAdminToken() 自动生成 24 字节随机串，不允许清空
+    admin: {
+      token: "",
+    },
+    // 配置升级标记：< 2 的配置来自旧版（或首份配置），loadConfig 会强制开启「最小化到托盘」；
+    // 用户之后在设置页显式关闭时连同本标记一起落盘，此后尊重用户选择
+    configVersion: 2,
   };
 }
 
@@ -232,6 +240,10 @@ function loadConfig() {
   }
   // 整个文件不是对象（null/数字/数组）也当没有，不然合并完必炸
   if (!disk || typeof disk !== "object" || Array.isArray(disk)) disk = {};
+  // 升级标记（configVersion）：旧版配置 / 首份配置没有该字段，「最小化到托盘」升级时强制开启
+  // （新版关窗销毁界面进程，托盘是唯一的唤回入口）；用户显式关闭后随整份保存落盘 configVersion: 2，
+  // 此后不再强制——所以判定只认磁盘原值，不能看合并结果（默认值恒为 2）
+  const legacyConfig = Number(disk.configVersion || 0) < 2;
   const merged = mergeConfig(defaultConfig(), disk);
   // 迁移：旧版 proxy.autoStart / proxy.restoreOnLaunch 都是「网关是否随应用启动」的历史开关，
   // 现在固定为启动即监听（设置页已无对应选项），旧值一律丢弃，改完存盘即不再出现
@@ -277,6 +289,9 @@ function loadConfig() {
   // remoteTargets / remoteActiveId 与上面同理，旧配置残留字段一律剔除，不再读写
   delete merged.remoteTargets;
   delete merged.remoteActiveId;
+  // 升级强制托盘常驻（仅旧配置 / 首份配置；用户显式关闭过的配置带 configVersion: 2 不再强制）
+  if (legacyConfig) merged.schedule.minimizeToTray = true;
+  merged.configVersion = 2;
   return merged;
 }
 
@@ -322,8 +337,58 @@ function saveConfigFromUI(cfg) {
     for (const k of OUT_OF_BAND_PROXY_FIELDS) {
       if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
     }
+    // admin 令牌只经 admin_set_token 修改（不允许清空，也不能被设置页整份提交的旧快照覆盖回去）：以磁盘为准
+    if (disk && disk.admin) next.admin = disk.admin;
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
+  // 保存即视为已升级配置（托盘常驻强制只对 configVersion < 2 的旧配置生效）
+  next.configVersion = 2;
   return saveConfig(next);
+}
+
+// ===== 管理令牌（局域网浏览器登录管理页用） =====
+// 令牌是敏感凭据：落盘走 encryptSecret 密文，明文只经桌面 IPC 交给设置页展示，
+// 不写日志、不进崩溃日志
+
+/** 令牌生成（幂等）：已有可解出的令牌直接复用，缺失 / 解不开才生成 24 字节随机串并加密落盘 */
+function ensureAdminToken() {
+  const cfg = loadConfig();
+  const cur = decryptSecret(cfg.admin && cfg.admin.token);
+  if (cur) return cur;
+  const token = crypto.randomBytes(24).toString("hex");
+  cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(token) };
+  saveConfig(cfg);
+  return token;
+}
+
+/** 管理访问信息（桌面 IPC 专用，返回令牌明文）：
+ *  地址由配置计算（反代端口 + 1），不依赖管理服务是否已启动 */
+function adminAccessInfo() {
+  const cfg = loadConfig();
+  return {
+    url: `http://127.0.0.1:${Number(cfg.proxy.port || 9527) + 1}`,
+    token: decryptSecret(cfg.admin && cfg.admin.token) || ensureAdminToken(),
+  };
+}
+
+/** 修改管理令牌：非空且 ≥16 位（不允许清空）；成功后作废所有管理会话（浏览器需重新登录） */
+function setAdminToken(token) {
+  const t = String(token == null ? "" : token).trim();
+  if (!t) return { ok: false, message: "令牌不能为空" };
+  if (t.length < 16) return { ok: false, message: "令牌至少 16 位" };
+  const cfg = loadConfig();
+  cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(t) };
+  saveConfig(cfg);
+  clearAdminSessions();
+  return { ok: true, message: "令牌已更新，浏览器需重新登录" };
+}
+
+/** 会话清空占位：管理令牌变更后要作废所有浏览器会话。
+ *  会话模块（管理 HTTP 服务侧）落地后把这里接到会话存储的清空实现 */
+function clearAdminSessions() {}
+
+/** 当前管理会话数（会话模块落地前恒 0；admin_set_token 后必须为 0） */
+function sessionCount() {
+  return 0;
 }
 
 // 开机自启即时生效；便携版注册的是临时解压路径，开发模式不必注册
@@ -340,4 +405,5 @@ module.exports = {
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   normalizeHm, normalizeJitter,
   saveConfigFromUI, OUT_OF_BAND_PROXY_FIELDS,
+  ensureAdminToken, adminAccessInfo, setAdminToken, clearAdminSessions, sessionCount,
 };

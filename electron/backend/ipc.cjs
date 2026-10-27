@@ -86,6 +86,16 @@ function register(ctx) {
     return { ok: true, canceled: r.canceled, path: r.canceled ? null : r.filePaths[0] };
   }));
 
+  // ===== 局域网管理访问（管理地址与令牌；管理 HTTP 服务另行提供） =====
+  // 令牌明文只经这条桌面 IPC 交给设置页展示，不进日志
+  ipcMain.handle("admin_access_info", handle(() => config.adminAccessInfo()));
+  ipcMain.handle("admin_set_token", handle(({ token }) => {
+    const r = config.setAdminToken(token);
+    // 令牌变更后刷新内存快照，load_config 返回的 admin.token 才不会是旧密文
+    if (r && r.ok) cfg = config.loadConfig();
+    return r;
+  }));
+
   // ===== 反代网关（命令实现见 backend/proxy/index.cjs） =====
   proxy.register(ipcMain);
 
