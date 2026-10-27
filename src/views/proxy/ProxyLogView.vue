@@ -16,6 +16,8 @@ import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
 import { denyState } from "../../api/caps";
 import { coalesceAsync } from "../../utils/timing";
+import { applyIncrement, isSnapshotCurrent, snapshotKey } from "../../utils/oplogIncrement";
+import type { IncrementSnapshot } from "../../utils/oplogIncrement";
 import type { ProxyOpLogRow } from "../../types";
 
 const app = useAppStore();
@@ -31,8 +33,22 @@ const filter = reactive({
 
 const rows = ref<ProxyOpLogRow[]>([]);
 const total = ref(0);
-/** 增量基线：当前页已知的最大日志 id（第 0 页即全表最新一条），准实时刷新用它拉 sinceId 增量 */
+/** 增量基线：当前页已知的最大日志 id（第 0 页即全表最新一条），准实时刷新用它拉 sinceId 增量；只增不减 */
 const lastId = ref(0);
+/** 一次增量最多拉这么多（store.listOpLogs 同封顶）：触顶 = 一次没追完，回退全量拿到最新一页 */
+const INC_LIMIT = 200;
+/** 请求序号 + 筛选快照：load / 增量共用一套守卫，过期响应（期间有更新请求、筛选或翻页已变）整份丢弃 */
+let fetchSeq = 0;
+
+function snapshotNow(): IncrementSnapshot {
+  const { from, to } = rangeToMs();
+  return { seq: fetchSeq, key: snapshotKey({ from, to, level: filter.level, op: filter.op, page: page.value }) };
+}
+
+function beginFetch(): IncrementSnapshot {
+  fetchSeq++;
+  return snapshotNow();
+}
 const error = ref("");
 const page = ref(0);
 const pageSize = 20;
@@ -61,14 +77,17 @@ function formatTs(ts: number) {
 }
 
 async function load() {
+  const issued = beginFetch();
   const { from, to } = rangeToMs();
   try {
     const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, limit: pageSize, offset: page.value * pageSize });
+    if (!isSnapshotCurrent(issued, snapshotNow())) return; // 过期响应丢弃：期间已发起新请求 / 筛选或翻页已变
     rows.value = r?.rows || [];
     total.value = r?.total || 0;
     error.value = "";
-    if (page.value === 0 && rows.value.length) lastId.value = rows.value[0].id;
+    if (page.value === 0 && rows.value.length) lastId.value = Math.max(lastId.value, rows.value[0].id);
   } catch (e) {
+    if (!isSnapshotCurrent(issued, snapshotNow())) return;
     error.value = e instanceof Error ? e.message : "加载失败";
   }
 }
@@ -82,20 +101,23 @@ async function loadOps() {
   }
 }
 
-/** 增量拉取：第 0 页用 sinceId 只取新日志（id 升序）倒排拼到表头；其它页新行会挤动分页，整页重拉 */
+/** 增量拉取：第 0 页用 sinceId 只取新日志（id 升序）交给 applyIncrement 去重拼表头；其它页新行会挤动分页，整页重拉 */
 async function loadIncremental() {
   if (page.value !== 0 || lastId.value <= 0) return load();
+  const issued = beginFetch();
   const { from, to } = rangeToMs();
   try {
-    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, sinceId: lastId.value, limit: 200 });
-    const added = r?.rows || [];
-    if (added.length) {
-      rows.value = [...added.slice().reverse(), ...rows.value].slice(0, pageSize);
-      lastId.value = added[added.length - 1].id;
-    }
+    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, sinceId: lastId.value, limit: INC_LIMIT });
+    // 过期增量（筛选切换 / 翻页 / 期间有新请求）整份丢弃；可应用才改行与基线（去重、lastId 单调见纯函数）
+    const res = applyIncrement({ issued, current: snapshotNow(), rows: rows.value, added: r?.rows || [], lastId: lastId.value, pageSize, limit: INC_LIMIT });
+    if (!res.applied) return;
+    rows.value = res.rows;
+    lastId.value = res.lastId;
     total.value = r?.total ?? total.value;
     error.value = "";
+    if (res.needFullReload) void load(); // 一次增量触顶 = 没追完，回退全量拿到最新一页
   } catch (e) {
+    if (!isSnapshotCurrent(issued, snapshotNow())) return;
     error.value = e instanceof Error ? e.message : "加载失败";
   }
 }

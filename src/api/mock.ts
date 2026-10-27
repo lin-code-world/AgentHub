@@ -747,6 +747,9 @@ export const mock = {
         );
         const limit = Math.max(1, Math.min(200, Number(f.limit) || 50));
         const offset = Math.max(0, Number(f.offset) || 0);
+        // 增量查询（sinceId）与 backend store.listOpLogs 同口径：id > sinceId、升序、忽略 offset，total 仍是筛选总数
+        const sinceId = Number(f.sinceId) || 0;
+        if (sinceId > 0) return { rows: rows.filter((r) => r.id > sinceId).sort((a, b) => a.id - b.id).slice(0, limit), total: rows.length };
         return { rows: rows.slice(offset, offset + limit), total: rows.length };
       }
       case "proxy_oplog_ops":
