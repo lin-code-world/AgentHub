@@ -18,10 +18,21 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 ## 架构
 
 - `electron/` 主进程，全部 `.cjs`（CommonJS）：`main.cjs` 应用入口；`preload.cjs` IPC 白名单桥；`backend/proxy/`
-  反代网关核心；`backend/config.cjs` 全局配置。
+  反代网关核心；`backend/config.cjs` 全局配置；`backend/admin.cjs` 管理服务（局域网网页控制台的 HTTP 入口）。
 - `src/` 渲染层（Vue 3 `<script setup lang="ts">`）：`views/proxy/` 网关页面，`api/ipc.ts` 统一 IPC 封装。
 - `gateway/` Docker headless 形态：独立 package.json（依赖 `node:sqlite`，需 Node >= 22.5）。入口 `gateway/src/index.cjs` 复用
   `proxy/index.cjs` 的 `boot()`，只处理形态差异（监听覆盖、管理 REST API、停机序列）。
+
+## 管理服务与浏览器会话（桌面网页控制台）
+
+- `backend/admin.cjs`：Express，监听 0.0.0.0，端口 = 反代端口 + 1（`start({ port, commandTable, staticDir })` 传的是反代端口）。
+  `/api/rpc` 转发到与桌面 IPC 同一份命令表（`backend/commandTable.cjs` 的 `collect()`），不碰反代调度、选号、冷却、计费。
+- 令牌与会话：单一管理令牌（`backend/config.cjs` 加密落盘，桌面「设置 · 局域网访问」查看 / 修改，≥16 位不可清空）；登录走 ECDH
+  P-256 协商派生 12 小时会话密钥（`backend/adminCrypto.cjs` 与 `src/api/adminCrypto.ts` 协议逐字对齐，改动两边一起改），请求 /
+  响应 / SSE 全密文，时间窗 + 随机数防重放；会话存浏览器 localStorage，令牌只在登录瞬间参与签名、不落浏览器；改令牌即全部会话失效。
+- 命令形态门控：`commandTable.cjs` 的 `modeOf/denyReason(cmd, form)`，`form` 分 `container` / `browser`；deny 文案两表
+  `DENY`（容器）与 `DENY_BROWSER`（浏览器），`DENY` 同键必须在 `DENY_BROWSER` 有文案（加载期 fail-fast），`DENY_BROWSER` 另含
+  桌面专用命令（令牌读写 / 目录 / 整份配置）。改 deny 集合两表一起改。
 
 ## 双形态共享网关核心
 

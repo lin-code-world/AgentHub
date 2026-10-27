@@ -89,6 +89,10 @@ curl -s http://127.0.0.1:9528/api/status                 # 版本 / 平台 / 加
 
 页面状态刷新走 SSE（`GET /api/events`，需令牌）：事件信封与桌面版完全同形，断线自动重连。
 
+> 现状说明：容器的管理 REST 路由（`gateway/src/index.cjs`）与桌面版局域网网页控制台的管理服务
+> （`electron/backend/admin.cjs`）是**两套独立实现**——共享同一份网关核心，管理面各维护一份路由与鉴权
+> （容器走 bearer token，桌面走 ECDH 会话加密），能力边界与文案以此文档描述的容器口径为准。
+
 ### 4.2 改端口
 
 ```bash
