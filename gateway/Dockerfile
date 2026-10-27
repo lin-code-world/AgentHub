@@ -43,8 +43,8 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 
-# electron/backend 整目录：静态闭包 105 个文件横跨 proxy 与 backend 根（config/webdav 等
-# 共享传输层），白名单会随新增渠道持续漂移；整目录约 2.7MB，换「以后新增依赖零改动」
+# electron/backend 整目录：静态闭包 105 个文件横跨 proxy 与 backend 根（config 等共享模块），
+# 白名单会随新增渠道持续漂移；整目录约 2.7MB，换「以后新增依赖零改动」
 COPY electron/backend ./electron/backend
 COPY gateway/src ./gateway/src
 COPY package.json ./

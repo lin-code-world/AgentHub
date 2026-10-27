@@ -5,9 +5,8 @@
 # 网关：http://<主机>:9527/v1 （OpenAI / Anthropic / Responses 三协议兼容）
 # 管理：http://127.0.0.1:9528/api （默认只绑宿主本机；远程管理请前置带 TLS 的反向代理）
 #
-# 账号从哪来（两条路，详见仓库 docs 下的部署文档）：
-#   ① 配同一个 WebDAV/S3：PUT /api/config/webdav 写入后号池自动同步（推荐）
-#   ② POST /api/accounts/import 导入 JSON（桌面版导出的快照或手工凭据）
+# 账号从哪来（详见 gateway/README.md §6）：
+#   POST /api/accounts/import 导入含 token 的凭据 JSON（桌面版「导出凭据」或手工生成）
 # 注意：与桌面版共用同一个数据卷拿不到凭据——桌面凭据是 safeStorage 密文，容器解不开
 #
 # 环境变量：

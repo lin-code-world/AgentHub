@@ -89,7 +89,7 @@ function requireFull(req, res) {
 }
 
 /** 单实例锁：同一数据目录只允许一个网关进程（本机直跑与容器、或两个容器共卷双写会把
- *  冷却表/签到/号池同步互相踩烂）。同 host 且 pid 存活 → 拒绝；异 host 无法探活，接管并
+ *  冷却表/签到互相踩烂）。同 host 且 pid 存活 → 拒绝；异 host 无法探活，接管并
  *  继续——跨机共用数据卷属误配置，部署文档明确不支持 */
 function acquireLock() {
   const file = path.join(process.env.AGENTHUB_DATA_DIR, "gateway.lock");

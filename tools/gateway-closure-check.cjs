@@ -15,7 +15,7 @@
 //
 // 用法：node tools/gateway-closure-check.cjs [--root <dir>] [--min <n>]
 //   --root  以该目录为仓库根（默认脚本的上一级）
-//   --min   闭包文件数下限（默认 108，防 COPY 缩水后无人察觉；闭包仅含网关运行时依赖，
+//   --min   闭包文件数下限（默认 107，防 COPY 缩水后无人察觉；闭包仅含网关运行时依赖，
 //           上游其它历史板块本就不在其中，不影响此数）
 //
 // 入口是显式清单：gateway/src/index.cjs 的核心模块全部用 path.join 动态拼路径，
