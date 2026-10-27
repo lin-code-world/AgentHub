@@ -792,6 +792,10 @@ function register(ipcMain) {
     } catch (e) {
       return fail(String((e && e.message) || e));
     }
+    // 写盘成功才广播（Ruling 28）：桌面渲染层（App.vue 的 config-changed 分支）据此重拉
+    // 内存快照，否则它随后的任何整份保存（切主题等）都会用旧快照把这里刚写下的值回滚。
+    // payload.event 会盖掉 platform.electron.emit 里的 event:"proxy"，前端收到 { event: "config-changed" }
+    events.emit({ event: "config-changed" });
     return ok({});
   }));
 

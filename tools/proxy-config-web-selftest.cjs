@@ -177,6 +177,36 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
   }
 
   console.log("");
+  console.log("=== 7 写盘成功后广播 config-changed（Ruling 28）===");
+  // proxy/index.cjs 是按模块对象调 events.emit(...) 的，换掉 emit 即可当监听器
+  const eventsModule = require("../electron/backend/proxy/events.cjs");
+  const emitted = [];
+  const origEmit = eventsModule.emit;
+  eventsModule.emit = (payload) => emitted.push(payload);
+  if (!saveFn || !loadFn || !commands.get("save_config")) {
+    ok("proxy_config_save 广播 config-changed", false, "命令未注册");
+    ok("入参非法被拒时不广播", false, "命令未注册");
+    ok("浏览器写入不被桌面旧快照整份保存回滚", false, "命令未注册");
+  } else {
+    emitted.length = 0;
+    await saveFn(null, { config: { concurrency: 4 } });
+    ok('写盘成功后广播 { event: "config-changed" }', emitted.some((p) => p && p.event === "config-changed"), JSON.stringify(emitted));
+    emitted.length = 0;
+    await saveFn(null, { config: [1, 2] });
+    ok("入参非法被拒时不广播", emitted.length === 0, JSON.stringify(emitted));
+
+    // 模拟评审实测的回滚链路：浏览器写入 → 桌面收到 config-changed → refreshConfig（即 load_config）
+    // → 桌面随后整份保存（切主题等）。快照必须取到浏览器刚写的值，整份保存才不会把它写回去
+    await saveFn(null, { config: { concurrency: 9 } });
+    const deskSnap = await loadFn(null, {});
+    ok("桌面快照含浏览器写入值（concurrency=9）", !!(deskSnap && deskSnap.proxy && Number(deskSnap.proxy.concurrency) === 9), JSON.stringify(deskSnap && deskSnap.proxy && deskSnap.proxy.concurrency));
+    const r2 = await commands.get("save_config")(null, { config: deskSnap });
+    ok("整份保存成功", !!(r2 && r2.ok === true), JSON.stringify(r2));
+    ok("浏览器写入未被整份保存回滚（concurrency 仍 9）", Number(config.loadConfig().proxy.concurrency) === 9, String(config.loadConfig().proxy.concurrency));
+  }
+  eventsModule.emit = origEmit;
+
+  console.log("");
   console.log("RESULT: " + pass + " passed / " + fail + " failed");
   if (bad.length) { console.log("failures:"); bad.forEach((x) => console.log("  - " + x)); }
   try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch {}

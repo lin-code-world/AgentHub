@@ -33,10 +33,11 @@ let dispose: (() => void)[] = [];
 
 onMounted(() => {
   app.load();
-  // 更新事件全局唯一监听：main 侧托盘等直写配置后的广播（config-changed）→
-  // 重拉内存快照，防设置页旧快照把新值冲掉
+  // 更新事件全局唯一监听：main 侧（托盘直写配置、浏览器端 proxy_config_save）的广播（config-changed）→
+  // 重拉内存快照，防设置页旧快照把新值冲掉（Ruling 28）。只在桌面窗口刷新：
+  // 浏览器自己的快照就是刚保存的那份，再调 load_config 反而会被 deny 打噪音
   const offConfigChanged = api.onUpdateEvent((e) => {
-    if ((e as { event?: string }).event === "config-changed") {
+    if ((e as { event?: string }).event === "config-changed" && api.isElectron()) {
       app.refreshConfig();
     }
   });
