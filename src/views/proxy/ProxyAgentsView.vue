@@ -1019,7 +1019,7 @@ async function saveNote() {
       return;
     }
     noteOpen.value = false;
-    toast(text ? "备注已保存（将随 WebDAV 同步）" : "备注已清除");
+    toast(text ? "备注已保存（仅本机）" : "备注已清除");
   } catch (e) {
     toast(String((e as Error).message || e), "err");
   } finally {
@@ -1619,7 +1619,7 @@ onUnmounted(() => {
               <el-tooltip content="把选中账号导出为 JSON 文件（含明文 token/refreshToken，可直接用于其他软件）" placement="top">
                 <button class="btn btn-sm" @click="exportOpen = true">导出</button>
               </el-tooltip>
-              <el-tooltip content="删除选中的账号（本地加密凭据一并删除，删除会经 WebDAV 同步传播到其他设备）" placement="top">
+              <el-tooltip content="删除选中的账号（本地加密凭据一并删除，仅对本机生效）" placement="top">
                 <button class="btn btn-sm danger" :disabled="batchDelBusy" @click="batchDelOpen = true">批量删除</button>
               </el-tooltip>
             </template>
@@ -1918,7 +1918,7 @@ onUnmounted(() => {
                       </button>
                     </el-tooltip>
                     <button class="btn-link btn-sm" @click="toggleAccount(acc)">{{ acc.status === "disabled" ? "启用" : "停用" }}</button>
-                    <el-tooltip content="添加 / 编辑备注（随 WebDAV 同步到其他设备）" placement="top">
+                    <el-tooltip content="添加 / 编辑备注（仅保存在本机）" placement="top">
                       <button class="btn-link btn-sm" @click="openNote(acc)">备注</button>
                     </el-tooltip>
                     <button class="btn-link btn-sm danger" @click="delRow = acc; delOpen = true">删除</button>
@@ -2000,7 +2000,7 @@ onUnmounted(() => {
 
           <!-- 容器形态的可行路径：OAuth/本机扫描/文件选择都被服务端禁用，先把话说清楚 -->
           <div v-if="containerForm" class="add-msg">
-            容器形态推荐：设置 → 号池同步（WebDAV/S3）；也可粘贴含 token/refreshToken 的凭据 JSON，或调用管理 API <code>/api/accounts/import</code>。桌面端号池「导出」按钮的产物已含明文凭据（<code>format=agenthub-credentials</code>），可以直接拿来灌号。
+            容器形态灌号：粘贴含 token/refreshToken 的凭据 JSON，或调用管理 API <code>/api/accounts/import</code>。桌面端号池「导出」按钮的产物已含明文凭据（<code>format=agenthub-credentials</code>），可以直接拿来灌号。
           </div>
 
           <!-- 方式内容：各面板共用固定高度，切换时弹窗不跳高度 -->
@@ -2221,7 +2221,7 @@ onUnmounted(() => {
         <div class="p-dlg glass">
           <div class="p-title">批量删除账号</div>
           <div class="set-desc">
-            确定把选中的 {{ selectedCount }} 个账号从号池删除？本地加密保管的凭据会一并删除，这些账号不再参与调度（删除会经 WebDAV 同步传播到其他设备）。
+            确定把选中的 {{ selectedCount }} 个账号从号池删除？本地加密保管的凭据会一并删除，这些账号不再参与调度（仅对本机生效）。
           </div>
           <div class="p-actions">
             <button class="btn" @click="batchDelOpen = false">取消</button>

@@ -141,7 +141,7 @@ function solveCaptcha(cfg, opts) {
   if (!cfg || !cfg.sceneId) return Promise.resolve({ ok: false, message: "验证码配置缺失（sceneId 为空）" });
   // 无图形环境不假装能过人机校验：交回 needCaptcha，由调用方如实标记人工
   if (!platform.isElectron) {
-    return Promise.resolve({ ok: false, needCaptcha: true, message: "无图形环境无法过人机校验；请在桌面版号池页手动领取（账号经号池同步过来）" });
+    return Promise.resolve({ ok: false, needCaptcha: true, message: "无图形环境无法过人机校验；请在桌面版号池页手动领取，再用「导出选中账号」的凭据 JSON 导入到容器" });
   }
   // electron API 只在桌面路径可达（上方守卫已拦截 headless），惰性 require 让本文件在容器内可安全加载
   const { BrowserWindow, ipcMain } = require("electron");

@@ -52,12 +52,12 @@ module.exports = {
   },
 
   // 无图形环境：不假装能过人机校验，交回 needCaptcha 让调用方走人工
-  // （桌面版号池页手动领取，账号经 WebDAV/S3 号池同步过来）
+  // （桌面版号池页手动领取，账号凭据用「导出选中账号」的 JSON 导入到容器）
   solveCaptcha() {
     return Promise.resolve({
       ok: false,
       needCaptcha: true,
-      message: "无图形环境无法过人机校验；请在桌面版号池页手动领取（账号经号池同步过来）",
+      message: "无图形环境无法过人机校验；请在桌面版号池页手动领取，再用「导出选中账号」的凭据 JSON 导入到容器",
     });
   },
 

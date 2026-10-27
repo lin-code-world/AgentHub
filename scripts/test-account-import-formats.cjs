@@ -50,7 +50,7 @@ try {
     const r = parse(metadata, "modelscope");
     ok(r.reason === "metadata-only", "识别为元数据包（不再按缺 token 报错）", r);
     ok(r.list.length === 0 && r.invalid === 2, "不产出任何可导入账号，并如实计数", r);
-    ok(/元数据/.test(proxy.METADATA_ONLY_MESSAGE) && /号池同步/.test(proxy.METADATA_ONLY_MESSAGE), "提示文案指向号池同步", proxy.METADATA_ONLY_MESSAGE);
+    ok(/元数据/.test(proxy.METADATA_ONLY_MESSAGE) && /凭据 JSON/.test(proxy.METADATA_ONLY_MESSAGE) && /api\/accounts\/import/.test(proxy.METADATA_ONLY_MESSAGE), "提示文案指向凭据 JSON / 管理 API", proxy.METADATA_ONLY_MESSAGE);
   }
 
   console.log("\n[2] 带 token 的裸数组 / {accounts:[]} 包装仍正常");
