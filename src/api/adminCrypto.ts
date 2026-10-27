@@ -8,15 +8,16 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 浏览器端加密传输层（任务 7）：WebCrypto 的 ECDH P-256 登录协商、HKDF 密钥派生、HMAC 请求签名、
+// 浏览器端加密传输层（任务 7）：ECDH P-256 登录协商、HKDF 密钥派生、HMAC 请求签名、
 // AES-256-GCM 请求/响应/SSE 帧加解密。协议 v1 与 electron/backend/adminCrypto.cjs 逐字对齐
 // （tools/admin-crypto-browser-selftest.cjs 里同一套常量独立校验，谁改协议两边一起改）：
-//   · 编码：二进制一律 base64；公钥 = base64(SPKI DER)；ts = Unix 毫秒；ciphertext = base64(密文‖16 字节 GCM tag)。
+//   · 编码：二进制一律 base64；公钥 = base64(SPKI DER)（26 字节固定前缀 + 65 字节未压缩点）；ts = Unix 毫秒；
+//     ciphertext = base64(密文‖16 字节 GCM tag)。
 //   · K_token = HKDF-SHA256(令牌, salt="agenthub-admin", info="agenthub-auth")；
 //     令牌只在登录瞬间参与派生与签名，用完即丢，不落 localStorage。
 //   · 登录请求签名 = HMAC(K_token, clientPubKey \n ts \n nonce)；
 //     登录响应签名 = HMAC(K_token, serverPubKey \n sessionId \n ts \n nonce)（响应不带任何会话密钥）。
-//   · 会话密钥 = ECDH 共享秘密经 HKDF 派生（salt 同为 "agenthub-admin"）：
+//   · 会话密钥 = ECDH 共享秘密（未压缩点 X 坐标）经 HKDF 派生（salt 同为 "agenthub-admin"）：
 //     K_req（info=agenthub-req，请求密文）、K_resp（info=agenthub-resp，响应与 SSE 帧）、K_sig（info=agenthub-sig，请求签名）。
 //   · 请求签名 = HMAC(K_sig, sessionId \n METHOD \n path \n ts \n nonce \n bodyHash)；
 //     METHOD 大写；bodyHash = base64(SHA-256(密文字节))，无请求体（SSE）为空串。
@@ -25,12 +26,25 @@
 //   · SSE（Ruling 18）：fetch 流 + 断线重新签名（一次性 nonce 无法重签，禁止原生 EventSource）；
 //     每帧明文带连接内从 1 起的单调 seq（Ruling 19），重连后基线清零（跨连接沿用会把重连首帧误判成跳帧）。
 // localStorage 只存 sessionId / 会话密钥 / 登录时间；旧版令牌键（agenthub.adminToken）登录后清掉。
+//
+// 密码学实现（Ruling 20）：@noble/curves（P-256 ECDH）+ @noble/hashes（HKDF/HMAC/SHA-256）+ @noble/ciphers（AES-GCM）
+// 纯 JS，不碰 WebCrypto——浏览器的 crypto.subtle 只在安全上下文（https / localhost）暴露，
+// 局域网 http://IP 访问时不存在；纯 JS 实现任何上下文都能跑，随机数用的 crypto.getRandomValues 无此限制。
+import { p256 } from "@noble/curves/nist.js";
+import { hkdf } from "@noble/hashes/hkdf.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { gcm } from "@noble/ciphers/aes.js";
+
 const HKDF_SALT = "agenthub-admin";
 const INFO_TOKEN = "agenthub-auth";
 const INFO_REQ = "agenthub-req";
 const INFO_RESP = "agenthub-resp";
 const INFO_SIG = "agenthub-sig";
 const KEY_LEN = 32;
+
+// P-256 公钥的 SPKI DER 固定前缀（26 字节：SEQUENCE + AlgorithmIdentifier + BIT STRING 头），后接 65 字节未压缩点
+const SPKI_PREFIX_HEX = "3059301306072a8648ce3d020106082a8648ce3d030107034200";
 
 const SESSION_KEY = "agenthub.adminSession";
 const LEGACY_TOKEN_KEY = "agenthub.adminToken";
@@ -69,13 +83,6 @@ interface LoginResponse {
   message?: string;
 }
 
-function subtleOf(): SubtleCrypto {
-  const s = globalThis.crypto && globalThis.crypto.subtle;
-  // WebCrypto 只在安全上下文暴露：局域网 http://IP 访问时 subtle 为 undefined（只能换 https 或 localhost）
-  if (!s) throw new Error("当前浏览器环境不支持 WebCrypto（需通过 HTTPS 或 localhost 访问），无法建立加密会话");
-  return s;
-}
-
 function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
@@ -94,45 +101,66 @@ function bytesOfB64(s: string): Uint8Array {
   return out;
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
 function randomB64(n: number): string {
   const out = new Uint8Array(n);
-  globalThis.crypto.getRandomValues(out);
+  globalThis.crypto.getRandomValues(out); // getRandomValues 无安全上下文限制（只有 subtle 有）
   return b64Of(out);
 }
 
+/** 未压缩点（65 字节 04‖X‖Y）→ SPKI DER base64（与服务端 createPublicKey({format:"der",type:"spki"}) 对齐） */
+function spkiOfPoint(point: Uint8Array): string {
+  return b64Of(concatBytes(hexToBytes(SPKI_PREFIX_HEX), point));
+}
+
+/** SPKI DER base64 → 未压缩点；前缀 / 长度 / 点格式不符抛错（调用方按登录失败收口） */
+function pointOfSpki(spkiB64: string): Uint8Array {
+  const der = bytesOfB64(spkiB64);
+  const prefix = hexToBytes(SPKI_PREFIX_HEX);
+  if (der.length !== prefix.length + 65 || der[26] !== 0x04) throw new Error("公钥格式不合法");
+  for (let i = 0; i < prefix.length; i++) if (der[i] !== prefix[i]) throw new Error("公钥格式不合法");
+  return der.slice(prefix.length);
+}
+
 /** HKDF-SHA256 派生：ikm + 固定 salt（"agenthub-admin"）+ info → 32 字节 */
-async function hkdf(ikm: Uint8Array, info: string): Promise<Uint8Array> {
-  const key = await subtleOf().importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
-  const bits = await subtleOf().deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(HKDF_SALT), info: utf8(info) }, key, KEY_LEN * 8);
-  return new Uint8Array(bits);
+function deriveKey(ikm: Uint8Array, info: string): Uint8Array {
+  return hkdf(sha256, ikm, utf8(HKDF_SALT), utf8(info), KEY_LEN);
 }
 
 /** HMAC-SHA256 签名：字段以 \n 分隔（字段本身不含 \n：base64 / 数字 / 路径），输出 base64 */
-async function hmacB64(keyBytes: Uint8Array, parts: string[]): Promise<string> {
-  const key = await subtleOf().importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return b64Of(new Uint8Array(await subtleOf().sign("HMAC", key, utf8(parts.join("\n")))));
+function hmacB64(keyBytes: Uint8Array, parts: string[]): string {
+  return b64Of(hmac(sha256, keyBytes, utf8(parts.join("\n"))));
 }
 
 /** 密文哈希：base64(SHA-256(密文字节))，密文字节 = base64 解码后的 密文‖tag */
-async function bodyHashOf(ciphertext: string): Promise<string> {
-  return b64Of(new Uint8Array(await subtleOf().digest("SHA-256", bytesOfB64(ciphertext))));
+function bodyHashOf(ciphertext: string): string {
+  return b64Of(sha256(bytesOfB64(ciphertext)));
 }
 
-/** 加密（默认 K_resp）：返回 { iv, ciphertext }，ciphertext = base64(密文‖tag)（WebCrypto 输出即密文‖tag） */
-async function seal(keyB64: string, payload: unknown): Promise<{ iv: string; ciphertext: string }> {
+/** 加密（默认 K_resp）：返回 { iv, ciphertext }，ciphertext = base64(密文‖tag) */
+function seal(keyB64: string, payload: unknown): { iv: string; ciphertext: string } {
   const iv = new Uint8Array(12);
   globalThis.crypto.getRandomValues(iv);
-  const key = await subtleOf().importKey("raw", bytesOfB64(keyB64), "AES-GCM", false, ["encrypt"]);
   const text = typeof payload === "string" ? payload : JSON.stringify(payload);
-  const out = await subtleOf().encrypt({ name: "AES-GCM", iv }, key, utf8(text));
-  return { iv: b64Of(iv), ciphertext: b64Of(new Uint8Array(out)) };
+  return { iv: b64Of(iv), ciphertext: b64Of(gcm(bytesOfB64(keyB64), iv).encrypt(utf8(text))) };
 }
 
 /** 解密：GCM 认证失败（含密文被篡改）返回 null，调用方按统一失效文案处理 */
-async function open(keyB64: string, ivB64: string, ciphertextB64: string): Promise<string | null> {
+function open(keyB64: string, ivB64: string, ciphertextB64: string): string | null {
   try {
-    const key = await subtleOf().importKey("raw", bytesOfB64(keyB64), "AES-GCM", false, ["decrypt"]);
-    const plain = await subtleOf().decrypt({ name: "AES-GCM", iv: bytesOfB64(ivB64) }, key, bytesOfB64(ciphertextB64));
+    const plain = gcm(bytesOfB64(keyB64), bytesOfB64(ivB64)).decrypt(bytesOfB64(ciphertextB64));
     return new TextDecoder().decode(plain);
   } catch {
     return null;
@@ -194,13 +222,12 @@ export function handleAuthLost(): never {
 export async function login(token: string): Promise<void> {
   const t = String(token || "").trim();
   if (!t) throw new Error(LOGIN_FAILED_MESSAGE);
-  subtleOf(); // WebCrypto 缺失（非安全上下文）在这里就报，别让它混进「登录失败」统一文案
-  const kToken = await hkdf(utf8(t), INFO_TOKEN);
-  const kp = (await subtleOf().generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
-  const clientPubKey = b64Of(new Uint8Array(await subtleOf().exportKey("spki", kp.publicKey)));
+  const kToken = deriveKey(utf8(t), INFO_TOKEN);
+  const { secretKey } = p256.keygen();
+  const clientPubKey = spkiOfPoint(p256.getPublicKey(secretKey, false));
   const ts = Date.now();
   const nonce = randomB64(16);
-  const sig = await hmacB64(kToken, [clientPubKey, String(ts), nonce]);
+  const sig = hmacB64(kToken, [clientPubKey, String(ts), nonce]);
   let res: Response | null = null;
   let data: LoginResponse | null = null;
   try {
@@ -213,17 +240,17 @@ export async function login(token: string): Promise<void> {
   if (res.status === 401) throw new Error(LOGIN_FAILED_MESSAGE);
   if (!res.ok) throw new Error(typeof data.message === "string" && data.message ? data.message : LOGIN_FAILED_MESSAGE); // 429 等透传服务端提示
   // 响应校验：签名 + 回带 ts / nonce 一致（防中间人换包）；任一不符按登录失败，不区分原因
-  const expectSig = await hmacB64(kToken, [String(data.serverPubKey), String(data.sessionId), String(data.ts), String(data.nonce)]);
+  const expectSig = hmacB64(kToken, [String(data.serverPubKey), String(data.sessionId), String(data.ts), String(data.nonce)]);
   if (data.ok !== true || data.ts !== ts || data.nonce !== nonce || data.sig !== expectSig) throw new Error(LOGIN_FAILED_MESSAGE);
   if (typeof data.sessionId !== "string" || !data.sessionId || typeof data.serverPubKey !== "string" || !data.serverPubKey) throw new Error(LOGIN_FAILED_MESSAGE);
   let shared: Uint8Array;
   try {
-    const serverPub = await subtleOf().importKey("spki", bytesOfB64(data.serverPubKey), { name: "ECDH", namedCurve: "P-256" }, true, []);
-    shared = new Uint8Array(await subtleOf().deriveBits({ name: "ECDH", public: serverPub }, kp.privateKey, 256));
+    // 共享秘密 = 未压缩点 X 坐标（与服务端 crypto.diffieHellman 的输出逐字节一致）
+    shared = p256.getSharedSecret(secretKey, pointOfSpki(data.serverPubKey), false).slice(1, 33);
   } catch {
     throw new Error(LOGIN_FAILED_MESSAGE); // 服务端公钥解不出 / ECDH 失败：同样按登录失败处理
   }
-  const keys: StoredKeys = { kReq: b64Of(await hkdf(shared, INFO_REQ)), kResp: b64Of(await hkdf(shared, INFO_RESP)), kSig: b64Of(await hkdf(shared, INFO_SIG)) };
+  const keys: StoredKeys = { kReq: b64Of(deriveKey(shared, INFO_REQ)), kResp: b64Of(deriveKey(shared, INFO_RESP)), kSig: b64Of(deriveKey(shared, INFO_SIG)) };
   const st = storageOf();
   if (!st) throw new Error(LOGIN_FAILED_MESSAGE); // 会话存不下来（隐私模式）等于没登录
   st.setItem(SESSION_KEY, JSON.stringify({ sessionId: data.sessionId, keys, loginAt: Date.now() }));
@@ -235,10 +262,10 @@ export async function login(token: string): Promise<void> {
 export async function request(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   const s = loadSession();
   if (!s || Date.now() - s.loginAt >= SESSION_TTL_MS) return handleAuthLost(); // 无会话 / 本地已过期：清会话回登录页
-  const sealed = await seal(s.keys.kReq, JSON.stringify({ cmd, args: args || {} }));
+  const sealed = seal(s.keys.kReq, JSON.stringify({ cmd, args: args || {} }));
   const ts = Date.now();
   const nonce = randomB64(16);
-  const sig = await hmacB64(bytesOfB64(s.keys.kSig), [s.sessionId, "POST", RPC_PATH, String(ts), nonce, await bodyHashOf(sealed.ciphertext)]);
+  const sig = hmacB64(bytesOfB64(s.keys.kSig), [s.sessionId, "POST", RPC_PATH, String(ts), nonce, bodyHashOf(sealed.ciphertext)]);
   let res: Response;
   try {
     res = await fetchImpl(RPC_PATH, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: s.sessionId, ts, nonce, sig, iv: sealed.iv, ciphertext: sealed.ciphertext }) });
@@ -249,7 +276,7 @@ export async function request(cmd: string, args?: Record<string, unknown>): Prom
   const data = (await res.json().catch(() => null)) as { nonce?: string; iv?: string; ciphertext?: string; message?: string } | null;
   if (!res.ok) throw new Error((data && data.message) || `命令 ${cmd} 执行失败（HTTP ${res.status}）`); // 404 未知命令 / 403 门控文案照传
   if (!data || data.nonce !== nonce) return handleAuthLost(); // 响应回带 nonce 不符：按失效处理（统一文案）
-  const plain = await open(s.keys.kResp, String(data.iv || ""), String(data.ciphertext || ""));
+  const plain = open(s.keys.kResp, String(data.iv || ""), String(data.ciphertext || ""));
   if (plain === null) return handleAuthLost(); // GCM 解不开（密文被篡改）：按失效处理
   try {
     return JSON.parse(plain);
@@ -264,7 +291,7 @@ export async function eventsUrl(): Promise<string> {
   if (!s || Date.now() - s.loginAt >= SESSION_TTL_MS) return handleAuthLost();
   const ts = Date.now();
   const nonce = randomB64(16);
-  const sig = await hmacB64(bytesOfB64(s.keys.kSig), [s.sessionId, "GET", EVENTS_PATH, String(ts), nonce, ""]);
+  const sig = hmacB64(bytesOfB64(s.keys.kSig), [s.sessionId, "GET", EVENTS_PATH, String(ts), nonce, ""]);
   return `${EVENTS_PATH}?sessionId=${encodeURIComponent(s.sessionId)}&ts=${ts}&nonce=${encodeURIComponent(nonce)}&sig=${encodeURIComponent(sig)}`;
 }
 
@@ -275,7 +302,7 @@ export function createEventFrameDecoder(): (frame: { iv?: string; ciphertext?: s
   return async (frame) => {
     const s = loadSession();
     if (!s) return null;
-    const plain = await open(s.keys.kResp, String(frame.iv || ""), String(frame.ciphertext || ""));
+    const plain = open(s.keys.kResp, String(frame.iv || ""), String(frame.ciphertext || ""));
     if (plain === null) return null;
     let payload: Record<string, unknown>;
     try {

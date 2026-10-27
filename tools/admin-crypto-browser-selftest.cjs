@@ -26,6 +26,9 @@
 //   S10 一次性签名 eventsUrl 可连真实 /api/events，首帧 seq=1 可解密
 //   S11 本地会话过期判断（登录时间超 12 小时 → hasSession false）
 //   S12 旧版令牌存储（agenthub.adminToken）登录后被清除
+//   S13 屏蔽 crypto.subtle（模拟局域网 http 非安全上下文）下，登录 / 请求加解密 / SSE 帧解密仍可用（Ruling 20）
+// 全程屏蔽 globalThis.crypto.subtle（浏览器在 http://IP 非安全上下文下不暴露 WebCrypto），
+// S1~S13 都在「无 WebCrypto」环境下跑，S13 再独立断言一次。
 // 沙箱：AGENTHUB_DATA_DIR 指向临时目录。用法：node tools/admin-crypto-browser-selftest.cjs
 "use strict";
 const fs = require("node:fs");
@@ -60,7 +63,7 @@ function ok(name, cond, extra) {
   }
 }
 
-const EXPECTED = ["S1 登录后 localStorage 只有 sessionId / 密钥 / 登录时间，不含令牌", "S2 登录响应签名被篡改 → 拒绝，不落会话", "S3 /api/rpc 请求体是密文（不含明文 cmd 与参数值）", "S4 加密往返：echo 明文一致", "S5 响应回带 nonce 不符 → 判失败（清会话 + 跳登录）", "S6 响应密文被篡改 → GCM 解密失败（清会话 + 跳登录）", "S7 401 → 清会话 + 可注入跳转函数被调，错误文案不泄漏校验细节", "S8 SSE 帧 seq 严格递增：跳帧 / 重放被拒，新解码器基线清零", "S9 SSE 重连后 seq 基线清零（重连首帧 seq=1 不被误判跳帧）", "S10 一次性签名 eventsUrl 可连真实 /api/events，首帧 seq=1 可解密", "S11 本地会话过期判断（登录时间超 12 小时 → hasSession false）", "S12 旧版令牌存储（agenthub.adminToken）登录后被清除"];
+const EXPECTED = ["S1 登录后 localStorage 只有 sessionId / 密钥 / 登录时间，不含令牌", "S2 登录响应签名被篡改 → 拒绝，不落会话", "S3 /api/rpc 请求体是密文（不含明文 cmd 与参数值）", "S4 加密往返：echo 明文一致", "S5 响应回带 nonce 不符 → 判失败（清会话 + 跳登录）", "S6 响应密文被篡改 → GCM 解密失败（清会话 + 跳登录）", "S7 401 → 清会话 + 可注入跳转函数被调，错误文案不泄漏校验细节", "S8 SSE 帧 seq 严格递增：跳帧 / 重放被拒，新解码器基线清零", "S9 SSE 重连后 seq 基线清零（重连首帧 seq=1 不被误判跳帧）", "S10 一次性签名 eventsUrl 可连真实 /api/events，首帧 seq=1 可解密", "S11 本地会话过期判断（登录时间超 12 小时 → hasSession false）", "S12 旧版令牌存储（agenthub.adminToken）登录后被清除", "S13 屏蔽 crypto.subtle（模拟局域网 http 非安全上下文）下登录 / 请求加解密 / SSE 帧解密仍可用（Ruling 20）"];
 
 // ===== TS 源文件直载：esbuild 编译成 CJS 后经 require.extensions 挂载 =====
 function installTsLoader() {
@@ -142,6 +145,9 @@ const fakeTable = {
 };
 
 (async () => {
+  // 模拟局域网 http 非安全上下文：屏蔽 crypto.subtle（浏览器在 http://IP 下不暴露 WebCrypto，getRandomValues 保留），
+  // 整个自测在「无 WebCrypto」环境下跑，S13 再独立断言一次（Ruling 20：纯 JS 密码库不依赖 WebCrypto）
+  Object.defineProperty(globalThis, "crypto", { value: { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) }, configurable: true });
   installTsLoader();
   let adminCrypto = null,
     eventsApi = null,
@@ -341,6 +347,16 @@ const fakeTable = {
   ok("S7 401 → 清会话", sessRaw() === null && !adminCrypto.hasSession(), `sess=${sessRaw()}`);
   ok("S7 401 → 可注入跳转函数被调用一次", navCount === nav7 + 1, `nav=${navCount - nav7}`);
   ok("S7 401 错误文案统一、不泄漏校验细节", s7err.length > 0 && !/签名|nonce|重放|时间窗|篡改|sig|hash|GCM/i.test(s7err), `err=${s7err}`);
+
+  // ===== S13：屏蔽 crypto.subtle 后（非安全上下文）全链路仍可用（Ruling 20：纯 JS 密码库） =====
+  console.log("S13 非安全上下文（无 crypto.subtle）");
+  ok("S13 屏蔽生效：crypto.subtle 不存在（模拟局域网 http 非安全上下文）", typeof (globalThis.crypto && globalThis.crypto.subtle) === "undefined");
+  await adminCrypto.login(TOKEN);
+  const r13 = await adminCrypto.request("echo_secret_probe", { ctx: "insecure-web" });
+  ok("S13 无 WebCrypto 下登录 + 请求加解密往返成功", !!r13 && r13.ok === true && JSON.stringify(r13.echo) === JSON.stringify({ ctx: "insecure-web" }), JSON.stringify(r13));
+  const k13 = Buffer.from(sessOf().keys.kResp, "base64");
+  const payload13 = await adminCrypto.createEventFrameDecoder()(sealWith(k13, JSON.stringify({ type: "hello", seq: 1, ts: Date.now() })));
+  ok("S13 无 WebCrypto 下 SSE 帧解密成功", !!payload13 && payload13.seq === 1, JSON.stringify(payload13));
 
   await admin.stop();
   console.log("");
