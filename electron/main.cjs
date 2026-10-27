@@ -371,6 +371,28 @@ function queueAdminSync(trigger) {
   adminSyncChain = adminSyncChain.then(() => syncAdminService(trigger)).catch((e) => __crashLog("admin-sync-failed", __describe(e)));
   return adminSyncChain;
 }
+/** 非法反代端口的显式提示（I2）：正常保存路径已被 config.validateProxyPort 拦住，
+ *  这里兜的是手工改盘 / 旧配置。只写崩溃日志等于「浏览器页突然打不开且毫无提示」。
+ *  托盘气泡优先（不阻塞启动），没有托盘才退回模态框 */
+let adminInvalidPortNotified = "";
+function notifyInvalidProxyPort(portText) {
+  if (adminInvalidPortNotified === String(portText)) return; // 同一非法值只提示一次，status 事件很频繁
+  adminInvalidPortNotified = String(portText);
+  const message = `反代端口配置非法（${portText}）：管理端口 = 反代端口 + 1，反代端口需为 1~65534 的整数。请在「配置 · 反代网关」里改回合法端口并保存。`;
+  try {
+    if (tray && !tray.isDestroyed()) {
+      tray.displayBalloon({ title: "AgentApiGateway 局域网管理页已停用", content: message });
+      return;
+    }
+  } catch {
+    /* 气泡不支持时退回弹框 */
+  }
+  try {
+    require("electron").dialog.showErrorBox("AgentApiGateway 局域网管理页已停用", message);
+  } catch {
+    /* 无 GUI 时只留痕 */
+  }
+}
 async function syncAdminService(trigger) {
   let cfg;
   try {
@@ -388,8 +410,10 @@ async function syncAdminService(trigger) {
       adminProxyPort = 0;
       __crashLog("admin-stopped-invalid-port", `trigger=${trigger} proxyPort=${proxyPort}`);
     }
+    notifyInvalidProxyPort(proxyPort);
     return;
   }
+  adminInvalidPortNotified = ""; // 端口恢复合法：下次再非法要重新提示
   if (proxyPort === adminProxyPort) return; // 端口没变：不折腾已在跑的服务
   const oldPort = adminProxyPort;
   try {

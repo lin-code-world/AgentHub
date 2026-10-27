@@ -96,6 +96,8 @@ function registerCommands(handle, deps) {
     // 设置页整份提交：out-of-band 字段（channelEnabled/checkinAutoRules）以磁盘为准，
     // 否则渲染层的旧快照会把「上游启闭」「按渠道签到」的写入冲掉（issue #90）
     const r = config.saveConfigFromUI(merged);
+    // 校验失败（如端口越界）不写盘，也不更新内存快照——否则 load_config 会吐出没落盘的脏值
+    if (r && r.ok === false) return r;
     // 落盘成功才更新内存快照，写失败时别把脏数据留给 load_config
     setC(merged);
     applyNativeTheme(api(deps, "nativeTheme"), merged);

@@ -335,6 +335,17 @@ function mergeOutOfBandProxy(disk, incoming) {
   return next;
 }
 
+/** 反代端口合法区间：管理服务端口 = 反代端口 + 1，所以 0 与 65535 都不可用（后者 +1 越界）。
+ *  设置页整份保存（saveConfigFromUI）与浏览器反代段保存（proxy_config_save）共用这一份判定：
+ *  否则用户能保存成功，反代继续监听，但管理服务被静默停掉，浏览器页突然打不开。 */
+function validateProxyPort(port) {
+  const p = Number(port);
+  if (!Number.isInteger(p) || p < 1 || p > 65534) {
+    return { ok: false, message: "反代端口必须是 1~65534 的整数（管理端口 = 反代端口 + 1，0 与 65535 都不可用）" };
+  }
+  return { ok: true, message: "" };
+}
+
 /** 设置页保存路径专用：先把 out-of-band 字段以**磁盘值**为准，再落盘。
  *
  *  为什么必须区分 saveConfig / saveConfigFromUI：
@@ -351,6 +362,13 @@ function saveConfigFromUI(cfg) {
   // 回读 port / concurrency 全 undefined，属于写坏配置。放在读盘 try 之前——
   // 那段 catch 的是「读盘失败不拦保存」，不能把这里的拒绝也一并吞掉
   if ("proxy" in next && (!next.proxy || typeof next.proxy !== "object" || Array.isArray(next.proxy))) throw new Error("配置格式不正确：proxy 段必须是对象");
+  // 端口越界（0 / 65535 之类）不写盘，返回明确失败：写进去以后管理端口 +1 无从计算，
+  // 管理服务会被静默停掉——用户只看到浏览器页突然打不开（I2）。
+  // 只校验**显式提交**的 port：部分提交（未带 port，如只改别的段）以磁盘值为准，不因缺失而误拒
+  if (next.proxy && Object.prototype.hasOwnProperty.call(next.proxy, "port")) {
+    const portCheck = validateProxyPort(next.proxy.port);
+    if (!portCheck.ok) return portCheck;
+  }
   try {
     const disk = loadConfig();
     mergeOutOfBandProxy(disk, next);
@@ -452,6 +470,6 @@ module.exports = {
   dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   normalizeHm, normalizeJitter,
-  saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS,
+  saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS, validateProxyPort,
   ensureAdminToken, adminAccessInfo, setAdminToken, onAdminTokenChanged,
 };

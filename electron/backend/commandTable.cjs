@@ -67,6 +67,9 @@ const DENY_BROWSER = {
   // 不提 ZIP——浏览器端只支持单个 JSON，不提前承诺
   proxy_account_import_file: "浏览器访问时不可用：请改用「选择 JSON 文件上传，或粘贴 JSON」导入",
   proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
+  // I1：proxy_scan 在 READ 集合里（界面分类），但浏览器拿到令牌就能直接 RPC 调它，
+  // 读回本机登录态候选（文件路径 / UID / 昵称）。前端置灰之外服务端也要拒
+  proxy_scan: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
   proxy_oauth_begin: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
   // 补漏（任务 8）：粘贴回调是 OAuth 登录的收尾命令，begin 被 deny 后它同样不该放行。
   // 刻意只进 browser 表：容器表（DENY）保持 17 条不动，容器形态口径不在本任务调整

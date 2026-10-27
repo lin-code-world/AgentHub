@@ -12,14 +12,19 @@
      左列模块按钮点击切换，右侧内容定高滚动（弹窗大小固定，不随内容长高）；
      各模块自己的配置不在弹窗里，在对应板块右上「配置」按钮切换的配置页中 -->
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import { SETTINGS_TABS } from "../../types";
+import { isWebTransport } from "../../api/caps";
 import ConfigGeneralSection from "./ConfigGeneralSection.vue";
 import ConfigTimingSection from "./ConfigTimingSection.vue";
 import ConfigLanSection from "./ConfigLanSection.vue";
 
 const app = useAppStore();
+
+/** Web 托管形态（I3）：通用 / 刷新周期依赖整份配置读写，浏览器形态拿不到真值，整块不展示；
+ *  只留「局域网访问」（只读展示管理地址，令牌修改仍被服务端 deny 并给出原因） */
+const tabs = computed(() => (isWebTransport() ? SETTINGS_TABS.filter((t) => t.key === "lan") : SETTINGS_TABS));
 
 /** 模块懒挂载：首次切到才挂载（配置拉取 / 状态探测不白跑），之后 v-show 保活 */
 const visited = ref<Record<string, boolean>>({});
@@ -43,7 +48,7 @@ watch(
     <div class="sd-layout">
       <div class="sd-nav">
         <button
-          v-for="t in SETTINGS_TABS"
+          v-for="t in tabs"
           :key="t.key"
           class="sd-nav-btn"
           :class="{ active: app.settingsTab === t.key }"

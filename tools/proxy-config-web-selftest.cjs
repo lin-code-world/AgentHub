@@ -143,6 +143,28 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
   }
 
   console.log("");
+  console.log("=== 4b proxy_config_save 端口守卫（I2：0 / 65535 会让管理端口越界）===");
+  if (!saveFn) {
+    ok("磁盘端口非法时拒绝保存", false, "命令未注册");
+  } else {
+    ok("validateProxyPort(0) 拒绝", config.validateProxyPort(0).ok === false);
+    ok("validateProxyPort(65535) 拒绝", config.validateProxyPort(65535).ok === false);
+    ok("validateProxyPort(9527) 通过", config.validateProxyPort(9527).ok === true);
+    const rawBad = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    const goodPort = rawBad.proxy.port;
+    const beforeConc = Number(config.loadConfig().proxy.concurrency);
+    rawBad.proxy.port = 65535; // 模拟手工改盘把端口写成越界值
+    fs.writeFileSync(cfgPath, JSON.stringify(rawBad, null, 2), "utf8");
+    const rBad = await saveFn(null, { config: { concurrency: 12 } });
+    ok("磁盘端口非法时 proxy_config_save 返回 ok:false", !!(rBad && rBad.ok === false && /1~65534/.test(rBad.message)), JSON.stringify(rBad));
+    ok("被拒后没有写盘（concurrency 未被改成 12）", Number(config.loadConfig().proxy.concurrency) === beforeConc, String(config.loadConfig().proxy.concurrency));
+    rawBad.proxy.port = goodPort;
+    fs.writeFileSync(cfgPath, JSON.stringify(rawBad, null, 2), "utf8");
+    const rOk = await saveFn(null, { config: { concurrency: beforeConc } });
+    ok("端口恢复合法后照常保存", !!(rOk && rOk.ok === true), JSON.stringify(rOk));
+  }
+
+  console.log("");
   console.log("=== 5 磁盘无键时提交伪值也不落盘（严格磁盘优先）===");
   if (!saveFn) {
     ok("磁盘无键时提交的伪值不落盘", false, "命令未注册");

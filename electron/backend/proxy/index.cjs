@@ -174,7 +174,19 @@ function importAccounts(list) {
     credits.refreshAccount(id).catch(() => {}); // 入池即查一次额度（失败不阻塞）
     added++;
   }
+  if (added) emitPool();
   return { added, dup };
+}
+
+/** 号池结构变更通知（I5）：账号增删改 / 导入落库 / 渠道启闭后广播 {type:"pool"}。
+ *  前端号池页对结构变化只认这一条（2 秒节流刷新），余额类的 credits 事件不再触发整页重排；
+ *  浏览器端 SSE 与桌面 IPC 走同一个 platform 事件出口，两种形态都收得到 */
+function emitPool() {
+  try {
+    events.emit({ type: "pool" });
+  } catch {
+    /* 广播失败不影响业务 */
+  }
 }
 
 /** 网关设置（框架整体配置的 proxy 段，深合并默认值后必有完整结构） */
@@ -787,6 +799,10 @@ function register(ipcMain) {
         if (Object.prototype.hasOwnProperty.call(diskProxy, k)) next.proxy[k] = diskProxy[k];
         else delete next.proxy[k];
       }
+      // 写盘前校验最终端口（以磁盘为准）：非法端口（0 / 65535）会让管理端口 +1 无从计算、
+      // 管理服务静默停掉，宁可明确拒绝这次保存（I2）
+      const portCheck = config.validateProxyPort(next.proxy.port);
+      if (!portCheck.ok) return fail(portCheck.message);
       cfg.proxy = next.proxy;
       config.saveConfig(cfg);
     } catch (e) {
@@ -852,16 +868,19 @@ function register(ipcMain) {
     }
     oplog.log("info", "网关配置", `${store.channelDisplay(channel)} ${enabled === false ? "已关闭" : "已启用"}（上游启闭）`, { channel });
     events.emit({ type: "status" });
+    emitPool(); // 渠道显隐属号池结构变化：浏览器号池页据此重拉
     return ok({ channel, enabled: enabled !== false });
   }));
   ipcMain.handle("proxy_pool_strategy", handle(({ channel, strategy }) => {
     if (!store.setPoolStrategy(channel, strategy)) return fail("不支持的调度策略");
     oplog.log("info", "网关配置", `${store.channelDisplay(channel)} 调度策略改为 ${strategy}`, { channel });
+    emitPool();
     return ok({});
   }));
   ipcMain.handle("proxy_pool_tier", handle(({ channel, tier }) => {
     if (!store.setAgentCostTier(channel, tier)) return fail("不支持的成本档位");
     oplog.log("info", "网关配置", `${store.channelDisplay(channel)} 成本档位改为 ${tier || "未标注"}`, { channel });
+    emitPool();
     return ok({});
   }));
   // 手动粘贴（三途径之一）；token 仅本地加密存储
@@ -877,6 +896,7 @@ function register(ipcMain) {
         credits.refreshAccount(r.id).catch(() => {});
         // 入池即跑一次每日任务（登录 200/绑云 50 自动 + 点赞补足）——与 OAuth 路径行为对齐
         checkinBatch({ accountId: r.id, action: "checkin" }).catch(() => {});
+        emitPool(); // 新账号入池：号池结构变化
         return ok({ id: r.id, uid: r.uid, updated: r.updated, message: r.message });
       }).catch((e) => fail(String((e && e.message) || e)));
     }
@@ -892,6 +912,7 @@ function register(ipcMain) {
     });
     credits.refreshAccount(id).catch(() => {}); // 入池即查一次额度（失败不阻塞）
     oplog.log("info", "号池账号", `手动添加 ${store.channelDisplay(channel)} 账号（uid ${String(uid || dec.uid || "-")}）`, { channel });
+    emitPool();
     return ok({ id });
   }));
   ipcMain.handle("proxy_account_remove", handle(({ id }) => {
@@ -902,6 +923,7 @@ function register(ipcMain) {
     // （2h TTL），工具续接窗口内其他账号的请求可把 tool 结果提交到已消失账号的 conversation
     try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响删除 */ }
     oplog.log("info", "号池账号", `移除 ${store.channelDisplay(acc.channel)} 账号「${acc.name}」`, { channel: acc.channel, target: acc.name });
+    emitPool();
     return ok({});
   }));
   // 批量删除（号池列表多选）：逐个走与单删相同的链路（CatPaw 会话清理），oplog 只记汇总一条
@@ -917,6 +939,7 @@ function register(ipcMain) {
       try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响删除 */ }
     }
     if (removed) oplog.log("info", "号池账号", `批量删除 ${removed} 个账号（选择 ${list.length} 个${missing ? `，${missing} 个已不存在` : ""}）`, {});
+    if (removed) emitPool();
     return ok({ removed, missing });
   }));
   // 明文导出选中账号（号池多选 →「导出凭据」）：与元数据导出（format=agenthub-accounts，
@@ -973,6 +996,7 @@ function register(ipcMain) {
       try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响停用 */ }
     }
     oplog.log("info", "号池账号", `${enabled ? "启用" : "停用"} ${store.channelDisplay(acc.channel)} 账号「${acc.name}」`, { channel: acc.channel, target: acc.name });
+    emitPool();
     return ok({});
   }));
   // 重命名账号（自定义备注）：改 name 字段
@@ -981,6 +1005,7 @@ function register(ipcMain) {
     if (!acc) return fail("账号不存在");
     store.updateAccount(id, { name: String(name || "").trim() });
     oplog.log("info", "号池账号", `重命名「${acc.name}」为「${String(name || "").trim()}」`, { channel: acc.channel, target: acc.name });
+    emitPool();
     return ok({});
   }));
   // 账号备注（号池列表「备注」弹窗）：落 meta.note
@@ -990,6 +1015,7 @@ function register(ipcMain) {
     if (!store.noteAccount(id, note)) return fail("账号不存在");
     const text = String(note || "").trim();
     oplog.log("info", "号池账号", `${text ? "设置备注" : "清除备注"}「${acc.name}」${text ? `：${text.slice(0, 50)}${text.length > 50 ? "…" : ""}` : ""}`, { channel: acc.channel, target: acc.name });
+    emitPool();
     return ok({});
   }));
   // 手动解除冷却：cooling 账号立即回 online，同时豁免该账号的模型级负缓存
@@ -998,6 +1024,7 @@ function register(ipcMain) {
     if (r.ok) {
       const acc = store.getAccount(id);
       oplog.log("info", "冷却与风控", `解除冷却${acc ? `「${acc.name}」` : ""}${r.releasedModels ? `（含 ${r.releasedModels} 条模型级负缓存）` : ""}`, { target: acc && acc.name });
+      emitPool();
     }
     return r.ok ? ok({ releasedModels: r.releasedModels }) : fail(r.message);
   }));
@@ -1052,6 +1079,7 @@ function register(ipcMain) {
     if (!c) return fail("候选不存在，请重新扫描");
     const r = discovery.importCandidate(c, channel || undefined);
     credits.refreshAccount(r.id).catch(() => {});
+    emitPool();
     return ok({ id: r.id, updated: r.updated });
   }));
   ipcMain.handle("proxy_oauth_begin", handle(async ({ channel, captchaVerifyParam, vendor }) => {
@@ -1063,6 +1091,7 @@ function register(ipcMain) {
         checkinBatch({ accountId: result.id, action: "checkin" }).catch(() => {});
       }
       oplog.log(result.ok ? "info" : "error", "OAuth 登录", result.ok ? `${store.channelDisplay(ch)} 授权登录成功` : result.message || `${store.channelDisplay(ch)} 授权登录失败`, { channel: ch });
+      if (result.ok) emitPool(); // OAuth 成功后账号已入池：号池结构变化
       events.emit({ type: "oauth-done", channel: ch, ...result });
     }, { openAuthWindow }, { captchaVerifyParam, vendor });
     // 带授权地址的渠道在系统浏览器打开（小浣熊走内嵌授权窗，不回 url——深链回调绝不能进浏览器
@@ -1094,6 +1123,7 @@ function register(ipcMain) {
       credits.refreshAccount(saved.id).catch(() => {});
       checkinBatch({ accountId: saved.id, action: "checkin" }).catch(() => {});
       oplog.log("info", "AutoClaw 登录", `${store.channelDisplay(ch)} 短信登录成功`, { channel: ch });
+      emitPool();
       events.emit({ type: "oauth-done", channel: ch, ok: true, id: saved.id, uid: saved.uid });
       return ok({ id: saved.id, uid: saved.uid, updated: saved.updated });
     } catch (e) {
@@ -1125,6 +1155,7 @@ function register(ipcMain) {
       credits.refreshAccount(saved.id).catch(() => {});
       checkinBatch({ accountId: saved.id, action: "checkin" }).catch(() => {});
       oplog.log("info", "Loomy 登录", "短信登录成功", { channel: "loomy" });
+      emitPool();
       events.emit({ type: "oauth-done", channel: "loomy", ok: true, id: saved.id, uid: saved.uid });
       return ok({ id: saved.id, uid: saved.uid });
     } catch (e) {
@@ -1155,6 +1186,7 @@ function register(ipcMain) {
     if (r && r.ok && r.id && String(channel || "") === "lobster") {
       credits.refreshAccount(r.id).catch(() => {});
       checkinBatch({ accountId: r.id, action: "checkin" }).catch(() => {});
+      emitPool();
       events.emit({ type: "oauth-done", channel: String(channel || ""), ok: true, id: r.id, uid: r.uid });
     }
     return r;

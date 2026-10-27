@@ -16,10 +16,13 @@
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
-import { denyState } from "../../api/caps";
+import { denyState, isWebTransport } from "../../api/caps";
 import type { AdminAccessInfo } from "../../api/ipc";
 
 const app = useAppStore();
+/** 浏览器形态（I3）：本页只作只读展示——令牌查看 / 修改在服务端被 deny，
+ *  顶部提示直接写明「请在桌面端操作」，不让用户对着置灰按钮猜原因 */
+const webForm = isWebTransport();
 /** 令牌查看 / 复制 / 修改的命令门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
 const tokenGate = denyState("admin_access_info", "admin_set_token");
 
@@ -94,8 +97,15 @@ async function saveToken() {
 <template>
   <div class="lan-sec">
     <div class="tg-head">
-      <span class="tg-hint">{{ info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
+      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的查看与修改请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
+    </div>
+
+    <!-- 安全提示（I7）：页面本身没有 HTTPS，别把「内网能用」误解成「可以对外」 -->
+    <div class="lan-warn">
+      <div><b>仅建议在可信局域网内使用</b>：登录令牌与所有数据都走明文 HTTP（页面本身没有 TLS），页面不可信、可被同网段嗅探或篡改，<b>不要映射到公网</b>。</div>
+      <div>首次启用时 Windows 防火墙会弹窗，需允许「专用网络」；只勾选「公用网络」或拒绝放行，局域网其他设备都打不开。</div>
+      <div>确需跨网访问，请在前面加一层带 TLS 的反向代理，只对外开 443，并保留令牌鉴权。</div>
     </div>
 
     <div class="card">
@@ -178,6 +188,21 @@ async function saveToken() {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+/* 安全提示块（I7）：常驻在地址卡上方，弱底不抢主操作 */
+.lan-warn {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(229, 180, 84, 0.28);
+  background: var(--warn-dim);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.lan-warn b {
+  color: var(--warn);
+  font-weight: 600;
 }
 .lan-text {
   font-size: 12px;

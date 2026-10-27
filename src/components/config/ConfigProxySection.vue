@@ -113,8 +113,9 @@ async function save() {
   msg.value = "";
   try {
     const port = Math.round(Number(app.config.proxy.port));
-    if (!Number.isFinite(port) || port < 1 || port > 65535) {
-      msg.value = "端口必须是 1-65535 的整数";
+    if (!Number.isFinite(port) || port < 1 || port > 65534) {
+      // 管理端口 = 反代端口 + 1：65535 会让管理端口越界，管理页静默消失（I2）
+      msg.value = "端口必须是 1-65534 的整数（管理端口 = 端口 + 1，65535 会越界）";
       msgErr.value = true;
       return;
     }
@@ -206,10 +207,10 @@ function openDataDir() {
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">监听端口</div>
-            <div class="set-desc">默认 9527；改端口需重启监听（秒级，不中断应用）{{ webForm ? " · " + portBindHint : "" }}</div>
+            <div class="set-desc">默认 9527；改端口需重启监听（秒级，不中断应用） · 管理端口 = 端口 + 1，所以最大只能填 65534{{ webForm ? " · " + portBindHint : "" }}</div>
           </div>
           <el-tooltip :content="portBindHint" :disabled="!webForm" placement="top">
-            <span><input v-model.number="app.config.proxy.port" class="input mono" style="width: 100px" type="number" min="1" max="65535" :disabled="webForm" /></span>
+            <span><input v-model.number="app.config.proxy.port" class="input mono" style="width: 100px" type="number" min="1" max="65534" :disabled="webForm" /></span>
           </el-tooltip>
         </div>
         <div class="set-row">
@@ -341,9 +342,10 @@ function openDataDir() {
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">自动刷新与定时签到</div>
-            <div class="set-desc">{{ proxyTimingSummary }} · 统一在「设置 · 刷新周期」管理</div>
+            <div class="set-desc">{{ proxyTimingSummary }} · {{ webForm ? "刷新周期请在桌面窗口的「设置 · 刷新周期」修改" : "统一在「设置 · 刷新周期」管理" }}</div>
           </div>
-          <button class="btn btn-ghost" @click="gotoTiming">去修改 →</button>
+          <button v-if="!webForm" class="btn btn-ghost" @click="gotoTiming">去修改 →</button>
+          <span v-else class="tag tag-warn">浏览器端不可改</span>
         </div>
         <div class="set-row">
           <div class="set-info">

@@ -48,6 +48,10 @@ ok("注入的 handle 收到同一批 handler（IPC 只是转发）", injected.le
 
 ok('modeOf("proxy_pool") === "read"', commandTable.modeOf("proxy_pool") === "read", commandTable.modeOf("proxy_pool"));
 ok('modeOf("proxy_start") === "deny"', commandTable.modeOf("proxy_start") === "deny", commandTable.modeOf("proxy_start"));
+// I1：proxy_scan 只是界面分类为 read，浏览器形态必须在服务端也 deny（否则令牌能直读本机登录态候选）
+ok('modeOf("proxy_scan", "browser") === "deny"', commandTable.modeOf("proxy_scan", "browser") === "deny", commandTable.modeOf("proxy_scan", "browser"));
+ok('denyReason("proxy_scan", "browser") 有浏览器口径文案', /扫描本机登录态/.test(String(commandTable.denyReason("proxy_scan", "browser"))), String(commandTable.denyReason("proxy_scan", "browser")));
+ok('容器形态 proxy_scan 仍为 read（口径不变）', commandTable.modeOf("proxy_scan") === "read", commandTable.modeOf("proxy_scan"));
 ok('modeOf("save_config") === "write"', commandTable.modeOf("save_config") === "write", commandTable.modeOf("save_config"));
 ok('denyReason("proxy_start") 是面向用户的文案', typeof commandTable.denyReason("proxy_start") === "string" && commandTable.denyReason("proxy_start").length >= 8, String(commandTable.denyReason("proxy_start")));
 ok('denyReason("proxy_pool") 为空（非 deny 命令无原因）', commandTable.denyReason("proxy_pool") == null, String(commandTable.denyReason("proxy_pool")));

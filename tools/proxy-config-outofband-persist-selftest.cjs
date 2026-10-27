@@ -166,6 +166,21 @@ console.log("=== 契约 C：兜底不得让保存本身失败 ===");
     const raw = JSON.parse(fs.readFileSync(config.configPath(), "utf8"));
     ok("C5 拒绝后 config.json 的 proxy 未被写坏", !Array.isArray(raw.proxy) && typeof raw.proxy === "object", JSON.stringify(Array.isArray(raw.proxy) ? "proxy 是数组" : typeof raw.proxy));
   }
+  // C6~C8（I2）：端口越界要在写盘前就被拦住——保存成功但管理端口 +1 无从计算，
+  // 管理服务会静默停掉，浏览器页突然打不开
+  {
+    ok("C6 validateProxyPort(0) 拒绝", config.validateProxyPort(0).ok === false, JSON.stringify(config.validateProxyPort(0)));
+    ok("C7 validateProxyPort(65535) 拒绝", config.validateProxyPort(65535).ok === false, JSON.stringify(config.validateProxyPort(65535)));
+    ok("C8 validateProxyPort(1)/(65534)/(9527) 通过", config.validateProxyPort(1).ok === true && config.validateProxyPort(65534).ok === true && config.validateProxyPort(9527).ok === true);
+    ok("C9 非整数（9527.5）拒绝", config.validateProxyPort(9527.5).ok === false);
+    const beforePort = Number(config.loadConfig().proxy.port);
+    const badSave = config.saveConfigFromUI({ proxy: { port: 65535 } });
+    ok("C10 端口 65535 的整份保存返回 ok:false（不静默成功）", !!(badSave && badSave.ok === false && /1~65534/.test(badSave.message)), JSON.stringify(badSave));
+    ok("C11 被拒后磁盘端口未变", Number(config.loadConfig().proxy.port) === beforePort, String(config.loadConfig().proxy.port));
+    // 部分提交（未带 port）不能被端口校验误拒：此时端口以磁盘为准，不是错误输入
+    const noPort = config.saveConfigFromUI({ proxy: { concurrency: 5 } });
+    ok("C12 未带 port 的部分提交不被误拒", !!(noPort && noPort.ok === true), JSON.stringify(noPort));
+  }
 }
 
 console.log("");

@@ -68,7 +68,7 @@ function browserCapsPayload() {
 
 async function main() {
   // ===== 1 服务端 deny 清单核查（简报逐字点名的命令） =====
-  const NAMED = ["proxy_start", "proxy_stop", "proxy_restart", "proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_ide_status", "proxy_ide_switch", "proxy_open_data_dir", "proxy_open_rules_dir", "proxy_account_import_file", "proxy_oplog_export"];
+  const NAMED = ["proxy_start", "proxy_stop", "proxy_restart", "proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_ide_status", "proxy_ide_switch", "proxy_open_data_dir", "proxy_open_rules_dir", "proxy_account_import_file", "proxy_oplog_export", "proxy_scan"];
   const ZCODE = Object.keys(commandTable.DENY_BROWSER).filter((c) => c.startsWith("proxy_zcode_"));
   ok(
     "简报点名的命令在 browser 形态全部 deny（含 proxy_oauth_submit_callback）",
@@ -137,7 +137,7 @@ async function main() {
     ["src/components/config/ConfigProxySection.vue", ["proxy_restart", "proxy_open_data_dir", "proxy_open_rules_dir"]],
     ["src/components/config/ConfigGeneralSection.vue", ["open_data_dir"]],
     ["src/views/proxy/ProxyLogView.vue", ["proxy_oplog_export"]],
-    ["src/views/proxy/ProxyAgentsView.vue", ["proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_account_import_file", "proxy_scan_import", "proxy_ide_switch", "proxy_zcode_solve_captcha", "proxy_zcode_claim_mode", "proxy_zcode_device_status", "proxy_zcode_device_repair", "proxy_zcode_restore_mid", "proxy_zcode_switch_rollback"]],
+    ["src/views/proxy/ProxyAgentsView.vue", ["proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_account_import_file", "proxy_scan", "proxy_scan_import", "proxy_ide_switch", "proxy_zcode_solve_captcha", "proxy_zcode_claim_mode", "proxy_zcode_device_status", "proxy_zcode_device_repair", "proxy_zcode_restore_mid", "proxy_zcode_switch_rollback"]],
     ["src/components/config/ConfigLanSection.vue", ["admin_set_token"]],
   ];
   for (const [file, cmds] of WIRE) {

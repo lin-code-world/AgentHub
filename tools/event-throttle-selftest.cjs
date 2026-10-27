@@ -137,6 +137,42 @@ async function step(name, fn) {
     ok("sinceId 模式 total 仍是筛选总数（分页标题用）", inc.total === 3, `total=${inc.total}`);
   });
 
+  // ===== ⑦ 号池结构事件（I5）：账号增删改 / 导入 / 渠道启闭广播 {type:"pool"} =====
+  await step("pool 结构事件", async () => {
+    const commandTable = require(path.join(ROOT, "electron", "backend", "commandTable.cjs"));
+    const credits = require(path.join(ROOT, "electron", "backend", "proxy", "credits.cjs"));
+    // 入池即刷额度会真发网络请求：替换成空实现（额度语义在 proxy-import-text-selftest 里另测）
+    credits.refreshAccount = async () => ({});
+    const commands = commandTable.collect({});
+    const poolSeen = () => seen.filter((p) => p && p.type === "pool").length;
+
+    seen.length = 0;
+    const added = await commands.get("proxy_account_add")(null, { channel: "trae", token: "selftest-token", name: "自测账号" });
+    ok("自测账号入池", !!(added && added.ok !== false && added.id), JSON.stringify(added));
+    ok("账号新增广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+
+    seen.length = 0;
+    await commands.get("proxy_account_rename")(null, { id: added.id, name: "自测改名" });
+    ok("账号重命名广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+
+    seen.length = 0;
+    await commands.get("proxy_account_toggle")(null, { id: added.id, enabled: false });
+    ok("账号启停广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+
+    seen.length = 0;
+    await commands.get("proxy_account_remove")(null, { id: added.id });
+    ok("账号删除广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+
+    seen.length = 0;
+    const imported = await commands.get("proxy_account_import_json")(null, { channel: "trae", json: JSON.stringify([{ channel: "trae", uid: "selftest-uid", token: "selftest-token" }]) });
+    ok("粘贴 JSON 导入成功", !!(imported && imported.ok !== false && imported.added === 1), JSON.stringify(imported));
+    ok("导入落库广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+
+    seen.length = 0;
+    await commands.get("proxy_pool_strategy")(null, { channel: "trae", strategy: "credit_first" });
+    ok("调度策略变更广播 {type:'pool'}", poolSeen() === 1, `事件=${JSON.stringify(seen)}`);
+  });
+
   off();
   console.log("");
   console.log(`RESULT: ${pass} passed / ${fail} failed`);

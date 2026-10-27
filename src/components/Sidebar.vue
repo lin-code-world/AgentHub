@@ -18,7 +18,7 @@ import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
 import type { ModuleKey } from "../types";
 import * as api from "../api/ipc";
-import { denyState } from "../api/caps";
+import { denyState, settingsUnavailable } from "../api/caps";
 import { coalesceAsync } from "../utils/timing";
 import { toast } from "../utils/toast";
 import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
@@ -31,6 +31,10 @@ const version = `v${pkg.version}`;
 const gwBusy = ref(false);
 /** 网关启停门控：浏览器形态被服务端 deny 时置灰并展示下发原因，桌面（无 caps）不置灰 */
 const gwGate = denyState("proxy_start", "proxy_stop");
+/** 设置弹窗入口（左下角齿轮）在 Web 托管形态整体隐藏（I3）：通用 / 刷新周期都依赖整份配置读写，
+ *  浏览器形态拿不到真值（load_config 被 deny，容器命令表只有 proxy_*），显示出来的只是前端默认值。
+ *  不逐控件置灰——一整块「不可用」的表单只会误导；反代配置仍走「配置」页的 proxy_config_get/save */
+const settingsHidden = settingsUnavailable();
 
 /** 网关服务开关（覆盖在反代网关卡右上角）：启停 + 状态经 proxy status 事件回流 */
 async function toggleGw() {
@@ -68,7 +72,7 @@ onMounted(async () => {
   // 原来只在切模块时刷一次，本模块内点「启动服务」后卡片会一直停在「网关未启动」
   offProxyEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string };
-    if (p.event === "proxy" && (p.type === "status" || p.type === "credits")) {
+    if (p.event === "proxy" && (p.type === "status" || p.type === "credits" || p.type === "pool" || p.type === "resync")) {
       scheduleProxyRefresh();
       return;
     }
@@ -238,7 +242,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
           </button>
         </el-tooltip>
-        <el-tooltip content="设置" placement="top">
+        <el-tooltip v-if="!settingsHidden" content="设置" placement="top">
           <button class="btn btn-ghost settings-btn" @click="app.openSettings('general')">
             <i class="ph ph-gear-six"></i>
           </button>
