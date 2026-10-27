@@ -8,13 +8,13 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 管理服务骨架：局域网浏览器访问的 HTTP 入口（Express），监听 0.0.0.0，端口 = 反代端口 + 1。
-// 本骨架只挂 /api/capabilities、/api/status、静态资源与 SPA 回退；
-// /api/rpc 刻意不挂——无鉴权的命令通道留到任务 6 接入鉴权后再说，避免出现临时后门。
-// 命令清单按 browser 形态下发（modeOf/denyReason 的 form 参数，文案见 commandTable.cjs）。
+// 管理服务：局域网浏览器访问的 HTTP 入口（Express），监听 0.0.0.0，端口 = 反代端口 + 1。
+// 挂载面：/api/capabilities、/api/status（公开只读）；/api/login、/api/rpc、/api/events 走 adminCrypto 的
+// ECDH 会话鉴权（登录协商 → 请求签名 → AES-256-GCM 密文），鉴权失败一律 401 统一文案，不区分失败原因。
+// 命令清单与 /api/rpc 门控按 browser 形态下发（modeOf/denyReason 的 form 参数，文案见 commandTable.cjs）。
 //
-// 结构上只依赖注入的 commandTable（collect/modeOf/denyReason）与 proxy/server.cjs 的轻量 status() 读数，
-// 不碰反代转发、选号、冷却、鉴权、计费：
+// 结构上只依赖注入的 commandTable（collect/modeOf/denyReason）、adminCrypto 的会话鉴权与
+// proxy/server.cjs 的轻量 status() 读数，不碰反代转发、选号、冷却、鉴权、计费：
 // start({ port, commandTable, staticDir }) 的 port 是**反代端口**（监听 port + 1），返回实际监听端口，
 // 容器形态（gateway）后续只换注入的命令表与 staticDir 即可复用。
 // start/stop 在模块内串行化：并发调用若先检查后赋值，会两个都 listen、stop 只关一个（端口泄漏）。
@@ -23,9 +23,14 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const express = require("express");
+const adminCrypto = require("./adminCrypto.cjs");
 
 let server = null; // http.Server：运行中的管理服务
 let listenPort = 0; // 当前监听端口（= 反代端口 + 1），未启动为 0
+
+// 401 统一文案：令牌错误 / 签名错误 / 时间窗过期 / 随机数重放 / 会话失效 / 密文被篡改，一律同一句话
+const UNAUTHORIZED = "未授权";
+const SSE_HEARTBEAT_MS = 25000; // SSE 心跳（加密帧），同时顺带检查会话是否已过期
 
 /** 反代端口 → 管理端口：0 / 65535 / 非整数拒绝（+1 后无意义或越界），错误带 code 便于调用方分辨 */
 function adminPortOf(proxyPort) {
@@ -70,8 +75,9 @@ function capabilitiesOf(commands, commandTable) {
     platform: platformForm(),
     version: appVersion(),
     modules: modulesOf(commands),
-    // 浏览器边界声明：服务启停 / SSE / 文件对话框在浏览器形态都不可用（后续任务按需放开）
-    features: { serviceControl: false, sse: false, fileDialog: false },
+    // 浏览器边界声明：服务启停 / 文件对话框在浏览器形态不可用；SSE 加密通道已提供（/api/events，
+    // 事件源与浏览器侧解码留到任务 11）
+    features: { serviceControl: false, sse: true, fileDialog: false },
     commands: out,
   };
 }
@@ -91,15 +97,121 @@ function statusOf() {
   return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway };
 }
 
-/** Express 应用：/api/capabilities、/api/status、静态资源、SPA 回退（非 /api 的 GET/HEAD 回 index.html） */
+/** 鉴权失败统一响应：不区分令牌错误 / 签名错误 / 时间窗过期 / 随机数重放 / 会话失效 / 密文被篡改 */
+function unauthorized(res) {
+  return res.status(401).json({ ok: false, message: UNAUTHORIZED });
+}
+
+// ===== SSE 长连接登记：改令牌清空会话时要连带关掉（否则旧会话的流还在推数据） =====
+const sseClients = new Set(); // { res, timer, sessionId }
+
+function sendFrame(client, keys, payload) {
+  try {
+    const sealed = adminCrypto.seal(keys.kResp, JSON.stringify(payload));
+    client.res.write(`data: ${JSON.stringify({ iv: sealed.iv, ciphertext: sealed.ciphertext })}\n\n`);
+    return true;
+  } catch {
+    return false; // 连接已断：由调用方 closeSse 收尾
+  }
+}
+
+function closeSse(client) {
+  if (client.timer) clearInterval(client.timer);
+  client.timer = null;
+  sseClients.delete(client);
+  try {
+    client.res.end();
+  } catch {
+    /* 连接已断，无需收尾 */
+  }
+}
+
+adminCrypto.onSessionsCleared(() => {
+  for (const client of [...sseClients]) closeSse(client);
+});
+
+/** POST /api/login：ECDH 登录协商（令牌由服务端从 config.admin.token 读，请求不带令牌，Ruling 3/9） */
+function loginHandler(req, res) {
+  const b = req.body || {};
+  const r = adminCrypto.createSession({ clientPubKey: b.clientPubKey, ts: b.ts, nonce: b.nonce, sig: b.sig });
+  if (!r.ok) return unauthorized(res);
+  return res.json(r); // 只回公钥 / 会话号 / 签名，会话密钥不出内存（adminCrypto 的返回值里也没有）
+}
+
+/** POST /api/rpc：鉴权 → 解密请求 → 命令表门控（browser 形态）→ 执行 handler → 加密响应（回带请求 nonce） */
+function rpcHandler({ commands, commandTable }) {
+  return async (req, res) => {
+    const b = req.body || {};
+    const { sessionId, ts, nonce, sig, iv, ciphertext } = b;
+    if (typeof ciphertext !== "string" || !ciphertext || typeof iv !== "string" || !iv) return unauthorized(res);
+    const v = adminCrypto.verifyRequest({ sessionId, ts, nonce, sig, bodyHash: adminCrypto.bodyHashOf(ciphertext), method: "POST", path: "/api/rpc" });
+    if (!v.ok) return unauthorized(res);
+    const plain = adminCrypto.open(v.keys.kReq, iv, ciphertext);
+    if (plain === null) return unauthorized(res); // GCM 认证失败（密文被篡改）
+    let req2 = null;
+    try {
+      req2 = JSON.parse(plain);
+    } catch {
+      return unauthorized(res); // 明文不是合法 JSON 同样按篡改处理，不另给文案
+    }
+    const cmd = req2 && typeof req2.cmd === "string" ? req2.cmd : "";
+    if (!cmd || !commands.has(cmd)) return res.status(404).json({ ok: false, message: "未知命令" });
+    if (commandTable.modeOf(cmd, "browser") === "deny") return res.status(403).json({ ok: false, message: commandTable.denyReason(cmd, "browser") || "浏览器访问时不可用" });
+    let result;
+    try {
+      result = await commands.get(cmd)(null, req2.args && typeof req2.args === "object" ? req2.args : {});
+    } catch (e) {
+      result = { ok: false, message: String((e && e.message) || e) };
+    }
+    if (result === undefined || result === null) result = { ok: true };
+    // handler 返回 { ok:false }（业务失败）也走加密响应，不降级成明文错误
+    const sealed = adminCrypto.seal(v.keys.kResp, JSON.stringify(result));
+    return res.json({ nonce, iv: sealed.iv, ciphertext: sealed.ciphertext });
+  };
+}
+
+/** GET /api/events：SSE（鉴权参数走 query，签名覆盖 GET /api/events、bodyHash 为空串）。
+ *  每帧都用 K_resp 加密；心跳顺带查会话，过期或被清空即关闭连接 */
+function eventsHandler() {
+  return (req, res) => {
+    const q = req.query || {};
+    const v = adminCrypto.verifyRequest({ sessionId: q.sessionId, ts: q.ts, nonce: q.nonce, sig: q.sig, bodyHash: "", method: "GET", path: "/api/events" });
+    if (!v.ok) return unauthorized(res);
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+    const client = { res, timer: null, sessionId: q.sessionId };
+    sseClients.add(client);
+    sendFrame(client, v.keys, { type: "hello", ts: Date.now() });
+    client.timer = setInterval(() => {
+      if (!adminCrypto.hasSession(client.sessionId) || !sendFrame(client, v.keys, { type: "ping", ts: Date.now() })) closeSse(client);
+    }, SSE_HEARTBEAT_MS);
+    if (typeof client.timer.unref === "function") client.timer.unref();
+    req.on("close", () => closeSse(client));
+  };
+}
+
+/** Express 应用：/api/capabilities、/api/status、/api/login、/api/rpc、/api/events、静态资源、SPA 回退 */
 function buildApp({ commandTable, staticDir }) {
   const commands = commandTable.collect(); // 命令表启动时收集一次（注册副作用幂等，时机在反代 boot 之后）
   const caps = capabilitiesOf(commands, commandTable);
   const app = express();
   app.disable("x-powered-by");
+  const jsonBody = express.json({ limit: "1mb" });
 
   app.get("/api/capabilities", (_req, res) => res.json(caps));
   app.get("/api/status", (_req, res) => res.json(statusOf()));
+  app.post("/api/login", jsonBody, loginHandler);
+  app.post("/api/rpc", jsonBody, rpcHandler({ commands, commandTable }));
+  app.get("/api/events", eventsHandler());
+  // 请求体不是合法 JSON 时别让 Express 默认错误页（HTML）冒出来，前端解析会炸
+  app.use((err, _req, res, next) => {
+    if (err && err.type === "entity.parse.failed") return res.status(400).json({ ok: false, message: "请求格式错误" });
+    return next(err);
+  });
   // 其余 /api 一律 404 JSON：SPA 回退只服务非 /api 路径，接口打错返回 HTML 会让前端解析炸掉
   app.use("/api", (_req, res) => res.status(404).json({ ok: false, message: "未知接口" }));
 
@@ -170,6 +282,7 @@ async function doStop() {
   const srv = server;
   server = null;
   listenPort = 0;
+  for (const client of [...sseClients]) closeSse(client); // SSE 是长连接，不主动关 close() 会一直等
   if (!srv) return;
   await new Promise((resolve) => {
     // keep-alive 连接不主动断的话 close() 要等到空闲超时才回调，stop 后端口迟迟不释放

@@ -10,7 +10,7 @@
  */
 // 管理服务骨架自测：admin.start / admin.stop 与 Express 挂载面（任务 5）。
 // 覆盖：/api/capabilities（browser 形态命令清单 + 文案不含容器形态措辞）、/api/status（轻量状态，
-// 不跑全量 proxy_status）、静态资源与 SPA 回退、/api 路径不回退 index.html、/api/rpc 不挂、
+// 不跑全量 proxy_status）、静态资源与 SPA 回退、/api 路径不回退 index.html、/api/rpc 未鉴权 401、
 // 反代端口 0 / 65535 拒绝、端口联动的先停后启、并发 start 不泄漏端口、启动失败后旧端口可重新拉起。
 // 纯 Node 跑（不加载 electron）：命令表只收集不执行。用法：node tools/admin-server-selftest.cjs
 "use strict";
@@ -130,7 +130,8 @@ async function reachable(p) {
   const miss = await get(base(first.port) + "/api/unknown");
   ok("GET /api/unknown 404 JSON（不回退 index.html）", miss.status === 404 && String(miss.headers.get("content-type")).includes("application/json"), `status=${miss.status} ct=${miss.headers.get("content-type")}`);
   const rpcRes = await fetch(base(first.port) + "/api/rpc", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cmd: "proxy_status" }), signal: AbortSignal.timeout(5000) });
-  ok("POST /api/rpc 未挂载（404）", rpcRes.status === 404, String(rpcRes.status));
+  const rpcBody = await rpcRes.json();
+  ok("POST /api/rpc 已挂载且未鉴权被拒（401 统一文案）", rpcRes.status === 401 && !!rpcBody && rpcBody.message === "未授权", `status=${rpcRes.status} body=${JSON.stringify(rpcBody)}`);
 
   // ===== stop 后端口关闭 =====
   await admin.stop();
