@@ -33,6 +33,7 @@ npm-debug.log*
 .workbuddy-ai/
 .zcode/
 .box-agent/
+.superpowers/
 
 # 评审中的设计稿（不入库，评审通过后再决定是否归档）
 /记忆仓库*.md
