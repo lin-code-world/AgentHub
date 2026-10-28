@@ -635,6 +635,14 @@ watch(
   <section class="page">
     <div class="page-body">
       <div v-if="err" class="card err-card"><div class="set-desc err-text">{{ err }}</div></div>
+      <div class="card" style="margin-bottom: 12px">
+        <div class="card-title">接入约定</div>
+        <div class="code">
+          客户端把 base_url 指向本网关、填一把网关 Key，模型名写 <b>标识/模型名</b>（如 myrelay/gpt-4o）即可直达该提供商。<br />
+          不带前缀的裸模型名一律先归内置渠道，只有内置目录里没有、且只有一家提供商拥有时才会落到提供商——自建条目不会悄悄顶掉生态渠道。<br />
+          模型清单里的别名同样能请求（<span class="mono">标识/别名</span>），但不出现在 /v1/models。
+        </div>
+      </div>
       <div class="toolbar">
         <button class="btn btn-primary" @click="openCreate()">添加自定义提供商</button>
       </div>
@@ -670,14 +678,6 @@ watch(
             </tr>
           </tbody>
         </table>
-      </div>
-      <div class="card" style="margin-top: 12px">
-        <div class="card-title">接入约定</div>
-        <div class="code">
-          客户端把 base_url 指向本网关、填一把网关 Key，模型名写 <b>标识/模型名</b>（如 myrelay/gpt-4o）即可直达该提供商。<br />
-          不带前缀的裸模型名一律先归内置渠道，只有内置目录里没有、且只有一家提供商拥有时才会落到提供商——自建条目不会悄悄顶掉生态渠道。<br />
-          模型清单里的别名同样能请求（<span class="mono">标识/别名</span>），但不出现在 /v1/models。
-        </div>
       </div>
     </div>
 

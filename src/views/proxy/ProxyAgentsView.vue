@@ -16,7 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import type { ProxyChannelView, ProxyAccount, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier, ProxyScanCandidate, ProxyCheckinRow, ZcodeDeviceRow } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, costTierName, checkinLabels, todayStr } from "./format";
+import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr } from "./format";
 // 顶部渠道切换（收起态方块）与「上游启闭」弹窗共用同一份渠道图标映射
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
@@ -83,18 +83,17 @@ function toast(text: string, kind: "info" | "err" = "info") {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, 4200);
 }
-// 渠道主按钮：顶部三个大按钮切换，下方整块区域只显示当前渠道号池
+// 渠道切换：顶部一行渠道胶囊，下方整块区域只显示当前渠道号池
 const activeChannel = ref<ProxyChannelId>("trae");
-/** 顶部渠道切换的形态：true = 收起成一行方块（页面默认形态），false = 展开成全部卡片。
- *  两种形态切换的是同一份 pool，选中渠道共用 activeChannel，下方列表不受形态影响 */
-const switcherCollapsed = ref(true);
-/** 收起态每个方块的气泡（无文字位，名称/可用数只能靠悬浮看）：
+/** 渠道胶囊的气泡（胶囊只显示名称，可用数与降级剩余时间靠悬浮补充）：
  *  渠道名 · 2/5 可用；降级中的渠道把剩余时间也带上，免得只看到一个红点不知道在等什么 */
 function stripTip(ch: ProxyChannelView): string {
   const usage = ch.summary.accountCount ? `${ch.summary.onlineCount}/${ch.summary.accountCount} 可用` : "空号池";
   const degrade = ch.health && ch.health.until > now.value ? ` · 降级 ${channelCoolLeft(ch)}` : "";
   return `${ch.display || channelName(ch.id)} · ${usage}${degrade}`;
 }
+/** 页面顶部切换条只列有账号的渠道（空号池没有浏览价值）；往空渠道加号走「添加账号」弹窗内的渠道下拉框 */
+const switchableChannels = computed(() => pool.value.filter((c) => (c.summary?.accountCount ?? 0) > 0));
 // 本地 IDE 快捷切换
 const ideStatus = ref<{ workbuddyInstalled: boolean; workbuddyAiInstalled?: boolean; traeInstalled?: boolean; raccoonInstalled?: boolean; lobsterInstalled?: boolean; zcodeInstalled?: boolean; qoderInstalled?: boolean; qoderIntlInstalled?: boolean; currentUid: string } | null>(null);
 const ideSwitching = ref("");
@@ -126,6 +125,8 @@ function putCheckin(channel: ProxyChannelId, rows: ProxyCheckinRow[]) {
 type AddMethod = "oauth" | "sms" | "local" | "file" | "paste";
 const addOpen = ref(false);
 const addChannel = ref<ProxyChannelId>("trae");
+/** 重登（账号行「重登」）打开的弹窗：渠道锁死在账号所属渠道——重登是换凭据，不是往别的渠道加号 */
+const reloginLock = ref(false);
 const addMethod = ref<AddMethod>("oauth");
 const pasteJson = ref("");
 const pasteMsg = ref("");
@@ -245,7 +246,7 @@ const deviceGate = denyState("proxy_zcode_device_status", "proxy_zcode_device_re
 const restoreGate = denyState("proxy_zcode_restore_mid");
 const rollbackGate = denyState("proxy_zcode_switch_rollback");
 
-// 渠道允许的添加方式（分段控件按渠道过滤）
+// 渠道允许的添加方式（分段控件按弹窗内选中的渠道过滤，与页面浏览渠道解耦）
 const METHOD_TABS = computed(
   () =>
     [
@@ -256,8 +257,8 @@ const METHOD_TABS = computed(
       { key: "paste" as const, label: "粘贴 JSON", icon: "ph-clipboard-text" },
     ]
       // ModelScope 的「粘贴」是令牌而非 JSON，标签如实改名（避免误导用户去粘 JSON）
-      .map((t) => (activeChannel.value === "modelscope" && t.key === "paste" ? { ...t, label: "粘贴令牌", icon: "ph-key" } : t))
-      .filter((t) => addTabAllowed(t.key)) as { key: AddMethod; label: string; icon: string }[]
+      .map((t) => (addChannel.value === "modelscope" && t.key === "paste" ? { ...t, label: "粘贴令牌", icon: "ph-key" } : t))
+      .filter((t) => addTabAllowed(t.key, addChannel.value)) as { key: AddMethod; label: string; icon: string }[]
 );
 
 // OAuth 面板文案按渠道切换（两种登录形态完全不同，说清楚用户才知道要做什么）
@@ -1094,12 +1095,12 @@ async function doDelete() {
 
 // ===== 添加账号 =====
 
-function openAdd(ch: ProxyChannelView) {
-  addChannel.value = ch.id;
+/** 弹窗面板状态归零（打开 / 换渠道共用）：按目标渠道重算默认方式，并清掉与旧渠道绑定的输入与提示 */
+function resetAddPanel(channel: ProxyChannelId) {
   // 默认落该渠道**第一个可用**方式：无 OAuth 的渠道（CatPaw）落「从本机软件导入」，
   // AutoClaw 国内版落「手机验证码」。写死 "oauth" 会让弹窗停在一个不可用的页签上；
   // 服务端 deny 的方式只是置灰（见 methodGate），默认页签同样要跳过它们，否则一进来就是灰页签
-  addMethod.value = allowedMethods(ch.id).find((k) => !methodGate(k).disabled) || "paste";
+  addMethod.value = allowedMethods(channel).find((k) => !methodGate(k).disabled) || "paste";
   pasteJson.value = "";
   pasteMsg.value = "";
   pasteErr.value = false;
@@ -1117,13 +1118,36 @@ function openAdd(ch: ProxyChannelView) {
   smsErr.value = false;
   scanMsg.value = "";
   scanErr.value = false;
+  loadScan(); // 扫描一次取全量候选，列表按 addChannel 过滤；打开与换渠道时结果都已在
+}
+
+function openAdd(ch: ProxyChannelView) {
+  reloginLock.value = false;
+  addChannel.value = ch.id;
   addOpen.value = true;
-  loadScan(); // 打开即扫描本机，切到「从本机软件导入」时结果已经在了
+  resetAddPanel(ch.id);
+}
+
+/** 弹窗内换渠道：重算页签与面板内容；页面 activeChannel 不跟，添加成功后才切（见 focusAddedChannel） */
+function onAddChannelChange() {
+  resetAddPanel(addChannel.value);
+}
+
+/** 方块行右侧的「添加账号」入口：默认当前渠道，方块为空时回落第一个启用渠道（弹框内下拉框可再选） */
+function openAddFromToolbar() {
+  const ch = pool.value.find((c) => c.id === activeChannel.value) || pool.value[0];
+  if (ch) openAdd(ch);
+}
+
+/** 添加成功后才把页面切到刚添加的渠道——弹窗内选渠道只决定「加到哪」，不立即影响外面的号池列表 */
+function focusAddedChannel() {
+  activeChannel.value = addChannel.value;
 }
 
 /** 关弹窗：正在等待 OAuth 回调时一并取消，不留后台悬挂的授权流程 */
 function closeAdd() {
   addOpen.value = false;
+  reloginLock.value = false;
   if (oauthWaiting.value) cancelOauth();
   // AutoClaw 国际版滑块可能在等用户拖动（oauthWaiting 全程为 true 已被上面覆盖；
   // 这里兜底取消滑块等待，不留面板悬挂）
@@ -1264,6 +1288,7 @@ async function submitSms() {
     if (!r.ok) throw new Error(r.message || "登录失败");
     smsMsg.value = "";
     toast(`${channelName(addChannel.value)} 登录成功，账号已加入号池`);
+    focusAddedChannel();
     closeAdd();
     await refresh();
   } catch (e) {
@@ -1283,6 +1308,7 @@ async function cancelOauth() {
 }
 
 function reauthAccount(acc: ProxyAccount) {
+  reloginLock.value = true;
   addChannel.value = acc.channel;
   addOpen.value = true;
   // 无 OAuth 的渠道（CatPaw）：重登 = 重新导入客户端登录态，绝不能弹授权页
@@ -1358,6 +1384,7 @@ async function importScan(c: ProxyScanCandidate, opts?: { silent?: boolean }) {
     const r = await api.proxyScanImport(idx, c.channel, c.file, c.uid);
     scanMsg.value = r.message || (r.updated ? "已更新该账号凭据" : "已加入号池");
     if (!opts?.silent) {
+      if (r.ok) focusAddedChannel();
       await loadScan();
       await refresh();
     }
@@ -1383,6 +1410,7 @@ async function importAllScan() {
   for (const c of targets) {
     if (await importScan(c, { silent: true })) okCount++;
   }
+  if (okCount > 0) focusAddedChannel();
   scanMsg.value = `已导入 ${okCount} 个账号`;
   await loadScan();
   await refresh();
@@ -1401,6 +1429,7 @@ async function doPasteJson() {
       pasteErr.value = !r.ok;
       pasteMsg.value = r.message || (r.ok ? "令牌有效，已加入号池" : "入池失败");
       if (r.ok) {
+        focusAddedChannel();
         await refresh();
         pasteJson.value = "";
       }
@@ -1436,7 +1465,10 @@ async function doImportFile() {
     if (r.canceled) return; // 用户取消选择，不留痕迹
     fileErr.value = !r.ok;
     fileMsg.value = r.message || (r.ok ? "导入完成" : "导入失败");
-    if (r.ok) await refresh();
+    if (r.ok) {
+      focusAddedChannel();
+      await refresh();
+    }
   } catch (e) {
     fileErr.value = true;
     fileMsg.value = String((e as Error).message || e);
@@ -1465,7 +1497,10 @@ async function onFilePicked(e: Event) {
     const r = await api.proxyAccountImportText(addChannel.value, text);
     fileErr.value = !r.ok;
     fileMsg.value = r.message || (r.ok ? "导入完成" : "导入失败");
-    if (r.ok) await refresh();
+    if (r.ok) {
+      focusAddedChannel();
+      await refresh();
+    }
   } catch (err) {
     fileErr.value = true;
     fileMsg.value = String((err as Error).message || err);
@@ -1477,12 +1512,23 @@ async function onFilePicked(e: Event) {
 /** 本页是否处于前台：v-show 保活的页面切走后，秒级 tick 与事件全量刷新都应停掉，
     不能在后台空烧主线程拖累前台页的鼠标跟手度 */
 const active = computed(() => app.activeModule === "proxy" && app.activePage === "agents");
+/** 进入号池页：默认落在渠道切换条的第一个（有账号的第一个渠道）；切换条没有渠道时保持现状 */
+async function focusFirstSwitchableChannel() {
+  await refresh();
+  const first = switchableChannels.value[0];
+  if (first) activeChannel.value = first.id as ProxyChannelId;
+}
+/** 是否已经进过号池页：首次进入落第一个渠道方块，之后从别的页面跳回来保持离开时的渠道 */
+let enteredAgentsPage = false;
 watch(active, (on) => {
   if (!on) return;
   now.value = Date.now(); // 切回来先校准时钟，冷却倒计时才不会停在旧读数
-  // 每次进入号池页都回到默认形态：收起成一行方块（展开只是临时查看，不该跨次留宿）
-  switcherCollapsed.value = true;
-  refresh();
+  if (!enteredAgentsPage) {
+    enteredAgentsPage = true;
+    focusFirstSwitchableChannel();
+  } else {
+    refresh(); // 再次进入：只补数据，渠道保持离开时选的那个
+  }
 });
 
 // ===== 冷却剩余时间（秒级跳动：一个定时器驱动全表，冷却多为 1min~6h，秒级粒度直观） =====
@@ -1576,7 +1622,14 @@ onMounted(() => {
   // 冷却/降级倒计时 5 秒一跳：秒级粒度对 1 分钟以上的冷却没有信息增量，
   // 降频减少空闲唤醒（tickNow 内部还会判断是否需要更新 now，不需要时不动响应式）
   nowTimer = window.setInterval(tickNow, 5000);
-  refresh();
+  // 应用启动就在号池页算首次进入（watch 无 immediate，这里补齐第一个渠道）；
+  // 启动在别的页面时只拉数据，等用户首次切进来再由 watch 落第一个渠道
+  if (active.value) {
+    enteredAgentsPage = true;
+    focusFirstSwitchableChannel();
+  } else {
+    refresh();
+  }
   offEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string; ok?: boolean; message?: string; channel?: string };
     if (p.event !== "proxy") return;
@@ -1590,6 +1643,8 @@ onMounted(() => {
       oauthMsg.value = p.ok ? `登录成功，已加入号池${noCheckin ? "" : "（已自动签到）"}` : `登录失败：${p.message || ""}`;
       if (p.ok) {
         addOpen.value = false;
+        // 登录成功才把页面切到入池渠道；事件带回的 channel 优先（异步回流期间用户可能已改选渠道）
+        activeChannel.value = (p.channel || addChannel.value) as ProxyChannelId;
         refresh();
       }
     } else if (p.type === "pool") {
@@ -1616,69 +1671,27 @@ onUnmounted(() => {
 <template>
   <section class="page">
     <div class="page-body">
-      <!-- 渠道切换：默认收起成一行固定高度的方块（只露 logo，无 logo 露名称首字母），
-           点方块即切换下方列表；最右侧箭头方块展开成全部卡片，展开后右下角箭头方块再收起 -->
+      <!-- 渠道切换：一行固定高度的渠道胶囊（显示渠道名称），点胶囊即切换下方列表；
+           行尾右侧是「添加账号」入口 -->
       <div class="ch-switch">
-        <div v-if="switcherCollapsed" class="ch-strip">
-          <!-- 方块区独立滚动、箭头方块固定在最右：渠道再多也不会把展开入口挤出可视区 -->
+        <div class="ch-strip">
+          <!-- 胶囊区独立横向滚动：渠道再多也不会把右侧「添加账号」挤出可视区 -->
           <div class="ch-strip-list" aria-label="渠道切换">
             <!-- 该分支本身就是「三态」（I6）：加载中 / 加载失败 / 暂无渠道。
                  失败原因与「重试」在下面整页级空态卡片里给（这条只是切换条内的短标识） -->
             <span v-if="!pool.length" class="ch-strip-empty">{{ poolPhase === "loading" ? "加载中…" : poolPhase === "failed" ? "加载失败" : "暂无渠道" }}</span>
-            <el-tooltip
-              v-for="ch in pool"
-              :key="ch.id"
-              :content="stripTip(ch)"
-              placement="top"
-              :show-after="140"
-            >
-              <button
-                class="ch-sq"
-                :class="{ active: activeChannel === ch.id }"
-                :aria-pressed="activeChannel === ch.id"
-                :aria-label="stripTip(ch)"
-                @click="activeChannel = ch.id"
-              >
-                <img v-if="CHANNEL_ICONS[ch.id]" :src="CHANNEL_ICONS[ch.id]" alt="" />
-                <b v-else>{{ channelInitial(ch.id, ch.display) }}</b>
-                <!-- 降级角点：收起态没有文字位，用右上角红点提示该渠道正走备用通道 -->
+            <span v-else-if="!switchableChannels.length" class="ch-strip-empty">暂无账号</span>
+            <el-tooltip v-for="ch in switchableChannels" :key="ch.id" :content="stripTip(ch)" placement="top" :show-after="140">
+              <button class="ch-sq ch-chip" :class="{ active: activeChannel === ch.id }" :aria-pressed="activeChannel === ch.id" :aria-label="stripTip(ch)" @click="activeChannel = ch.id">
+                <span class="ch-chip-name">{{ ch.display || channelName(ch.id) }}</span>
+                <!-- 降级角点：右上角红点提示该渠道正走备用通道 -->
                 <span v-if="ch.health && ch.health.until > now" class="ch-sq-dot" aria-hidden="true"></span>
               </button>
             </el-tooltip>
           </div>
-          <el-tooltip content="展开全部渠道" placement="top" :show-after="140">
-            <button class="ch-sq ch-sq-arrow" :disabled="!pool.length" aria-label="展开全部渠道" @click="switcherCollapsed = false">
-              <svg viewBox="0 0 24 24" width="14" height="14"><path d="M5 9 L12 16 L19 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-          </el-tooltip>
         </div>
-        <template v-else>
-          <!-- 展开态：原有卡片网格保持不变；右下角的箭头方块负责收回 -->
-          <div class="channel-switch">
-            <button
-              v-for="ch in pool"
-              :key="ch.id"
-              class="channel-btn"
-              :class="{ active: activeChannel === ch.id }"
-              @click="activeChannel = ch.id"
-            >
-              <span class="ch-text">
-                <span class="ch-name">{{ ch.display }}</span>
-                <span class="ch-sub">
-                  {{ ch.summary.accountCount ? `${ch.summary.onlineCount}/${ch.summary.accountCount}可用` : "0/0可用" }}
-                  <em v-if="ch.health && ch.health.until > now" class="ch-degrade">降级 {{ channelCoolLeft(ch) }}</em>
-                </span>
-              </span>
-            </button>
-          </div>
-          <div class="ch-strip-foot">
-            <el-tooltip content="收起渠道切换" placement="top" :show-after="140">
-              <button class="ch-sq ch-sq-arrow" aria-label="收起渠道切换" @click="switcherCollapsed = true">
-                <svg viewBox="0 0 24 24" width="14" height="14"><path d="M5 16 L12 9 L19 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-            </el-tooltip>
-          </div>
-        </template>
+        <!-- 添加账号：与渠道胶囊同一行右侧常驻；胶囊全空时右侧只有它，弹框内下拉框再选渠道 -->
+        <button class="btn btn-sm ch-add" :disabled="!pool.length" @click="openAddFromToolbar">添加账号</button>
       </div>
       <!-- 整页级空态（I6）：pool 为空时下面 v-for 里的失败态根本不渲染，
            失败原因与「重试」必须在这里给，否则断网 / 500 时用户只看到永久「加载中…」 -->
@@ -1695,22 +1708,12 @@ onUnmounted(() => {
       <template v-for="ch in pool" :key="ch.id">
       <div v-if="ch.id === activeChannel" class="card channel-panel" style="margin-bottom: 12px">
         <div class="card-title">
-          {{ ch.display }}
-          <span class="tag" :class="ch.summary.onlineCount > 0 ? 'tag-ok' : 'tag-dim'">
-            {{ ch.summary.accountCount ? `${ch.summary.onlineCount}/${ch.summary.accountCount} 可用` : "空号池" }}
-          </span>
-          <span v-if="ch.health && ch.health.until > now" class="tag tag-err" :title="ch.health.reason || '渠道降级，流量已走其他渠道'">
-            降级中 · {{ channelCoolLeft(ch) }}后回切
-          </span>
-          <span v-if="ch.summary.expiringSoon" class="tag tag-warn">24h 内有到期</span>
-          <span v-if="costTierName(ch.costTier) !== '普通'" class="tag" :class="ch.costTier === 'free' ? 'tag-ok' : 'tag-dim'">{{ costTierName(ch.costTier) }}</span>
-          <!-- 工具栏：只属于当前渠道（调度策略 / 添加 / 签到或加油包 / 刷新），与其他渠道互不关联；
+          <!-- 工具栏：只属于当前渠道（调度策略 / 签到或加油包 / 自动签到 / 刷新），与其他渠道互不关联；
                策略与成本档两个下拉已收进「调度策略」小弹窗 -->
           <span class="panel-tools">
             <el-tooltip content="渠道账号调度策略与成本档位" placement="top">
-              <button class="btn btn-sm" @click="openStrategy(ch)">调度策略</button>
+              <button class="btn btn-sm" :disabled="!switchableChannels.length" @click="openStrategy(ch)">调度策略</button>
             </el-tooltip>
-            <button class="btn btn-sm" @click="openAdd(ch)">添加账号</button>
             <!-- 多选后出现的批量操作：导出凭据（明文，二次确认）与批量删除（二次确认） -->
             <template v-if="selectedCount">
               <el-tooltip content="把选中账号导出为 JSON 文件（含明文 token/refreshToken，可直接用于其他软件）" placement="top">
@@ -1724,7 +1727,7 @@ onUnmounted(() => {
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-checkin-done': !checkinBusy && channelCheckinDone(ch) }"
-                :disabled="checkinBusy"
+                :disabled="checkinBusy || !switchableChannels.length"
                 @click="runTrial"
               >{{ checkinBusy ? "领取中…" : channelCheckinDone(ch) ? labelsOf(ch.id).done : labelsOf(ch.id).run }}</button>
             </el-tooltip>
@@ -1732,7 +1735,7 @@ onUnmounted(() => {
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-checkin-done': !checkinBusy && channelCheckinDone(ch) }"
-                :disabled="checkinBusy"
+                :disabled="checkinBusy || !switchableChannels.length"
                 @click="runCheckinChannel"
               >{{ checkinBusy ? "领取中…" : channelCheckinDone(ch) ? labelsOf(ch.id).done : labelsOf(ch.id).run }}</button>
             </el-tooltip>
@@ -1740,7 +1743,7 @@ onUnmounted(() => {
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-checkin-done': !checkinBusy && channelCheckinDone(ch) }"
-                :disabled="checkinBusy"
+                :disabled="checkinBusy || !switchableChannels.length"
                 @click="runCheckinChannel"
               >{{ checkinBusy ? "领取中…" : channelCheckinDone(ch) ? labelsOf(ch.id).done : labelsOf(ch.id).run }}</button>
             </el-tooltip>
@@ -1748,7 +1751,7 @@ onUnmounted(() => {
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-checkin-done': !checkinBusy && channelCheckinDone(ch) }"
-                :disabled="checkinBusy"
+                :disabled="checkinBusy || !switchableChannels.length"
                 @click="runCheckinChannel"
               >
                 {{ checkinBusy ? "签到中…" : channelCheckinDone(ch) ? labelsOf(ch.id).done : labelsOf(ch.id).run }}
@@ -1763,6 +1766,7 @@ onUnmounted(() => {
               <button
                 class="btn btn-sm"
                 :class="{ 'btn-auto-on': ch.checkinAuto?.enabled }"
+                :disabled="!switchableChannels.length"
                 @click="openAutoCheckin(ch)"
               >
                 <i class="ph ph-clock"></i>{{ labelsOf(ch.id).auto }}
@@ -1796,7 +1800,7 @@ onUnmounted(() => {
                 >切号回滚</button>
               </span>
             </el-tooltip>
-            <button class="btn btn-sm btn-primary" :disabled="refreshingChannel" @click="refreshCurrentChannel">
+            <button class="btn btn-sm btn-primary" :disabled="refreshingChannel || !switchableChannels.length" @click="refreshCurrentChannel">
               {{ refreshingChannel ? "刷新中…" : "刷新" }}
             </button>
           </span>
@@ -1818,7 +1822,7 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="agg-item"><span>账号数</span><b>{{ ch.summary.accountCount }}</b></div>
-          <div class="agg-item"><span>可用</span><b>{{ ch.summary.onlineCount }}</b></div>
+          <div class="agg-item"><span>可用</span><b class="agg-online">{{ ch.summary.onlineCount }}</b></div>
           <div class="agg-item"><span>最早到期</span><b>{{ ch.summary.earliestExpire ? fmtDate(ch.summary.earliestExpire) : "-" }}</b></div>
           <div class="agg-item"><span>今日消耗</span><b>{{ ch.summary.todayReq }} 次 · {{ fmtK(ch.summary.todayTokens) }}</b></div>
           <div class="agg-item"><span>上次刷新</span><b>{{ fmtAgo(ch.summary.lastCreditsAt) }}</b></div>
@@ -1861,7 +1865,7 @@ onUnmounted(() => {
                 <td colspan="7" style="text-align: center; color: var(--text-3); padding: 24px 0">
                   <template v-if="poolPhaseOf(ch) === 'failed'">加载失败：{{ loadErr }} <button class="btn-link btn-sm" @click="refresh">重试</button></template>
                   <template v-else-if="poolPhaseOf(ch) === 'loading'">加载中…</template>
-                  <template v-else>号池为空 —— 点「添加账号」：OAuth 登录 / 从本机软件导入 / 文件导入 / 手动粘贴</template>
+                  <template v-else>号池为空 —— 点上方「添加账号」：OAuth 登录 / 从本机软件导入 / 文件导入 / 手动粘贴</template>
                 </td>
               </tr>
               <template v-else>
@@ -2082,16 +2086,18 @@ onUnmounted(() => {
     <Teleport to="body">
       <div v-if="addOpen" class="p-mask" @click.self="closeAdd()">
         <div class="p-dlg glass add-dlg" role="dialog" aria-modal="true" aria-label="添加账号">
-          <!-- 头部：图标 + 标题 + 入池渠道 + 关闭 -->
+          <!-- 头部：图标 + 入池渠道下拉（只列开启的上游渠道，选中即切换下方方式页签与面板）+ 关闭 -->
           <header class="add-head">
             <span class="add-head-icon"><i class="ph ph-user-plus"></i></span>
-            <div class="add-head-text">
-              <div class="add-title">
-                添加账号
-                <span class="add-chip">{{ pool.find((c) => c.id === addChannel)?.display || addChannel }}</span>
-              </div>
-              <div class="add-sub">凭据仅本机 DPAPI 加密保管，不入日志、不外发</div>
-            </div>
+            <el-select v-model="addChannel" class="f-el-select add-ch-select" popper-class="glass-popper" :disabled="oauthWaiting || reloginLock" aria-label="选择入池的上游渠道" @change="onAddChannelChange">
+              <el-option v-for="ch in pool" :key="ch.id" :value="ch.id" :label="ch.display || channelName(ch.id)">
+                <span class="add-ch-opt">
+                  <img v-if="CHANNEL_ICONS[ch.id]" :src="CHANNEL_ICONS[ch.id]" alt="" />
+                  <b v-else class="add-ch-initial">{{ channelInitial(ch.id, ch.display) }}</b>
+                  <span class="add-ch-name">{{ ch.display || channelName(ch.id) }}</span>
+                </span>
+              </el-option>
+            </el-select>
             <el-tooltip content="关闭" placement="top">
               <button class="add-close" @click="closeAdd()"><i class="ph ph-x"></i></button>
             </el-tooltip>
@@ -2207,7 +2213,7 @@ onUnmounted(() => {
                   </el-tooltip>
                 </div>
                 <div v-if="!scanRows.length" class="scan-empty">
-                  未在本机发现可导入的登录态 —— 请先在本机登录对应客户端，或改用「{{ SMS_ONLY_CHANNELS.includes(activeChannel) ? "手机验证码" : NO_OAUTH_CHANNELS.includes(activeChannel) ? "粘贴 JSON" : "OAuth 登录" }}」
+                  未在本机发现可导入的登录态 —— 请先在本机登录对应客户端，或改用「{{ SMS_ONLY_CHANNELS.includes(addChannel) ? "手机验证码" : NO_OAUTH_CHANNELS.includes(addChannel) ? "粘贴 JSON" : "OAuth 登录" }}」
                 </div>
               </div>
               <div v-if="scanMsg" class="add-msg" :class="{ err: scanErr }">{{ scanMsg }}</div>
@@ -2708,27 +2714,30 @@ onUnmounted(() => {
     transition: none;
   }
 }
-/* ===== 渠道切换容器：收起态一行方块 / 展开态全部卡片，两种形态共用一个选中渠道 ===== */
+/* ===== 渠道切换容器：一行渠道胶囊，行尾右侧是「添加账号」 ===== */
 .ch-switch {
-  /* 高度口径（两个值成对看，别单独改一个）：
-     展开态卡片 = 60px（描边 2 + 上下内边距 12×2 + 名称行 17 + 间距 2 + 副行 15）；
-     收起行 = 卡片的 2/3 = 40px，固定写死，不随字号 / 字体回落 / 渠道数量浮动。
-     方块 30px 在 40px 行内上下各留 5px。 */
-  --ch-card-h: 60px;
+  /* 高度口径：行高固定 40px，不随字号 / 字体回落 / 渠道数量浮动；
+     胶囊 30px 在 40px 行内上下各留 5px。 */
   --ch-strip-h: 40px;
   --ch-sq: 30px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
-/* 收起态：一行定高方块（只露 logo / 首字母），最右侧箭头方块常驻右端 */
+.ch-add {
+  flex-shrink: 0;
+}
+/* 胶囊区一行定高，独立横向滚动 */
 .ch-strip {
   display: flex;
   align-items: center;
   gap: 6px;
   height: var(--ch-strip-h);
   min-width: 0;
+  flex: 1;
 }
-/* 方块区吸收剩余宽度并独立横向滚动：渠道再多也不会把展开入口挤出可视区，
-   也不会把这一行撑高（overflow-y: hidden 锁死高度） */
+/* 胶囊区吸收剩余宽度并独立横向滚动，不会把这一行撑高（overflow-y: hidden 锁死高度） */
 .ch-strip-list {
   flex: 1;
   min-width: 0;
@@ -2766,8 +2775,7 @@ onUnmounted(() => {
 }
 .ch-sq {
   position: relative;
-  /* 方块保持正方形（aspect-ratio），宽度允许从 30px 收缩到 24px：
-     渠道变多时先一起收窄一点，收到下限仍放不下才交给外层横向滚动 —— 一行永不超出页面宽度 */
+  /* 基础盒（实际尺寸由 .ch-chip 覆盖）：高度口径见 --ch-sq */
   flex: 0 1 auto;
   width: var(--ch-sq);
   min-width: 24px;
@@ -2783,15 +2791,19 @@ onUnmounted(() => {
   overflow: hidden;
   transition: border-color 0.18s, background 0.18s, color 0.18s, transform 0.24s var(--ease-spring), box-shadow 0.2s;
 }
-.ch-sq img {
-  width: 17px;
-  height: 17px;
-  object-fit: contain;
-  display: block;
+/* 渠道胶囊：高度同方块，宽度随名称自适应；不参与收缩，渠道多时交给外层横向滚动 */
+.ch-chip {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  aspect-ratio: auto;
+  height: var(--ch-sq);
+  padding: 0 10px;
+  white-space: nowrap;
 }
-.ch-sq b {
+.ch-chip-name {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-2);
   line-height: 1;
 }
@@ -2807,7 +2819,7 @@ onUnmounted(() => {
   outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
-/* 选中态：描边点亮 + 底部短光条（与展开态卡片同一套指示语言，只是缩到方块尺寸） */
+/* 选中态：描边点亮 + 底部短光条，作为「当前渠道」的指示锚点 */
 .ch-sq.active {
   border-color: var(--accent-line);
   background: linear-gradient(180deg, var(--accent-dim), transparent 150%);
@@ -2825,10 +2837,10 @@ onUnmounted(() => {
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
 }
-.ch-sq.active b {
+.ch-sq.active .ch-chip-name {
   color: var(--accent-strong);
 }
-/* 降级红点：收起态没有文字位，只能靠这个点提示「该渠道正走备用通道」 */
+/* 降级红点：右上角提示「该渠道正走备用通道」 */
 .ch-sq-dot {
   position: absolute;
   top: 3px;
@@ -2839,164 +2851,17 @@ onUnmounted(() => {
   background: var(--danger, var(--err, #e05555));
   box-shadow: 0 0 6px var(--danger, var(--err, #e05555));
 }
-/* 箭头方块：收起态朝下（点开全部卡片），展开态朝上（收回成一行）；
-   宽度固定、不参与渠道方块的收缩与滚动 */
-.ch-sq-arrow {
-  flex: 0 0 auto;
-  width: var(--ch-sq);
-  min-width: var(--ch-sq);
-  aspect-ratio: 1;
-  margin-left: auto;
-  color: var(--text-3);
-}
-.ch-sq-arrow:hover {
-  color: var(--accent-strong);
-}
-.ch-sq-arrow:disabled {
-  opacity: 0.45;
-  cursor: default;
-  transform: none;
-}
-.ch-sq-arrow svg {
-  display: block;
-}
-/* 展开态右下角的收起方块：单独一行右对齐，小一号不抢卡片的视觉重量 */
-.ch-strip-foot {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 6px;
-}
-.ch-strip-foot .ch-sq {
-  --ch-sq: 26px;
-}
-/* ===== 渠道主按钮：三列大按钮，各自独立成区，选中才点亮 ===== */
-.channel-switch {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-}
-.channel-btn {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  /* 高度写死（= 收起行的 1.5 倍）：名称/副行两行行高也一并钉住，
-     字号或字体回落都不会让卡片变高，收起行才永远稳定在卡片的三分之二 */
-  height: var(--ch-card-h, 60px);
-  padding: 0 13px;
-  border-radius: var(--r-ctl);
-  border: 1px solid var(--line);
-  background: var(--bg-soft);
-  color: var(--text-2);
-  font-family: var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
-  transition: border-color 0.22s, color 0.22s, background 0.22s, transform 0.28s var(--ease-spring), box-shadow 0.25s;
-}
-/* 底部光条：选中时从中间向两侧展开，作为"当前渠道"的指示锚点 */
-.channel-btn::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: 0;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--accent);
-  box-shadow: 0 0 10px var(--accent);
-  transform: translateX(-50%);
-  transition: width 0.3s var(--ease);
-}
-.channel-btn:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px -14px rgba(0, 0, 0, 0.8);
-}
-:root[data-theme="light"] .channel-btn:hover {
-  box-shadow: 0 8px 20px -14px rgba(15, 23, 42, 0.4);
-}
-.channel-btn:active {
-  transform: scale(0.98);
-}
-.channel-btn:focus-visible {
-  outline: 2px solid var(--accent-line);
-  outline-offset: 2px;
-}
-.channel-btn.active {
-  color: var(--text);
-  border-color: var(--accent-line);
-  background: linear-gradient(180deg, var(--accent-dim), transparent 140%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 24px -10px var(--accent-line);
-}
-.channel-btn.active::after {
-  width: 100%;
-}
-.ch-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.ch-name {
-  font-size: 12.5px;
-  line-height: 17px;
-  font-weight: 650;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ch-sub {
-  font-size: 11px;
-  line-height: 15px;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 渠道降级角标（跨渠道故障转移）：红色小徽标提示该渠道暂被熔断，倒计时后回切 */
-.ch-degrade {
-  font-style: normal;
-  margin-left: 5px;
-  padding: 0 5px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--danger, var(--err, #e05555)) 18%, transparent);
-  color: var(--danger, var(--err, #e05555));
-  font-size: 10px;
-  line-height: 15px;
-}
-.channel-btn.active .ch-sub {
-  color: var(--accent-strong);
-}
-.ch-badge {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  padding: 2.5px 8px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line-strong);
-  color: var(--text-2);
-  transition: border-color 0.22s, background 0.22s, color 0.22s;
-}
-.ch-badge.ok {
-  color: var(--accent-strong);
-}
-.channel-btn.active .ch-badge {
-  border-color: var(--accent-line);
-  background: var(--accent-dim);
-  color: var(--accent-strong);
-}
-/* 面板工具栏：策略 / 添加账号 / 签到或加油包 / 刷新，全部只作用于当前渠道 */
+/* 面板工具栏：策略 / 签到或加油包 / 自动签到 / 刷新，全部只作用于当前渠道 */
 .panel-tools {
   margin-left: auto;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+/* 号池面板标题行左侧无内容，去掉全局标题前的主题色小竖条 */
+.channel-panel .card-title::before {
+  display: none;
 }
 .danger {
   color: var(--err, #e05555);
@@ -3019,6 +2884,10 @@ onUnmounted(() => {
 .agg-item b {
   font-family: var(--font-mono);
   font-size: 13px;
+}
+/* 「可用」数字用主题绿：一眼看出当前渠道有多少号在服 */
+.agg-online {
+  color: var(--accent-strong);
 }
 /* 总余额：数字与单位同行（单位小字灰色；此前只有 zcode/Qoder 显示，且被列布局挤到下一行） */
 .agg-val {
@@ -3071,17 +2940,40 @@ onUnmounted(() => {
   color: var(--accent);
   font-size: 17px;
 }
-.add-head-text {
+/* 头部渠道下拉：撑满图标与关闭按钮之间的剩余宽度；选项 = 渠道图标 + 名称 */
+.add-ch-select {
   flex: 1;
   min-width: 0;
 }
-.add-title {
+.add-ch-opt {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.3;
+  min-width: 0;
+}
+.add-ch-opt img {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.add-ch-initial {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1;
+}
+.add-ch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .add-chip {
   padding: 2px 8px;
@@ -3092,11 +2984,6 @@ onUnmounted(() => {
   font-size: 10.5px;
   font-weight: 600;
   white-space: nowrap;
-}
-.add-sub {
-  font-size: 10.5px;
-  color: var(--text-3);
-  margin-top: 3px;
 }
 .add-close {
   width: 26px;
@@ -3211,6 +3098,19 @@ onUnmounted(() => {
 /* 粘贴面板：标签 + 撑满的文本域 */
 .paste-pane {
   gap: 8px;
+}
+/* 手机验证码面板：标签与输入框之间留出呼吸感（组间由标签的 margin-top 再分层） */
+.sms-pane {
+  gap: 6px;
+}
+/* 行内按钮与相邻输入框等高：btn-sm 默认 24px，比 30px 的输入框矮一截
+   （回调地址提交 / 发送验证码两处共用 cb-row） */
+.cb-row .btn-sm {
+  height: var(--ctl-h);
+}
+/* 该面板描述用满可用宽度：420px 上限会把一句挤成孤字换行 */
+.sms-pane .add-pane-desc {
+  max-width: 100%;
 }
 .paste-label {
   font-size: 11px;

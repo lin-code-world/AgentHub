@@ -257,10 +257,6 @@ watch(
           </tbody>
         </table>
       </div>
-      <div class="card" style="margin-top: 12px">
-        <div class="card-title">安全提示</div>
-        <div class="code">鉴权比对只用 SHA-256 哈希 · 完整 Key 经 DPAPI 加密存储、可随时查看 / 复制 · 状态开关即时生效（鉴权实时查库）</div>
-      </div>
     </div>
 
     <!-- 生成 Key 弹窗 -->
