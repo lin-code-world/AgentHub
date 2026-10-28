@@ -492,6 +492,10 @@ async function refresh() {
   }
 }
 
+/** 整页级三态（I6）：渠道列表为空时区分「首次加载中 / 加载失败（可重试） / 确实没有渠道」。
+ *  它必须在 v-for 之外用——pool 为空时下面那行失败态根本不渲染，用户只会看到永久「加载中…」 */
+const poolPhase = computed(() => loadPhaseOf({ loading: loading.value, error: loadErr.value, count: pool.value.length }));
+
 /** 空态三态（按渠道算）：骨架屏负责 loading 观感，这里区分「确实没有账号」与「加载失败」——
  *  后者必须能重试，不能和空号池显示成同一句话（I6） */
 function poolPhaseOf(ch: ProxyChannelView) {
@@ -1616,7 +1620,9 @@ onUnmounted(() => {
         <div v-if="switcherCollapsed" class="ch-strip">
           <!-- 方块区独立滚动、箭头方块固定在最右：渠道再多也不会把展开入口挤出可视区 -->
           <div class="ch-strip-list" aria-label="渠道切换">
-            <span v-if="!pool.length" class="ch-strip-empty">加载中…</span>
+            <!-- 该分支本身就是「三态」（I6）：加载中 / 加载失败 / 暂无渠道。
+                 失败原因与「重试」在下面整页级空态卡片里给（这条只是切换条内的短标识） -->
+            <span v-if="!pool.length" class="ch-strip-empty">{{ poolPhase === "loading" ? "加载中…" : poolPhase === "failed" ? "加载失败" : "暂无渠道" }}</span>
             <el-tooltip
               v-for="ch in pool"
               :key="ch.id"
@@ -1670,6 +1676,18 @@ onUnmounted(() => {
               </button>
             </el-tooltip>
           </div>
+        </template>
+      </div>
+      <!-- 整页级空态（I6）：pool 为空时下面 v-for 里的失败态根本不渲染，
+           失败原因与「重试」必须在这里给，否则断网 / 500 时用户只看到永久「加载中…」 -->
+      <div v-if="!pool.length && poolPhase !== 'loading'" class="card pool-empty-card" role="status">
+        <template v-if="poolPhase === 'failed'">
+          <div class="pool-empty-text">加载失败：{{ loadErr }}</div>
+          <button class="btn btn-sm" @click="refresh">重试</button>
+        </template>
+        <template v-else>
+          <div class="pool-empty-text">暂无渠道数据 —— 请在「配置 · 反代网关」检查渠道启用状态，然后点「刷新」</div>
+          <button class="btn btn-sm" @click="refresh">刷新</button>
         </template>
       </div>
       <template v-for="ch in pool" :key="ch.id">
@@ -2742,6 +2760,23 @@ onUnmounted(() => {
 .ch-strip-empty {
   font-size: 11px;
   color: var(--text-3);
+}
+/* 整页级空态卡片（I6）：pool 为空时的加载失败 / 暂无渠道，带原因与「重试」，
+   刻意不放进 v-for —— 列表为空时里面那行根本不渲染 */
+.pool-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 16px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+.pool-empty-text {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
 }
 .ch-sq {
   position: relative;

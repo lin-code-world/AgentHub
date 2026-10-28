@@ -285,6 +285,11 @@ function killChild(child) {
     ok('有错 → "failed"（即便无数据）', loadPhaseOf({ loading: false, error: "HTTP 500", count: 0 }) === "failed");
     ok('有数据 → "ready"', loadPhaseOf({ loading: false, error: "", count: 3 }) === "ready");
     ok("加载中带旧错误仍显示 loading（不把首屏误报成失败）", loadPhaseOf({ loading: true, error: "旧错误", count: 0 }) === "loading");
+    // 号池页整页级三态（I6 残余）：渠道列表为空时 v-for 里的失败态不渲染，
+    // 判定必须落在 v-for 外的分支上
+    ok("号池整页级：无渠道 + 有 loadErr → failed（带原因与重试）", loadPhaseOf({ loading: false, error: "HTTP 500", count: 0 }) === "failed");
+    ok("号池整页级：无渠道 + 无 loadErr + 非加载中 → empty", loadPhaseOf({ loading: false, error: "", count: 0 }) === "empty");
+    ok("号池整页级：首屏加载中 → loading", loadPhaseOf({ loading: true, error: "", count: 0 }) === "loading");
 
     // ===== I5：号池页只认 {type:"pool"} 并 2 秒节流 =====
     console.log("=== I5 号池事件接线 ===");
@@ -296,6 +301,10 @@ function killChild(child) {
 
     // ===== I6-c：三页接线 =====
     console.log("=== I6-c 三页空态接线 ===");
+    // 号池整页级（I6 残余）：pool 为空时 v-for 里的失败态根本不渲染，
+    // 失败原因与「重试」必须给在 v-for 之外
+    ok("号池页在 v-for 之外给整页级失败态（pool-empty-card）", /v-if="!pool\.length && poolPhase !== 'loading'" class="card pool-empty-card"[\s\S]{0,260}poolPhase === ['"]failed['"][\s\S]{0,200}@click="refresh"/.test(agentsSrc), "未找到 v-for 外的失败态卡片");
+    ok("切换条 !pool.length 分支是三态（加载中 / 加载失败 / 暂无渠道）", /v-if="!pool\.length" class="ch-strip-empty"[\s\S]{0,260}加载失败[\s\S]{0,120}暂无渠道/.test(agentsSrc), "切换条空态仍是恒显「加载中…」");
     for (const file of ["src/views/proxy/ProxyAgentsView.vue", "src/views/proxy/ProxyLogView.vue", "src/views/proxy/ProxyStatsView.vue"]) {
       const src = fs.readFileSync(path.join(ROOT, file), "utf8");
       ok(`${file} 用 loadPhaseOf 区分空态与失败`, /loadPhaseOf\(/.test(src), "未找到 loadPhaseOf 接线");
