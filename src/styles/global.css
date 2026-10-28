@@ -1538,3 +1538,19 @@ table th,
   background: var(--accent-dim);
 }
 
+/* ===== 性能：全局关闭动画与过渡 =====
+ * 背景：开发/日常使用中 Electron GPU 进程的 3D 合成占用偏高，主要来自
+ * 小面积无限动画（侧栏呼吸条、状态点波纹）位于 backdrop-filter 玻璃面板内，
+ * 每帧都会触发父级重新模糊。实测关闭后 GPU 3D 占用从约 56% 降到 0%。
+ * 这里统一关闭 animation / transition，覆盖组件 scoped 样式与 Element Plus 自带动效；
+ * 需要恢复动效时删除本段即可（各组件里的 @keyframes 定义保留，便于按需恢复）。 */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+html {
+  scroll-behavior: auto !important;
+}
