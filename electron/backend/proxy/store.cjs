@@ -233,14 +233,14 @@ function open() {
   try {
     db.exec("ALTER TABLE accounts ADD COLUMN meta TEXT NOT NULL DEFAULT ''");
   } catch { /* 已存在 */ }
-  // 在线迁移：accounts.updated_at（账号最后更新时间戳，用于多机同步冲突仲裁）
+  // 在线迁移：accounts.updated_at（账号最后更新时间戳）
   try {
     db.exec("ALTER TABLE accounts ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
   } catch { /* 已存在 */ }
   // 在线迁移：accounts.token_at（**凭据**写入时刻，只有 token/refreshToken 真正变化才推进）。
-  // 号池同步的「凭据谁新」仲裁必须用它而不是 updated_at：后者被额度刷新/冷却/备注/签到等
-  // 无关更新一路顶新，会让刚刷失败（被判 relogin）的一侧拿着坏凭据在 LWW 里胜出，
-  // 反向污染另一台健康机器的凭据。存量为 0 的行按 updated_at 回填保底
+  // 凭据导入的「凭据谁新」判定必须用它而不是 updated_at：后者被额度刷新/冷却/备注/签到等
+  // 无关更新一路顶新，会让刚刷失败（被判 relogin）的一侧拿着坏凭据在新旧比对里胜出，
+  // 反向污染本机的健康凭据。存量为 0 的行按 updated_at 回填保底
   try {
     db.exec("ALTER TABLE accounts ADD COLUMN token_at INTEGER NOT NULL DEFAULT 0");
   } catch { /* 已存在 */ }
@@ -249,7 +249,7 @@ function open() {
   try {
     db.exec("ALTER TABLE keys ADD COLUMN key_enc TEXT NOT NULL DEFAULT ''");
   } catch { /* 已存在 */ }
-  // 在线迁移：keys.updated_at（Key 最后更新时间戳，多机同步 LWW 仲裁——issue #92 修改/删除传播）
+  // 在线迁移：keys.updated_at（Key 最后更新时间戳，凭据/Key 导入的新者胜判定用——issue #92 修改/删除传播）
   try {
     db.exec("ALTER TABLE keys ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
   } catch { /* 已存在 */ }
@@ -480,15 +480,15 @@ function listKeys() {
 }
 
 /**
- * 从别的设备导入/更新一把 API Key（号池 WebDAV 同步用）。
+ * 凭据/Key 导入：入库一把**给定明文密钥**的 API Key（跨设备同步已移除，此入口现只剩导入用途）。
  *
  * 与 createKey 的区别：createKey 自己生成密钥，这里用**给定的明文密钥**入库——
- * 跨设备同步要求同一个 sk- 在各设备都能用，所以只能沿用原密钥。
+ * 导入要沿用原密钥（同一个 sk- 继续可用），所以不能重新生成。
  * 落库时按本机能力重新加密（Windows 走 DPAPI、无 safeStorage 的环境走明文降级），
- * 所以不直接搬运对端的 key_enc（跨平台解不开）。
+ * 所以不直接搬运来源的 key_enc（跨平台解不开）。
  *
- * 幂等 + LWW（issue #92）：同 id 已存在时按 updatedAt 新者胜——远端改过（改名/改配额/
- * 启停）就同步过来；老版本对端不带 updatedAt（按 0）永远本机为准，与旧版「只补缺」一致。
+ * 幂等 + 新者胜（issue #92）：同 id 已存在时按 updatedAt 新者胜——来源改过（改名/改配额/
+ * 启停）就采纳导入值；来源不带 updatedAt（按 0）永远本机为准，与旧版「只补缺」一致。
  * 同 key_hash 但不同 id（同一把 Key 换了 id）视为已存在跳过，密文本就相同。
  */
 function importKey({ id, name, secret, route, routeOrder, dailyQuota, rateLimit, enabled, createdAt, updatedAt }) {
@@ -577,7 +577,7 @@ function updateKey(id, patch) {
   if (patch.allowedChannels != null && !Array.isArray(patch.allowedChannels)) throw new Error("allowedChannels 必须是字符串数组");
   if (patch.allowedModels != null && !Array.isArray(patch.allowedModels)) throw new Error("allowedModels 必须是字符串数组");
   const enabled = patch.enabled != null ? (patch.enabled ? 1 : 0) : cur.enabled;
-  // updated_at 推进：号池同步按它做 LWW，把改名/改配额/启停传播到其他设备（issue #92）
+  // updated_at 推进：凭据/Key 导入的新者胜判定按它比对改名/改配额/启停（issue #92）
   db.prepare("UPDATE keys SET name=?, route=?, route_order=?, daily_quota=?, rate_limit=?, allowed_channels=?, allowed_models=?, enabled=?, updated_at=? WHERE id=?")
     .run(name, route, routeOrder, quota, rate, allowedChannels, allowedModels, enabled, Date.now(), cur.id);
   return true;
@@ -755,7 +755,7 @@ function deleteProvider(id) {
 
 // ===== 号池账号 =====
 
-/** 行内凭据是否真的可用：号池同步曾把空 token 的账号（加密空串信封）传播进库，
+/** 行内凭据是否真的可用：历史同步/导入曾把空 token 的账号（加密空串信封）写进库，
  *  hasToken 只看 token_enc 非空会把这类坏号当可用号调度（全 401）。这里真实解密判一次。
  *  解密结果按信封 memo（信封不变=结果不变；更新凭据会写新信封），避免每次选号都打 DPAPI */
 const usableCache = new Map();
@@ -813,7 +813,7 @@ function accountView(r) {
     checkin: meta.checkin && typeof meta.checkin === "object" ? meta.checkin : null,
     /** 首登奖励结算台账（小浣熊一次性新手福利；key → 结算时刻，落了即「已领取」） */
     onboardingGrants: meta.onboardingGrants && typeof meta.onboardingGrants === "object" ? meta.onboardingGrants : null,
-    /** 账号备注（号池列表副行展示 + 备注弹窗；落 meta.note，随 WebDAV 同步） */
+    /** 账号备注（号池列表副行展示 + 备注弹窗；落 meta.note，随明文凭据导出带走） */
     note: typeof meta.note === "string" ? meta.note : "",
     source: r.source,
     lastUsed: r.last_used,
@@ -821,7 +821,7 @@ function accountView(r) {
     todayTokens: r.today_day === dayStr() ? r.today_tokens : 0,
     createdAt: r.created_at,
     updatedAt: r.updated_at || Math.max(r.credits_at || 0, r.last_used || 0, r.created_at || 0),
-    /** 凭据（token/refreshToken）写入时刻：号池同步的凭据新旧仲裁依据（0=老库未回填） */
+    /** 凭据（token/refreshToken）写入时刻：凭据导入的新旧判定依据（0=老库未回填） */
     tokenAt: r.token_at || 0,
     hasToken: tokenUsable(r),
     domain: meta.domain || "",
@@ -895,7 +895,7 @@ function addAccount({ channel, uid, name, token, refreshToken, source, expiresAt
     dayStr(),
     now,
     Math.max(0, Number(updatedAt) || now),
-    // 凭据时刻：号池同步整号入池时沿用快照里的值（凭据是远端那一刻写下的），缺省按当前时刻
+    // 凭据时刻：导入整号入池时沿用来源快照里的值（凭据是那一刻写下的），缺省按当前时刻
     Math.max(0, Number(tokenAt) || Number(updatedAt) || now),
     meta && typeof meta === "object" ? JSON.stringify(meta) : ""
   );
@@ -952,11 +952,11 @@ function updateAccount(id, patch) {
   if (patch.lastUsed != null) put("last_used", Number(patch.lastUsed) || 0);
   if (patch.token != null) put("token_enc", config.encryptSecret(patch.token));
   if (patch.refreshToken != null) put("refresh_enc", config.encryptSecret(patch.refreshToken));
-  // 凭据时钟（与上面改名时钟同一个道理，但要跨机持久比对，故落独立列）：
+  // 凭据时钟（与上面改名时钟同一个道理，但要持久比对，故落独立列）：
   // 加密信封带随机数，无法用密文比对，所以解出明文比；只有**值真的变了**才推进 token_at——
   // 每次额度刷新/冷却都会走 updateAccount，无条件推进的话「本机跑过流量」就能让坏凭据
-  // 在号池同步的 LWW 里胜出，反向污染另一台健康机器。
-  // 调用方显式传 tokenAt 时以传入为准（同步采纳远端凭据：把本机时钟追平到远端那次写入）。
+  // 在导入的新旧判定里胜出，反向污染本机的健康凭据。
+  // 调用方显式传 tokenAt 时以传入为准（采纳导入凭据：把本机时钟追平到来源那次写入）。
   if (patch.tokenAt != null) put("token_at", Math.max(0, Number(patch.tokenAt) || 0));
   else if (patch.token != null || patch.refreshToken != null) {
     const nextTok = patch.token != null ? String(patch.token) : config.decryptSecret(cur.token_enc);
@@ -1183,7 +1183,7 @@ function normPackageRow(p, i) {
 }
 
 /** 整体替换某账号的包集（DELETE + 批量 INSERT，一个事务内原子完成）。
- *  传空数组 = 清空该账号包集。刷新链路与号池同步合并都走这一个入口，语义唯一。 */
+ *  传空数组 = 清空该账号包集。刷新链路与凭据导入合并都走这一个入口，语义唯一。 */
 function setCreditPackages(accountId, channel, packages) {
   open();
   const id = String(accountId || "");

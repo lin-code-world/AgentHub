@@ -81,19 +81,6 @@ function maskAccountName(name) {
   return s.length <= 4 ? s : s.slice(0, 4) + "…";
 }
 
-/** request 事件节流：每条代理请求完成都会调用，高流量时逐条广播只烧 IPC，
-    合并为每 2 秒至多一条（带合并条数），渲染层本就以 5s 轮询展示实时流 */
-let reqEvt = { count: 0, timer: null };
-function emitRequestThrottled() {
-  reqEvt.count++;
-  if (reqEvt.timer) return;
-  reqEvt.timer = setTimeout(() => {
-    const n = reqEvt.count;
-    reqEvt = { count: 0, timer: null };
-    events.emit({ type: "request", count: n });
-  }, 2000);
-}
-
 /** 渠道选择：提供商前缀直达 → 单源强制 → per-model 覆盖 → 打分（健康度×余额）/ 指定渠道优先。
  *  关闭的渠道（上游启闭）不参与：modelOwners 已过滤（单源 → 空 → 400），
  *  key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
@@ -674,7 +661,6 @@ async function handleChat(req, res, settings, surface, convNotes) {
     Object.assign(usageRow, extra || {});
     store.insertUsage(usageRow);
     if (usageRow.accountId) store.bumpAccountUsage(usageRow.accountId, (usageRow.promptTokens || 0) + (usageRow.completionTokens || 0));
-    emitRequestThrottled();
     // 操作日志：每条代理请求一条（成功 info / 4xx warn / 5xx+网络 error）；
     // detail 带上游错误轨迹，message 带模型与耗时——日志页直接看，不必翻 usage_requests
     // 转换损失（convNotes）一并挂进 detail：成功请求的 error 是空的，不拼在这里就无处可查，

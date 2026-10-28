@@ -1712,7 +1712,7 @@ async function saveQoderAccount(channel, cred) {
   const email = String(user.email || (name.includes("@") ? name : ""));
 
   // 用 refresh 换取到期时间（轮询响应没有这两个字段）。
-  // 失败不阻断登录：没有到期时间的账号仍可用，只是临期预刷新与 PoolSync 仲裁少了依据。
+  // 失败不阻断登录：没有到期时间的账号仍可用，只是临期预刷新少了依据（跨设备凭据仲裁已移除）。
   let token = cred.token;
   let refreshToken = cred.refreshToken;
   let expiresAt = 0;

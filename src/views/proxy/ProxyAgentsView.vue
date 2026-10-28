@@ -397,7 +397,7 @@ async function doExport() {
   }
 }
 
-/** 批量删除：主进程逐个走单删链路（墓碑先行，经 WebDAV 传播到其他设备） */
+/** 批量删除：主进程逐个走单删链路（含 CatPaw 会话清理），日志只记汇总一条 */
 async function doBatchDelete() {
   if (batchDelBusy.value) return;
   const ids = activeChannelAccounts.value.filter((a) => selectedIds.value.has(a.id)).map((a) => a.id);
@@ -1030,7 +1030,7 @@ async function commitRename(acc: ProxyAccount) {
   }
 }
 
-// ===== 账号备注弹窗（一个输入框，保存落 meta.note；随 WebDAV 快照导出 + 备注新者胜传播） =====
+// ===== 账号备注弹窗（一个输入框，保存落 meta.note；随明文凭据导出带走） =====
 const noteOpen = ref(false);
 const noteRow = ref<ProxyAccount | null>(null);
 const noteText = ref("");
@@ -2591,7 +2591,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 备注弹窗：一个输入框，保存落 meta.note（清空即清除），随 WebDAV 同步 -->
+      <!-- 备注弹窗：一个输入框，保存落 meta.note（清空即清除） -->
       <div v-if="noteOpen" class="p-mask" @click.self="noteOpen = false">
         <div class="p-dlg glass note-dlg">
           <div class="p-title">账号备注</div>

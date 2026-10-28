@@ -55,6 +55,9 @@ let rowsKey = "";
 /** 全量在飞标志：期间增量让路（不递增序号、不改 rows），防止增量抢序号把全量挤成过期响应、旧行残留不自愈（Ruling 35） */
 let fullLoading = false;
 const error = ref("");
+/** 增量刷新失败提示（rows 非空时用）：旧行保留，顶部粘性小条提示，刷新恢复即消失。
+ *  不用 toast——15s 兜底轮询会反复失败，逐次弹窗只会刷屏 */
+const incError = ref("");
 /** 全量在飞（首屏 / 筛选切换）：空表期间要显示「加载中」而不是「没有日志」（I6 空态三态） */
 const busy = ref(false);
 /** 空态三态：加载中 / 确实没有 / 加载失败（失败给重试入口，别把断网写成「暂无数据」） */
@@ -96,6 +99,7 @@ async function load() {
     rows.value = r?.rows || [];
     total.value = r?.total || 0;
     error.value = "";
+    incError.value = "";
     rowsKey = issued.key; // rows 从此对应这份筛选/分页
     if (page.value === 0 && rows.value.length) lastId.value = Math.max(lastId.value, rows.value[0].id);
   } catch (e) {
@@ -135,10 +139,14 @@ async function loadIncremental() {
     lastId.value = res.lastId;
     total.value = r?.total ?? total.value;
     error.value = "";
+    incError.value = ""; // 刷新恢复正常：撤掉「已保留上次数据」提示条
     if (res.needFullReload) void load(); // 一次增量触顶 = 没追完，回退全量拿到最新一页
   } catch (e) {
     if (!isSnapshotCurrent(issued, snapshotNow())) return;
-    error.value = e instanceof Error ? e.message : "加载失败";
+    const msg = e instanceof Error ? e.message : "加载失败";
+    error.value = msg;
+    // rows 非空：旧行保留（不改 rows），另给一条可见提示（顶部小条）
+    if (rows.value.length) incError.value = msg;
   }
 }
 
@@ -268,6 +276,8 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
       </div>
 
       <div class="card">
+        <!-- 增量刷新失败但表里还有旧数据：旧行保留 + 顶部小条提示（刷新恢复即消失，不逐次弹窗） -->
+        <div v-if="incError" class="inc-warn">日志增量刷新失败，已保留上次数据：{{ incError }} <button class="btn-link btn-sm" @click="incError = ''; load()">重试</button></div>
         <div class="table-scroll">
           <table class="table">
             <thead><tr>
@@ -390,6 +400,15 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 }
 .mono {
   font-family: var(--font-mono, monospace);
+}
+/* 增量刷新失败提示条（rows 非空时的可见兜底，刷新恢复即消失） */
+.inc-warn {
+  margin: 10px 12px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 14%, transparent);
 }
 .empty {
   text-align: center;

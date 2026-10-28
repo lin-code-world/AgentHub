@@ -437,6 +437,16 @@ export const mock = {
         return String(args?.token || "").trim().length >= 16 ? { ok: true, message: "令牌已更新，浏览器需重新登录" } : { ok: false, message: "令牌至少 16 位" };
 
       // ===== 反代网关（预览数据，语义对齐 backend/proxy） =====
+      case "proxy_config_get":
+        return read().proxy;
+      case "proxy_config_save": {
+        // 纯预览：proxy 段落 mock 配置（localStorage），不碰真实网关
+        const cfg = read();
+        const incoming = (args?.config || {}) as Partial<AppConfig["proxy"]>;
+        cfg.proxy = { ...cfg.proxy, ...incoming };
+        localStorage.setItem(KEY, JSON.stringify(cfg));
+        return { ok: true, message: "设置保存成功" };
+      }
       case "proxy_status":
         return {
           running: true, port: 9527, bind: "127.0.0.1", baseUrl: "http://127.0.0.1:9527/v1",

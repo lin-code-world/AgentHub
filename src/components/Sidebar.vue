@@ -237,8 +237,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 
       <!-- 左下角全局操作：亮暗 / 设置（侧栏收缩入口统一在页签条最左） -->
       <div class="side-foot">
-        <el-tooltip content="切换亮暗主题" placement="top">
-          <button class="btn btn-ghost" @click="app.toggleTheme()">
+        <!-- 主题切换：浏览器形态拿不到整份配置读写（save_config 被 deny），主题改了也记不住——
+             切换入口隐藏为禁用态，tooltip 指到桌面窗口改（桌面不受影响） -->
+        <el-tooltip :content="settingsHidden ? '请在桌面窗口修改主题' : '切换亮暗主题'" placement="top">
+          <button class="btn btn-ghost" :disabled="settingsHidden" @click="!settingsHidden && app.toggleTheme()">
             <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
           </button>
         </el-tooltip>

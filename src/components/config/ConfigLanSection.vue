@@ -47,7 +47,7 @@ async function refresh() {
   try {
     info.value = await api.adminAccessInfo();
   } catch {
-    info.value = null; /* 拿不到就整块降级为「暂不可用」 */
+    info.value = null; /* 拿不到就整块降级为「地址不可用」 */
   }
 }
 

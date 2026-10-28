@@ -185,7 +185,7 @@ export interface ProxyAccount {
   /** 逐包明细（有包的渠道才有；无包的渠道这个字段不出，界面回落账号级聚合行） */
   packages?: ProxyCreditPackage[];
   source: "scan" | "oauth" | "paste";
-  /** 账号备注（备注弹窗写入；落 meta.note，副行展示 + 随 WebDAV 同步） */
+  /** 账号备注（备注弹窗写入；落 meta.note，副行展示 + 随明文凭据导出带走） */
   note?: string;
   lastUsed: number;
   todayReq: number;
@@ -437,7 +437,7 @@ export interface ProxyOpLogRow {
   ts: number;
   /** info = 成功/常规；warn = 降级/需人工/4xx；error = 失败/5xx/网络 */
   level: string;
-  /** 操作分类（代理请求 / 签到 / 网关启停 / API Key / 号池账号 / 网关配置 / OAuth 登录 / 模型目录 / 切换账号 / 号池同步 / 自动签到 / 冷却与风控） */
+  /** 操作分类（代理请求 / 请求排队 / 代理重试 / 签到 / 自动签到 / 网关启停 / 网关配置 / API Key / 号池账号 / OAuth 登录 / AutoClaw 发码 / AutoClaw 登录 / Loomy 发码 / Loomy 登录 / 模型目录 / 切换账号 / 冷却与风控 / 用量统计 / 版本升级） */
   op: string;
   message: string;
   channel: string;
@@ -504,10 +504,11 @@ export interface ProxyRuleFile {
   error: string;
 }
 
-/** 主进程推送的反代网关事件（app:event，event="proxy"） */
+/** 主进程推送的反代网关事件（app:event，event="proxy"）；type 取实际广播的事件类型，
+ *  resync 是浏览器形态 SSE 重连后由前端补发的补偿信号（同形分发给各订阅方） */
 export interface ProxyEvent {
   event: "proxy";
-  type: "request" | "status" | "credits" | "oauth-done";
+  type: "status" | "credits" | "oauth-done" | "stats" | "oplog" | "pool" | "channel-health" | "resync";
   ok?: boolean;
   message?: string;
   id?: string;

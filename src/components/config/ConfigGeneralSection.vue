@@ -86,7 +86,7 @@ async function openDataDir() {
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">关闭最小化到托盘</div>
-          <div class="set-desc">开启：关闭后销毁界面进程（释放渲染进程），托盘与后台服务（反代网关）照常运行，唤回时重新加载界面；关闭：关闭后直接退出应用</div>
+          <div class="set-desc">开启：关闭后销毁界面进程（释放渲染进程），托盘与后台服务（反代网关）照常运行，唤回时重新加载界面；关闭：关闭后直接退出应用，浏览器与反代都会断开</div>
         </div>
         <div
           class="switch"

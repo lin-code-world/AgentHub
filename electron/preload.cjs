@@ -111,7 +111,7 @@ contextBridge.exposeInMainWorld("agenthub", {
     }
     return ipcRenderer.invoke(cmd, args);
   },
-  // 主进程广播（更新状态 / WebDAV 进度 / focus-update 跳转信号），返回退订函数
+  // 主进程广播（网关状态 / 号池结构 / 配置变更等），返回退订函数
   onUpdateEvent: (callback) => {
     if (typeof callback !== "function") return () => {};
     const listener = (_event, payload) => callback(payload);
