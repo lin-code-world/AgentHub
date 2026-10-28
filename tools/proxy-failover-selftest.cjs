@@ -429,13 +429,68 @@ async function main() {
       const h10 = { ...hits };
       rr = await call({ model: "rev-failover", stream: false, messages: bodyMsg });
       const b10 = await rr.text();
-      assert(rr.status === 200, "T10 指定无效映射渠道时应落到有效渠道: " + rr.status + " " + b10.slice(0, 200));
+      // 行为契约变更：Key 绑定渠道只接受该渠道目录内的模型（或配置了该渠道反向映射目标的模型）。
+      // CatPaw 目录没有 rev-failover、其反向映射是自映射（等于没有目标）→ 403，不再跨渠道落到 trae。
+      assert(rr.status === 403, "T10 Key 绑定渠道不含该模型时应 403 拒绝: " + rr.status + " " + b10.slice(0, 200));
+      assert(/model_not_in_channel/.test(b10), "T10 错误码为 model_not_in_channel: " + b10.slice(0, 200));
       assert(catPawHits === 0, "T10 自映射的 CatPaw 渠道不得收到请求");
-      assert(hits.trae === h10.trae + 1, "T10 实际请求打到已配置映射的 trae: " + JSON.stringify(hits));
+      assert(hits.trae === h10.trae, "T10 不得落到 trae（不再跨渠道兜底）: " + JSON.stringify(hits));
       row = store.recentRequests(1)[0];
-      assert(row.channel === "trae" && /rev→glm-5\.3/.test(row.error || ""), "T10 记账为 trae + rev→glm-5.3: " + row.error);
+      assert(row.status === 403 && row.channel === "", "T10 记账为 403 且未落渠道: " + JSON.stringify({ status: row.status, channel: row.channel }));
       store.updateKey(k.id, { route: "auto" });
       cfg.modelReverseAliases = {};
+
+      // T10b：单源模型（只存在于 CatPaw 目录）在 Key 绑定 trae 时必须 403——
+      // 「单源强制」只留给智能路由，绑定渠道不再被静默改送模型实际归属渠道
+      adapters.ADAPTERS.catpaw = {
+        ...realCatPaw,
+        models: () => ["t10b-only-model"],
+        stateful: () => true,
+        chatSession: async () => {
+          catPawHits++;
+          throw new Error("should not be called");
+        },
+      };
+      store.updateKey(k.id, { route: "trae" });
+      const h10b = { ...hits };
+      rr = await call({ model: "t10b-only-model", stream: false, messages: bodyMsg });
+      const b10b = await rr.text();
+      assert(rr.status === 403 && /model_not_in_channel/.test(b10b), "T10b 单源模型不在绑定渠道时 403: " + rr.status + " " + b10b.slice(0, 200));
+      assert(catPawHits === 0, "T10b 不得改送 CatPaw（单源强制只留给智能路由）");
+      assert(hits.trae === h10b.trae && hits.wba === h10b.wba, "T10b 被拒后不得把请求发给其它渠道: " + JSON.stringify(hits));
+      store.updateKey(k.id, { route: "auto" });
+
+      // T10c：Key 绑定的渠道被「上游启闭」关闭 → 403 提示上游未启用（不得回落其它渠道）
+      cfg.channelEnabled = { trae: false };
+      store.updateKey(k.id, { route: "trae" });
+      const h10c = { ...hits };
+      rr = await call({ model: "glm-5.3", stream: false, messages: bodyMsg });
+      const b10c = await rr.text();
+      assert(rr.status === 403 && /上游未启用/.test(b10c), "T10c 绑定渠道被关闭时 403 提示上游未启用: " + rr.status + " " + b10c.slice(0, 200));
+      assert(hits.trae === h10c.trae && hits.wba === h10c.wba, "T10c 被拒后不得把请求发给其它渠道: " + JSON.stringify(hits));
+      cfg.channelEnabled = {};
+      store.updateKey(k.id, { route: "auto" });
+
+      // T10d：绑定渠道 + 模型在该渠道目录内 → 正常放行（守住「严格绑定」不误杀正常请求）
+      store.updateKey(k.id, { route: "trae" });
+      const h10d = { ...hits };
+      rr = await call({ model: "glm-5.3", stream: false, messages: bodyMsg });
+      const b10d = await rr.text();
+      assert(rr.status === 200, "T10d 绑定渠道且模型在目录时应正常放行: " + rr.status + " " + b10d.slice(0, 120));
+      assert(hits.trae === h10d.trae + 1, "T10d 请求实际打到绑定渠道 trae: " + JSON.stringify(hits));
+      store.updateKey(k.id, { route: "auto" });
+
+      // T10e：配置了自动回退模型时，绑定渠道的 403 也不回退——「请求模型被拒就是拒绝」
+      // （回退模型 glm-5.3 在绑定渠道 trae 目录内，若回退生效这里会 200）
+      cfg.fallbackModel = "glm-5.3";
+      store.updateKey(k.id, { route: "trae" });
+      const h10e = { ...hits };
+      rr = await call({ model: "t10b-only-model", stream: false, messages: bodyMsg });
+      const b10e = await rr.text();
+      assert(rr.status === 403 && /model_not_in_channel/.test(b10e), "T10e 绑定 Key 配了回退模型也不回退: " + rr.status + " " + b10e.slice(0, 200));
+      assert(hits.trae === h10e.trae && hits.wba === h10e.wba, "T10e 不得用回退模型发起请求: " + JSON.stringify(hits));
+      cfg.fallbackModel = "";
+      store.updateKey(k.id, { route: "auto" });
     } finally {
       adapters.ADAPTERS.catpaw = realCatPaw;
     }

@@ -81,21 +81,25 @@ function maskAccountName(name) {
   return s.length <= 4 ? s : s.slice(0, 4) + "…";
 }
 
-/** 渠道选择：提供商前缀直达 → 单源强制 → per-model 覆盖 → 打分（健康度×余额）/ 指定渠道优先。
- *  关闭的渠道（上游启闭）不参与：modelOwners 已过滤（单源 → 空 → 400），
- *  key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
+/** 渠道选择：提供商前缀直达 → Key 绑定渠道（严格校验归属）→ 单源强制 → per-model 覆盖 →
+ *  打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：modelOwners 已过滤
+ *  （单源 → 空 → 400），key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
 function resolveChannel(key, model, settings) {
   // `slug/model` 前缀直达提供商。这里只交出渠道，不改模型名——上游真名由适配器的 upstreamFor
   // 剥前缀再映射，与内置适配器「收到客户端模型名、自己改写」的契约一致，调度层不需要第二套命名口径。
   const slug = provider.parseModelRef(model);
   if (slug) return { channel: slug };
   const owners = adapters.modelOwners(model, settings);
-  if (owners.length === 1) return { channel: owners[0] }; // 模型仅存在于单渠道目录 → 强制
-  if (key.route !== "auto" && adapters.channelOn(key.route, settings)) {
-    // 虚拟统一名不能透传给未配置映射的渠道；非虚拟模型保留「指定渠道透传试错」的既有语义。
+  // Key 绑定渠道是用户显式指定的物理边界：渠道被「上游启闭」关闭、或模型不在该渠道目录时
+  // 一律 403 拒绝——不回落其它渠道、也不「透传试错」目录外模型（静默改道/放行会让人误以为绑定生效）。
+  // 单源强制只留给智能路由。
+  if (key.route !== "auto") {
+    if (!adapters.channelOn(key.route, settings)) return { channel: null, disabledBoundChannel: key.route };
     if (adapters.resolveModelTarget(model, key.route, settings)) return { channel: key.route };
-    if (!adapters.reverseAliasEntry(model, settings)) return { channel: key.route };
+    if (owners.includes(key.route)) return { channel: key.route };
+    return { channel: null, notInChannel: { model, channel: key.route } };
   }
+  if (owners.length === 1) return { channel: owners[0] }; // 模型仅存在于单渠道目录 → 强制
   if (owners.length > 1) {
     const ov = (settings.modelOverrides || {})[model];
     if (ov && owners.includes(ov)) return { channel: ov };
@@ -743,12 +747,25 @@ async function handleChat(req, res, settings, surface, convNotes) {
   const perModel = (settings.modelFallback || {})[actualModel];
   const globalFb = settings.autoFallbackEnabled === false ? "" : String(settings.fallbackModel || "");
   const fallback = perModel || globalFb;
-  // 回退模型自身被禁用时不入链（切过去也是 400，白费一跳），口径同上（大小写不敏感）
-  if (fallback && fallback !== actualModel && fallback !== requestedModel && !disabledSet.has(fallback.toLowerCase())) {
+  // 回退模型自身被禁用时不入链（切过去也是 400，白费一跳），口径同上（大小写不敏感）。
+  // Key 绑定渠道不使用自动回退模型：绑定渠道是显式物理边界，「请求模型被拒就是拒绝」，
+  // 模型链只保留请求模型本身（否则执行失败时还会拿回退模型去试，报错也会变成回退模型的 403）
+  if (key.route === "auto" && fallback && fallback !== actualModel && fallback !== requestedModel && !disabledSet.has(fallback.toLowerCase())) {
     modelChain.push(fallback);
   }
 
   const resolvedMain = resolveChannel(key, actualModel, settings);
+  // Key 绑定的渠道被「上游启闭」关闭 / 不含该模型：直接 403，不进回退模型
+  if (resolvedMain.disabledBoundChannel) {
+    const c = resolvedMain.disabledBoundChannel;
+    record({ status: 403, error: `bound channel ${c} disabled` });
+    return sink.endErr(403, `没有权限，渠道「${store.channelDisplay(c)}」上游未启用，请在「上游启闭」中开启后再试`, "permission_error", "channel_disabled");
+  }
+  if (resolvedMain.notInChannel) {
+    const f = resolvedMain.notInChannel;
+    record({ status: 403, error: `model "${f.model}" not in bound channel ${f.channel}` });
+    return sink.endErr(403, `没有权限，模型名称 "${f.model}" 不在渠道「${store.channelDisplay(f.channel)}」的模型目录里`, "permission_error", "model_not_in_channel");
+  }
   if (!resolvedMain.channel && !fallback) {
     const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
     // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
@@ -901,8 +918,10 @@ async function handleChat(req, res, settings, surface, convNotes) {
       if (upstreamTries >= maxTries) break; // 上游尝试预算用尽：不再开新渠道/新模型
       const resolved = resolveChannel(key, chainModel, settings);
       if (!resolved.channel) {
+        // 绑定渠道的 403（模型不在目录 / 渠道未启用）已在首次解析直接返回；链内只剩智能路由的
+        // 未知模型（请求模型或回退模型不在任何目录）→ 继续尝试回退模型
         lastErr = Object.assign(new Error(`模型 "${chainModel}" 不在任何渠道目录中`), { status: 400 });
-        continue; // 未知模型 → 尝试回退模型
+        continue;
       }
       usedModel = chainModel;
       if (chainModel !== actualModel) {
@@ -1328,7 +1347,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
     if (!wantStream || !ttftMs) {
       // 还没出过内容：流式且头已落地时仍要塞错误帧，否则回标准 JSON 错误状态
       if (wantStream && res.headersSent) sink.endErr(st, msg);
-      else sink.endErr(st === 401 ? 502 : st, msg, st === 402 || st === 429 ? "rate_limit_exceeded" : "server_error");
+      else sink.endErr(st === 401 ? 502 : st, msg, st === 402 || st === 429 ? "rate_limit_exceeded" : st === 403 ? "permission_error" : "server_error");
     } else {
       sink.endErr(st, msg);
     }
