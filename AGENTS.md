@@ -79,11 +79,10 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 近期变更记录（2026-10-28）
 
-这次会话把桌面 exe 扩展成「内置网页控制台」，并删除了号池同步与远程实例，随后做了开发期与界面性能优化。完整记录（架构、文件清单、验证命令、遗留项、常用操作）见：
+- 变更记录：`docs/superpowers/sessions/2026-10-28-proxy-webconsole-changes.md`
+- 设计依据：`docs/superpowers/specs/2026-10-27-proxy-webconsole-design.md`（为什么这么做、被否决的方案、风险与决策记录）
 
-`docs/superpowers/sessions/2026-10-28-proxy-webconsole-changes.md`
-
-设计依据（为什么这么做、被否决的方案、风险与决策记录）：`docs/superpowers/specs/2026-10-27-proxy-webconsole-design.md`
+这次会话把桌面 exe 扩展成「内置网页控制台」，并删除了号池同步与远程实例，随后做了开发期与界面性能优化。完整记录（架构、文件清单、验证命令、遗留项、常用操作）见上面的变更记录文件。
 
 要点：
 
