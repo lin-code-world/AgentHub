@@ -9,7 +9,7 @@
   ============================================================
 -->
 <!-- 设置 · 局域网访问：管理地址（反代端口 + 1，局域网地址优先展示、本机回环地址兜底）与访问令牌
-     （掩码展示，可查看 / 复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
+     （不展示令牌内容，仅提供复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
      令牌来源分形态：桌面管理服务只认 config.admin.token（本页展示 / 修改的就是它），
      容器（Docker headless）仍认 AGENTHUB_ADMIN_TOKEN 环境变量；桌面没有只读令牌 -->
 <script setup lang="ts">
@@ -27,7 +27,6 @@ const webForm = isWebTransport();
 const tokenGate = denyState("admin_access_info", "admin_set_token");
 
 const info = ref<AdminAccessInfo | null>(null);
-const tokenShown = ref(false);
 const editing = ref(false);
 const newToken = ref("");
 const saveState = ref("");
@@ -57,12 +56,6 @@ function feedback(text: string) {
   stateTimer = window.setTimeout(() => (saveState.value = ""), 2600);
 }
 
-/** 令牌掩码：前 4 ···· 后 4（与 Key 列表 mask 同款） */
-const tokenMask = computed(() => {
-  const t = info.value?.token || "";
-  return t.length >= 8 ? `${t.slice(0, 4)}····${t.slice(-4)}` : "····";
-});
-
 function copyText(text: string, what: string) {
   navigator.clipboard
     ?.writeText(text)
@@ -85,7 +78,6 @@ async function saveToken() {
   try {
     await api.adminSetToken(t);
     editing.value = false;
-    tokenShown.value = false;
     await refresh();
     feedback("令牌已更新，浏览器需重新登录");
   } catch (e) {
@@ -97,7 +89,7 @@ async function saveToken() {
 <template>
   <div class="lan-sec">
     <div class="tg-head">
-      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的查看与修改请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
+      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的复制与修改请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
     </div>
 
@@ -136,8 +128,6 @@ async function saveToken() {
         </div>
         <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top">
           <div class="lan-ctl">
-            <span class="mono lan-text">{{ tokenShown ? info?.token || "" : tokenMask }}</span>
-            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled" @click="tokenShown = !tokenShown">{{ tokenShown ? "隐藏" : "查看" }}</button>
             <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled" @click="info && copyText(info.token, '令牌')">复制</button>
             <button class="btn btn-ghost" :disabled="tokenGate.disabled" @click="startEdit">修改</button>
           </div>
