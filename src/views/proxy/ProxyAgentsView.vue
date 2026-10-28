@@ -2726,7 +2726,6 @@ onUnmounted(() => {
   gap: 6px;
   height: var(--ch-strip-h);
   min-width: 0;
-  animation: stripIn 0.24s var(--ease);
 }
 /* 方块区吸收剩余宽度并独立横向滚动：渠道再多也不会把展开入口挤出可视区，
    也不会把这一行撑高（overflow-y: hidden 锁死高度） */
@@ -2743,21 +2742,6 @@ onUnmounted(() => {
 }
 .ch-strip-list::-webkit-scrollbar {
   display: none;
-}
-@keyframes stripIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ch-strip {
-    animation: none;
-  }
 }
 .ch-strip-empty {
   font-size: 11px;
@@ -3005,25 +2989,6 @@ onUnmounted(() => {
   border-color: var(--accent-line);
   background: var(--accent-dim);
   color: var(--accent-strong);
-}
-/* 渠道面板：切渠道时新面板淡入上浮；v-for 按 key 复用，数据刷新不会重播 */
-.channel-panel {
-  animation: panelIn 0.32s var(--ease);
-}
-@keyframes panelIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .channel-panel {
-    animation: none;
-  }
 }
 /* 面板工具栏：策略 / 添加账号 / 签到或加油包 / 刷新，全部只作用于当前渠道 */
 .panel-tools {
@@ -3921,7 +3886,6 @@ onUnmounted(() => {
   background: rgba(245, 158, 11, 0.12) !important;
   border-radius: 4px;
   padding: 2px 7px !important;
-  animation: pulse 1.8s infinite;
 }
 .btn-warning {
   background: #f59e0b !important;

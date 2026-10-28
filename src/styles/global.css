@@ -499,7 +499,7 @@ body {
   height: 14px;
   flex-shrink: 0;
 }
-/* 进行中图标转圈（顶栏同步按钮） */
+/* 功能性加载指示：按钮转圈保留（与原 fx-off 的豁免口径一致） */
 .btn-cta.is-loading svg {
   animation: ctaSpin 1.2s linear infinite;
 }
@@ -1426,8 +1426,6 @@ body {
 .table tbody tr {
   cursor: pointer;
   transition: background 0.12s ease;
-  animation: rowIn 0.3s ease both;
-  animation-delay: calc(min(var(--i, 0), 12) * 25ms);
 }
 
 .table tbody tr:hover {
@@ -1460,15 +1458,7 @@ table th,
   text-align: center !important;
 }
 
-/* 表格行动画 */
-@keyframes rowIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
+/* 表格行入场动画已移除（装饰性；原 fx-off 逻辑下也会被压停） */
 
 /* 分页条规范 */
 .pager {
