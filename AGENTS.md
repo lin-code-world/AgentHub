@@ -83,7 +83,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 `docs/superpowers/sessions/2026-10-28-proxy-webconsole-changes.md`
 
-（`docs/` 被 `.gitignore` 忽略，该文件只在本机存在。）
+设计依据（为什么这么做、被否决的方案、风险与决策记录）：`docs/superpowers/specs/2026-10-27-proxy-webconsole-design.md`
 
 要点：
 
