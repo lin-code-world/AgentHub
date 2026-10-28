@@ -43,7 +43,8 @@ docker compose -f gateway/docker-compose.yml up -d --build
 docker compose -f gateway/docker-compose.yml ps          # STATUS 应为 healthy
 curl -s http://127.0.0.1:9528/api/livez                  # {"ok":true}  进程存活
 curl -s http://127.0.0.1:9528/api/readyz                 # 503 = 还没账号（预期），灌号后转 200
-curl -s http://127.0.0.1:9528/api/status                 # 版本 / 平台 / 加密方式 / 数据目录
+curl -s -H "Authorization: Bearer $AGENTHUB_ADMIN_TOKEN" \
+  http://127.0.0.1:9528/api/status                 # 版本 / 平台 / 加密方式 / 数据目录（需令牌）
 ```
 
 给下游客户端配置：Base URL `http://<服务器>:9527/v1`，API Key 在 Web 控制台里建（见 §4.5）。
