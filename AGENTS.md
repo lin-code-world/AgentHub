@@ -18,18 +18,22 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 ## 架构
 
 - `electron/` 主进程，全部 `.cjs`（CommonJS）：`main.cjs` 应用入口；`preload.cjs` IPC 白名单桥；`backend/proxy/`
-  反代网关核心；`backend/config.cjs` 全局配置；`backend/admin.cjs` 管理服务（局域网网页控制台的 HTTP 入口）。
+  反代网关核心；`backend/config.cjs` 全局配置；`backend/admin.cjs` 管理服务（局域网网页控制台的 HTTP 入口）；
+  `backend/commandTable.cjs` 命令表与形态门控；`backend/adminCrypto.cjs` 会话协商与请求加解密。
 - `src/` 渲染层（Vue 3 `<script setup lang="ts">`）：`views/proxy/` 网关页面，`api/ipc.ts` 统一 IPC 封装。
 - `gateway/` Docker headless 形态：独立 package.json（依赖 `node:sqlite`，需 Node >= 22.5）。入口 `gateway/src/index.cjs` 复用
-  `proxy/index.cjs` 的 `boot()`，只处理形态差异（监听覆盖、管理 REST API、停机序列）。
+  `proxy/index.cjs` 的 `boot()`，只处理形态差异（监听覆盖、管理 REST API、停机序列、`form: "container"` 能力清单）；
+  `gateway/src/commands.cjs` 复用 `commandTable` 的命令与 deny 判定，只向容器暴露 `proxy_*`。
 
 ## 管理服务与浏览器会话（桌面网页控制台）
 
-- `backend/admin.cjs`：Express，监听 0.0.0.0，端口 = 反代端口 + 1（`start({ port, commandTable, staticDir })` 传的是反代端口）。
+- `backend/admin.cjs`：Express，监听 0.0.0.0，端口 = 反代端口 + 1（`start({ port, commandTable, staticDir })` 传的是反代端口），
+  与反代 `bind` 解耦（反代只绑本机时管理页仍可局域网访问）。
   `/api/rpc` 转发到与桌面 IPC 同一份命令表（`backend/commandTable.cjs` 的 `collect()`），不碰反代调度、选号、冷却、计费。
 - 令牌与会话：单一管理令牌（`backend/config.cjs` 加密落盘，桌面「设置 · 局域网访问」查看 / 修改，≥16 位不可清空）；登录走 ECDH
   P-256 协商派生 12 小时会话密钥（`backend/adminCrypto.cjs` 与 `src/api/adminCrypto.ts` 协议逐字对齐，改动两边一起改），请求 /
   响应 / SSE 全密文，时间窗 + 随机数防重放；会话存浏览器 localStorage，令牌只在登录瞬间参与签名、不落浏览器；改令牌即全部会话失效。
+  以上是桌面浏览器形态；容器形态仍认 `AGENTHUB_ADMIN_TOKEN` 环境变量，走 Bearer + 明文 JSON/SSE，令牌存 localStorage。
 - 命令形态门控：`commandTable.cjs` 的 `modeOf/denyReason(cmd, form)`，`form` 分 `container` / `browser`；deny 文案两表
   `DENY`（容器）与 `DENY_BROWSER`（浏览器），`DENY` 同键必须在 `DENY_BROWSER` 有文案（加载期 fail-fast），`DENY_BROWSER` 另含
   桌面专用命令（令牌读写 / 目录 / 整份配置）。改 deny 集合两表一起改。
@@ -45,7 +49,8 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 `electron/backend/ipc.cjs`（注册）→ `electron/preload.cjs`（白名单）→ `src/api/ipc.ts`（封装），三者一一对应，漏一处命令不通。渲染层调用统一走
 `src/api/ipc.ts`：Vue 响应式 Proxy 直接过 `ipcRenderer.invoke` 会抛 "An object could not be cloned"，那里已统一 `toPlain`
-脱壳。
+脱壳。命令表 `commandTable.collect()` 会自动收集 `ipc.cjs` 与 `proxy/index.cjs` 的注册，浏览器端自动可用；但 preload 白名单仍要手改，
+并决定它在 `READ` / `DENY_BROWSER` 的分类与前端置灰（浏览器端配置读写走 `proxy_config_get` / `proxy_config_save`，不用整份 `load_config` / `save_config`）。
 
 ## 前端约定
 
@@ -54,16 +59,18 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   Plus 的 `<el-*>` 走 resolver 自动按需引入。
 - Vite dev 端口 1420 `strictPort`，与 `electron/main.cjs` 的加载地址绑定，改动会断桌面开发。
 - `npm run dev:web` 纯浏览器预览走 `src/api/mock.ts`（配置落 localStorage，未覆盖的命令返回 null 让页面降级）。
+- 浏览器形态的请求统一走 `src/api/web-transport.ts` 与 `events.ts`，按 `caps.form` 分流：桌面管理服务（`browser`）是 ECDH 加密通道，
+  容器（`container`）是 Bearer + 明文。不要在页面里直接 fetch，否则会绕过鉴权、重试与错误收口。
 
 ## 验证（无测试框架，全部是仓库内 .cjs 自测脚本）
 
 - `npm run build` = `vue-tsc --noEmit` + `vite build`，是唯一类型门禁；仓库无 eslint 配置，格式化由 prettier 负责（见前端约定）。
 - `node scripts/dev-sink-golden.cjs` 是网关调度核心的「黄金字节等值」闸（响应字节 / 冷却决策 / 选号顺序 / 流水与基线逐字相等）。动
-  `backend/proxy` 调度核心：改前 `--write` 录基线（`scripts/fixtures/gateway-sink-baseline.json`），改后比对。三协议回归闸另见
+  `electron/backend/proxy` 调度核心：改前 `--write` 录基线（`scripts/fixtures/gateway-sink-baseline.json`），改后比对。三协议回归闸另见
   `scripts/dev-anthropic-in-test.cjs`、`scripts/dev-responses-in-test.cjs`。
 - 需要 Electron 运行时的脚本用仓库自带二进制跑：
   `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-smoke.cjs`（全链路含假上游）。
-- 管理服务 / 浏览器控制台相关自测：`node tools/admin-server-selftest.cjs`（管理服务骨架与轻量状态）、`node tools/admin-crypto-selftest.cjs` 与 `node tools/admin-crypto-browser-selftest.cjs`（ECDH 两端协议）、`node tools/admin-deny-ui-selftest.cjs`（浏览器门控与置灰）、`node tools/container-web-selftest.cjs`（容器 Web 控制台端到端）、`node tools/command-table-selftest.cjs`（命令表与 deny 真源）；删除守卫：`node scripts/test-poolsync-removed.cjs`、`node scripts/test-remote-removed.cjs`。
+- 管理服务 / 浏览器控制台相关自测：`node tools/admin-server-selftest.cjs`（管理服务骨架与轻量状态）、`node tools/admin-crypto-selftest.cjs` 与 `node tools/admin-crypto-browser-selftest.cjs`（ECDH 两端协议）、`node tools/admin-deny-ui-selftest.cjs`（浏览器门控与置灰）、`node tools/container-web-selftest.cjs`（容器 Web 控制台端到端）、`node tools/command-table-selftest.cjs`（命令表与 deny 真源）；删除守卫：`node scripts/test-poolsync-removed.cjs`、`node scripts/test-remote-removed.cjs`；其余自测见 `tools/` 与 `scripts/`（配置读写、导入、事件节流、日志增量、端口校验等）。
 - Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 111，防 COPY 缩水）。
 - 沙箱约定：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
 
