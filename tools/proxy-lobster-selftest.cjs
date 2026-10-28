@@ -22,6 +22,20 @@ const assert = require("node:assert");
 // 自测沙箱：所有文件写操作落在临时目录，绝不碰真实 %APPDATA%\AgentHub
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "lobster-selftest-"));
 process.env.APPDATA = SANDBOX;
+// 沙箱收尾：脚本多处 process.exit() 不走 finally，挂 exit 钩子覆盖成功 / 失败 / exit() 全部退出路径；
+// 先关 sqlite 句柄，否则 Windows 上 stats.db 被占用删不掉（EBUSY）
+process.on("exit", () => {
+  try {
+    require("../electron/backend/proxy/store.cjs").close();
+  } catch {
+    /* 没加载 store 或已关 */
+  }
+  try {
+    fs.rmSync(SANDBOX, { recursive: true, force: true });
+  } catch {
+    /* 清不掉不影响结论 */
+  }
+});
 
 const adapters = require("../electron/backend/proxy/adapters.cjs");
 const rules = require("../electron/backend/proxy/rules.cjs");

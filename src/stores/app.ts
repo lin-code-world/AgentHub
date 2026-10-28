@@ -101,7 +101,7 @@ export const useAppStore = defineStore("app", {
     loaded: false,
     activeModule: MODULES[0].key as ModuleKey,
     activePage: MODULES[0].pages[0].id,
-    // ===== 全局设置弹窗（左下角设置按钮）：通用 / WebDAV 同步 / 数据与备份 =====
+    // ===== 全局设置弹窗（左下角设置按钮）：通用 / 刷新周期 / 局域网访问 =====
     settingsOpen: false,
     settingsTab: "general" as SettingsTab,
     /** 左栏容器收缩态：收起后主区占满，入口留在页签条最左（状态本机记住） */

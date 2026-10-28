@@ -159,7 +159,7 @@ export const proxyKeyCreate = (opts: { name: string; route: ProxyRoute; routeOrd
 export const proxyKeyUpdate = (id: string, patch: Partial<Pick<ProxyKeyRow, "name" | "route" | "routeOrder" | "dailyQuota" | "rateLimit" | "enabled">>) =>
   call<{ ok: boolean; message?: string }>("proxy_key_update", { id, ...patch });
 export const proxyKeyDelete = (id: string) => call<{ ok: boolean; message?: string }>("proxy_key_delete", { id });
-/** 批量删除（Key 列表多选）：主进程逐个走单删链路（墓碑先行 + WebDAV 传播），removed = 实删条数 */
+/** 批量删除（Key 列表多选）：主进程逐个走单删链路，removed = 实删条数 */
 export const proxyKeysDeleteBatch = (ids: string[]) =>
   call<{ ok: boolean; removed?: number; missing?: number; message?: string }>("proxy_keys_delete", { ids });
 
@@ -177,7 +177,7 @@ export const proxyPoolTier = (channel: ProxyChannelId, tier: ProxyCostTier) =>
 export const proxyAccountAdd = (opts: { channel: ProxyChannelId; name?: string; token: string; refreshToken?: string; uid?: string }) =>
   call<{ ok: boolean; id?: string; message?: string }>("proxy_account_add", opts as unknown as Record<string, unknown>);
 export const proxyAccountRemove = (id: string) => call<{ ok: boolean; message?: string }>("proxy_account_remove", { id });
-/** 批量删除（号池列表多选）：主进程逐个走单删链路（墓碑先行 + WebDAV 传播），removed = 实删条数 */
+/** 批量删除（号池列表多选）：主进程逐个走单删链路（含 CatPaw 会话清理），removed = 实删条数 */
 export const proxyAccountRemoveBatch = (ids: string[]) =>
   call<{ ok: boolean; removed?: number; missing?: number; message?: string }>("proxy_account_remove_batch", { ids });
 /** 明文导出选中账号（号池多选「导出凭据」）：token/refreshToken 为解密后的明文，
@@ -189,10 +189,10 @@ export const proxyAccountExportPlain = (ids: string[]) =>
   );
 export const proxyAccountToggle = (id: string, enabled: boolean) =>
   call<{ ok: boolean; message?: string }>("proxy_account_toggle", { id, enabled });
-/** 重命名账号（自定义备注），WebDAV 同步时 LWW 传播 */
+/** 重命名账号（自定义备注）：改 name 字段，本机即时生效 */
 export const proxyAccountRename = (id: string, name: string) =>
   call<{ ok: boolean; message?: string }>("proxy_account_rename", { id, name });
-/** 账号备注（号池列表「备注」弹窗）：落 meta.note，随 WebDAV 快照导出 + 备注新者胜传播 */
+/** 账号备注（号池列表「备注」弹窗）：落 meta.note，随明文凭据导出带走 */
 export const proxyAccountNote = (id: string, note: string) =>
   call<{ ok: boolean; message?: string }>("proxy_account_note", { id, note });
 /** 手动解除冷却：cooling 账号立即回 online，releasedModels = 同时豁免的模型级负缓存条数 */

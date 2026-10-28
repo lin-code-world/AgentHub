@@ -3472,8 +3472,8 @@ function trustedCodeArtsRedirect(raw) {
 
 /** 落库：凭据是**一整块**（AK/SK/STS + refresh_token + DPoP 私钥与 PKCE verifier），
  *  少一半就续不回来。store 只有 token/refreshToken 两个加密列，故整块 JSON 走 token 列
- *  （与 zcode 同款处置：列本身由 store 加密落盘），refresh_token 另存 refresh 列，
- *  供号池同步按通用键搬运。 */
+ *  （与 zcode 同款处置：列本身由 store 加密落盘），refresh_token 另存 refresh 加密列，
+ *  续期链路按通用键从这里读。 */
 function saveCodeArtsAccount(cred, context) {
   const accessKeyId = String((cred && cred.accessKeyId) || "").trim();
   if (!accessKeyId) return { ok: false, message: "登录结果缺少 accessKeyId" };

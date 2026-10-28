@@ -18,6 +18,14 @@ const path = require("node:path");
 
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "ah-crypto-"));
 process.env.AGENTHUB_DATA_DIR = SANDBOX;
+// 沙箱收尾：脚本末尾 process.exit() 不走 finally，挂 exit 钩子覆盖成功 / 失败 / exit() 全部退出路径
+process.on("exit", () => {
+  try {
+    fs.rmSync(SANDBOX, { recursive: true, force: true });
+  } catch {
+    /* 清不掉不影响结论 */
+  }
+});
 process.env.AGENTHUB_SECRET_KEY = "selftest-secret-key-please-rotate";
 
 let pass = 0, fail = 0; const bad = [];

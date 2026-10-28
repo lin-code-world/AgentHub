@@ -177,7 +177,7 @@ function toggleSelectAll() {
   selectedIds.value = allSelected.value ? new Set() : new Set(keys.value.map((k) => k.id));
 }
 
-/** 批量删除：主进程逐个走单删链路（墓碑先行，经 WebDAV 传播到其他设备） */
+/** 批量删除：主进程逐个走单删链路 */
 async function doBatchDelete() {
   if (batchDelBusy.value) return;
   const ids = keys.value.filter((k) => selectedIds.value.has(k.id)).map((k) => k.id);

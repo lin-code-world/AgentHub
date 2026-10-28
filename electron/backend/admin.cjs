@@ -25,6 +25,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const express = require("express");
 const adminCrypto = require("./adminCrypto.cjs");
+const config = require("./config.cjs");
 
 let server = null; // http.Server：运行中的管理服务
 let listenPort = 0; // 当前监听端口（= 反代端口 + 1），未启动为 0
@@ -39,15 +40,16 @@ const LOGIN_RATE_MAX = 20; // 每 IP 每窗口最多 20 次登录尝试（登录
 let sseHeartbeatMs = SSE_HEARTBEAT_MS;
 const loginHits = new Map(); // ip → { count, windowStart }：登录限流计数（固定窗口）
 
-/** 反代端口 → 管理端口：0 / 65535 / 非整数拒绝（+1 后无意义或越界），错误带 code 便于调用方分辨 */
+/** 反代端口 → 管理端口：合法性判定复用 config.validateProxyPort（同一份 1~65534 规则，0 / 65535 / 非整数拒绝，
+ *  +1 后无意义或越界），避免两处各写一份将来漂移；错误带 code 便于调用方分辨 */
 function adminPortOf(proxyPort) {
-  const p = Number(proxyPort);
-  if (!Number.isInteger(p) || p < 1 || p > 65534) {
+  const check = config.validateProxyPort(proxyPort);
+  if (!check.ok) {
     const e = new Error(`反代端口 ${proxyPort} 非法：管理服务端口 = 反代端口 + 1，反代端口需为 1~65534 的整数（0 与 65535 均不可用）`);
     e.code = "EADMINPORT";
     throw e;
   }
-  return p + 1;
+  return Number(proxyPort) + 1;
 }
 
 /** 运行形态（平台铁律同 proxy/platform/index.cjs）：ELECTRON_RUN_AS_NODE 下 electron API 全不可用，按 node 处理 */

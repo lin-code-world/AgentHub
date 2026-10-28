@@ -74,6 +74,22 @@ async function reachable(p) {
     ok(`反代端口 ${p} 拒绝启动管理服务`, !!err && /端口/.test(String((err && err.message) || err)), err ? String(err.message) : "未抛错");
   }
 
+  // ===== 端口规则单一真源：adminPortOf 复用 config.validateProxyPort，两处结论必须一致 =====
+  {
+    const config = require(path.join(ROOT, "electron", "backend", "config.cjs"));
+    const agree = [0, 65535, 9527, 65534].every((p) => {
+      let rejected = false;
+      try {
+        admin.adminPortOf(p);
+      } catch (e) {
+        rejected = !!e && e.code === "EADMINPORT";
+      }
+      return rejected === !config.validateProxyPort(p).ok;
+    });
+    ok("adminPortOf 与 config.validateProxyPort 对 0 / 65535 / 正常值结论一致", agree);
+    ok("adminPortOf(9527) 返回 9528", admin.adminPortOf(9527) === 9528, String(admin.adminPortOf(9527)));
+  }
+
   // ===== 启动与 capabilities =====
   const first = await admin.start({ port: PROXY_PORT_A, commandTable, staticDir: STATIC_DIR });
   ok("start 返回管理端口 = 反代端口 + 1", !!first && first.port === PROXY_PORT_A + 1, JSON.stringify(first));

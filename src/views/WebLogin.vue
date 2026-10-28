@@ -45,7 +45,7 @@ async function submit() {
   <div class="login-wrap">
     <form class="login-card" @submit.prevent="submit">
       <div class="login-title">AgentApiGateway 网关控制台</div>
-      <div class="login-sub">{{ containerForm ? "输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只保存在本机浏览器，用于后续请求鉴权" : "输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只用于登录验证，不会保存在浏览器" }}</div>
+      <div class="login-sub">{{ containerForm ? "输入服务器上的管理令牌（AGENTHUB_ADMIN_TOKEN）。令牌只保存在本机浏览器，用于后续请求鉴权" : "输入桌面端『设置 · 局域网访问』里的管理令牌。令牌只用于登录验证，不会保存在浏览器" }}</div>
       <input v-model="token" type="password" class="login-input" placeholder="管理令牌" autocomplete="current-password" autofocus />
       <button type="submit" class="login-btn" :disabled="busy || !token.trim()">
         {{ busy ? "验证中…" : "进入控制台" }}

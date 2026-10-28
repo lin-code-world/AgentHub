@@ -68,6 +68,16 @@ function refreshStatsForEnabled() {
 }
 onMounted(async () => {
   refreshStatsForEnabled();
+  // Web 托管形态 load_config 被 deny，app.config.proxy.port 只是前端默认值，端口卡片会显示错值——
+  // 用浏览器可用的 proxy_config_get 取一次真实端口写回去（失败静默，保留默认显示）
+  if (settingsHidden) {
+    api
+      .proxyConfigGet()
+      .then((cfg) => {
+        if (cfg && typeof cfg.port === "number") app.config.proxy.port = cfg.port;
+      })
+      .catch(() => {});
+  }
   // 网关启停等经 app:event 广播：侧栏卡片只订阅不轮询。
   // 原来只在切模块时刷一次，本模块内点「启动服务」后卡片会一直停在「网关未启动」
   offProxyEvent = api.onUpdateEvent((e) => {
@@ -240,9 +250,12 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         <!-- 主题切换：浏览器形态拿不到整份配置读写（save_config 被 deny），主题改了也记不住——
              切换入口隐藏为禁用态，tooltip 指到桌面窗口改（桌面不受影响） -->
         <el-tooltip :content="settingsHidden ? '请在桌面窗口修改主题' : '切换亮暗主题'" placement="top">
-          <button class="btn btn-ghost" :disabled="settingsHidden" @click="!settingsHidden && app.toggleTheme()">
-            <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
-          </button>
+          <!-- disabled 按钮不派发鼠标事件，tooltip 要弹原因得垫一层 span（同 ConfigLanSection 的做法） -->
+          <span>
+            <button class="btn btn-ghost" :disabled="settingsHidden" @click="!settingsHidden && app.toggleTheme()">
+              <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
+            </button>
+          </span>
         </el-tooltip>
         <el-tooltip v-if="!settingsHidden" content="设置" placement="top">
           <button class="btn btn-ghost settings-btn" @click="app.openSettings('general')">
