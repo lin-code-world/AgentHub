@@ -474,30 +474,37 @@ if (!gotLock) {
     }
 
     ipc.register({ ipcMain, app, shell, nativeTheme });
-    // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）
-    // boot() 是 async：rules.init() / store.open() / credits.startScheduler() / startCheckinAuto()
-    // 都是裸调用，抛错会变成 rejected promise。原先这里没有任何 catch，
-    // 未处理的 rejection 会让主进程直接退出——症状是「窗口凭空消失、无崩溃事件、无 dump、无日志」。
-    proxy
-      .boot()
-      .then(() => {
-        queueAdminSync("boot");
-        // 版本升级日志（规格 9.1）：旧配置首次在新版本启动，记一条「已升级到新版本」的操作日志。
-        // 不阻塞启动：oplog 落库失败只静默，不影响启动链
-        if (upgradedFromLegacy) {
-          try {
-            require("./backend/proxy/oplog.cjs").log("info", "版本升级", `已升级到新版本（v${app.getVersion()}）`);
-          } catch { /* 升级日志失败不影响启动 */ }
-        }
-      })
-      .catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
-    // 反代启停/换端口都会广播 status 事件：管理端口 = 反代端口 + 1，按配置端口联动重启
-    try {
-      require("./backend/proxy/platform/index.cjs").onEmit((payload) => {
-        if (payload && payload.type === "status") queueAdminSync("proxy-status");
-      });
-    } catch (e) {
-      __crashLog("admin-event-hook-failed", __describe(e));
+    // 开发调试开关：只改前端时（AGENTHUB_DEV_SKIP_SERVICES=1）跳过反代网关与管理服务，
+    // 省主进程内存与启动时间；打包态永远不生效。反代/号池相关页面此时无数据，属预期。
+    const devSkipServices = process.env.AGENTHUB_DEV_SKIP_SERVICES === "1" && !app.isPackaged;
+    if (devSkipServices) {
+      __crashLog("dev-skip-services", "AGENTHUB_DEV_SKIP_SERVICES=1：跳过反代网关与管理服务（仅前端开发）");
+    } else {
+      // 反代网关：规则热加载 + 额度定时刷新 + 按配置自启网关服务（服务独立于窗口存续）
+      // boot() 是 async：rules.init() / store.open() / credits.startScheduler() / startCheckinAuto()
+      // 都是裸调用，抛错会变成 rejected promise。原先这里没有任何 catch，
+      // 未处理的 rejection 会让主进程直接退出——症状是「窗口凭空消失、无崩溃事件、无 dump、无日志」。
+      proxy
+        .boot()
+        .then(() => {
+          queueAdminSync("boot");
+          // 版本升级日志（规格 9.1）：旧配置首次在新版本启动，记一条「已升级到新版本」的操作日志。
+          // 不阻塞启动：oplog 落库失败只静默，不影响启动链
+          if (upgradedFromLegacy) {
+            try {
+              require("./backend/proxy/oplog.cjs").log("info", "版本升级", `已升级到新版本（v${app.getVersion()}）`);
+            } catch { /* 升级日志失败不影响启动 */ }
+          }
+        })
+        .catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
+      // 反代启停/换端口都会广播 status 事件：管理端口 = 反代端口 + 1，按配置端口联动重启
+      try {
+        require("./backend/proxy/platform/index.cjs").onEmit((payload) => {
+          if (payload && payload.type === "status") queueAdminSync("proxy-status");
+        });
+      } catch (e) {
+        __crashLog("admin-event-hook-failed", __describe(e));
+      }
     }
     createWindow();
     createTray();

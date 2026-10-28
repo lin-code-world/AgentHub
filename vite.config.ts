@@ -36,6 +36,22 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // 只监听前端相关文件：后端（electron/）、容器（gateway/）、打包产物（release/）、
+    // 脚本（tools/ scripts/）与文档（docs/）改动不触发 HMR 重载，减少文件监听与误刷新。
+    // node_modules/.git 显式保留：显式配置 ignored 会覆盖 Vite 的默认忽略项。
+    watch: {
+      ignored: [
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/release/**",
+        "**/gateway/**",
+        "**/electron/**",
+        "**/tools/**",
+        "**/scripts/**",
+        "**/docs/**",
+        "**/.superpowers/**",
+      ],
+    },
   },
   build: {
     target: ["es2021", "chrome100"],

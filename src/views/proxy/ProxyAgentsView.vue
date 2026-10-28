@@ -1573,7 +1573,9 @@ const scheduleRefresh = coalesceAsync(refresh, 1200);
 const schedulePoolRefresh = coalesceAsync(refresh, 2000);
 
 onMounted(() => {
-  nowTimer = window.setInterval(tickNow, 1000);
+  // 冷却/降级倒计时 5 秒一跳：秒级粒度对 1 分钟以上的冷却没有信息增量，
+  // 降频减少空闲唤醒（tickNow 内部还会判断是否需要更新 now，不需要时不动响应式）
+  nowTimer = window.setInterval(tickNow, 5000);
   refresh();
   offEvent = api.onUpdateEvent((e) => {
     const p = e as { event?: string; type?: string; ok?: boolean; message?: string; channel?: string };
