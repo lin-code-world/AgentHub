@@ -76,3 +76,21 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - Docker 构建的 context 是仓库根：排除规则在根 `.dockerignore`，`gateway/` 下同名文件对它无效。
 - `release.yml` 面向上游 HUIdada1/AgentHub 手动触发：版本必须严格高于最新 tag 且 tag 不可复用，`build/release-notes.md`
   必须非空。fork 上发版流程走不通。
+
+## 近期变更记录（2026-10-28）
+
+这次会话把桌面 exe 扩展成「内置网页控制台」，并删除了号池同步与远程实例，随后做了开发期与界面性能优化。完整记录（架构、文件清单、验证命令、遗留项、常用操作）见：
+
+`docs/superpowers/sessions/2026-10-28-proxy-webconsole-changes.md`
+
+（`docs/` 被 `.gitignore` 忽略，该文件只在本机存在。）
+
+要点：
+
+- 管理服务 `electron/backend/admin.cjs`，端口 = 反代端口 + 1，监听 `0.0.0.0`；命令表 `electron/backend/commandTable.cjs` 与桌面 IPC 共用。
+- 浏览器登录用 ECDH（`adminCrypto.cjs` ↔ `src/api/adminCrypto.ts` 协议逐字对齐），令牌不上网、不落浏览器，会话 12 小时。
+- 浏览器形态按 `capabilities.form === "browser"` 走加密通道；容器形态（`container`）仍 Bearer + 明文，本次未改造。
+- 号池同步（WebDAV/S3）与远程实例已整体移除；容器传号走凭据 JSON 导入。
+- 装饰动画已删除（保留功能性 loading 与 transition）；`vite.config.ts` 已排除后端/产物目录的监听；号池倒计时 5 秒。
+- 开发时只改前端可用 `AGENTHUB_DEV_SKIP_SERVICES=1` 跳过网关与管理服务。
+- 发版前仍需：真机双机验收、`npm run electron:pack` 后确认 asar 静态资源可加载。
