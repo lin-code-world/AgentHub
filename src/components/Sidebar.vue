@@ -388,21 +388,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   border-radius: var(--r-pill);
   background: var(--accent);
 }
-/* 激活指示条呼吸：明暗缓慢起伏 */
-@media (prefers-reduced-motion: no-preference) {
-  .module-card.active::before {
-    animation: barBreathe 3s ease-in-out infinite;
-  }
-  @keyframes barBreathe {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.55;
-    }
-  }
-}
+/* 性能：激活指示条的呼吸动画已移除（位于玻璃面板内，每帧触发父级 backdrop-filter 重新模糊） */
 /* ===== 反代网关卡内容区：顶部操作行（上游启闭 | 服务开关）+ 三列统计 ===== */
 .mc-actions {
   display: flex;
@@ -700,19 +686,5 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   border: 1px solid var(--accent);
   opacity: 0;
 }
-@media (prefers-reduced-motion: no-preference) {
-  .ov-dot:not(.off)::after {
-    animation: ovDotRipple 2.4s var(--ease) infinite;
-  }
-  @keyframes ovDotRipple {
-    from {
-      transform: scale(1);
-      opacity: 0.7;
-    }
-    to {
-      transform: scale(3);
-      opacity: 0;
-    }
-  }
-}
+/* 性能：在线状态点的波纹动画已移除（同上，避免持续触发父级玻璃面板合成） */
 </style>
