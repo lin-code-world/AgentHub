@@ -217,13 +217,18 @@ export function clearLegacyToken(): void {
 }
 
 /** 会话失效收口：清会话 → 回登录页（reload 后 main.ts 看到无会话即挂登录页）→ 抛统一文案。
- *  并发请求同时失效会各自触发一次跳转（reload 幂等），不另设闸。 */
+ *  模块级 reload 闸：并发请求同时失效只 reload 一次（多次跳转不会更快回到登录页）；
+ *  重新登录成功后复位，此后再失效照常跳转。 */
+let authLostNavigating = false;
 export function handleAuthLost(): never {
   clearSession();
-  try {
-    navigateFn();
-  } catch {
-    /* 跳转失败不掩盖原始错误 */
+  if (!authLostNavigating) {
+    authLostNavigating = true;
+    try {
+      navigateFn();
+    } catch {
+      /* 跳转失败不掩盖原始错误 */
+    }
   }
   throw new Error(AUTH_LOST_MESSAGE);
 }
@@ -266,6 +271,7 @@ export async function login(token: string): Promise<void> {
   if (!st) throw new Error(LOGIN_FAILED_MESSAGE); // 会话存不下来（隐私模式）等于没登录
   st.setItem(SESSION_KEY, JSON.stringify({ sessionId: data.sessionId, keys, loginAt: Date.now() }));
   st.removeItem(LEGACY_TOKEN_KEY); // 令牌不落浏览器：旧版令牌存储见到即清
+  authLostNavigating = false; // 新会话建立：复位 reload 闸，之后的会话失效照常跳登录页
 }
 
 /** 加密请求通道（POST /api/rpc）：K_req 加密 + K_sig 签名 → 校验回带 nonce → K_resp 解密。

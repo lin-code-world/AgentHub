@@ -63,7 +63,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   `scripts/dev-anthropic-in-test.cjs`、`scripts/dev-responses-in-test.cjs`。
 - 需要 Electron 运行时的脚本用仓库自带二进制跑：
   `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-smoke.cjs`（全链路含假上游）。
-- Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 107，防 COPY 缩水）。
+- Docker 形态闭包自检：`node tools/gateway-closure-check.cjs`（下限 111，防 COPY 缩水）。
 - 沙箱约定：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
 
 ## 环境与发布

@@ -15,7 +15,7 @@
 //
 // 用法：node tools/gateway-closure-check.cjs [--root <dir>] [--min <n>]
 //   --root  以该目录为仓库根（默认脚本的上一级）
-//   --min   闭包文件数下限（默认 107，防 COPY 缩水后无人察觉；闭包仅含网关运行时依赖，
+//   --min   闭包文件数下限（默认 111，防 COPY 缩水后无人察觉；闭包仅含网关运行时依赖，
 //           上游其它历史板块本就不在其中，不影响此数）
 //
 // 入口是显式清单：gateway/src/index.cjs 的核心模块全部用 path.join 动态拼路径，
@@ -32,7 +32,7 @@ function argOf(flag, dft) {
 }
 
 const ROOT = path.resolve(argOf("--root", path.join(__dirname, "..")));
-const MIN = Number(argOf("--min", "107"));
+const MIN = Number(argOf("--min", "111"));
 
 const ENTRIES = [
   "gateway/src/index.cjs",
@@ -45,6 +45,10 @@ const ENTRIES = [
   "electron/backend/proxy/rules.cjs",
   "electron/backend/proxy/discovery.cjs",
   "electron/backend/config.cjs",
+  // 命令表与管理服务（浏览器管理页的 HTTP 入口与门控）也走相对 require 闭包，一并卡住 COPY 缩水
+  "electron/backend/commandTable.cjs",
+  "electron/backend/admin.cjs",
+  "electron/backend/adminCrypto.cjs",
 ];
 
 function resolveRel(fromFile, spec) {

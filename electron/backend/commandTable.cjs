@@ -25,7 +25,7 @@ const proxyIndex = require("./proxy/index.cjs");
 
 /** 只读命令（无副作用）：监视面板与只读令牌都依赖这份判定。
  *  proxy_config_get 入列（Ruling 24）：只是界面分类口径，本任务不改任何鉴权判定 */
-const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config"]);
+const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
 
 const SERVICE_CONTROL_REASON = "网关在容器里由编排管理，不能从界面启停——请用 docker restart 或 compose 命令";
 const ZCODE_DEVICE_REASON = "ZCode 设备指纹相关操作需要本机客户端，容器里不可用";

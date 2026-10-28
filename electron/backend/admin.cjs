@@ -178,7 +178,14 @@ adminCrypto.onSessionsCleared(() => {
 function loginHandler(req, res) {
   if (loginRateLimited(String(req.ip || (req.socket && req.socket.remoteAddress) || ""))) return res.status(429).json({ ok: false, message: "请求过于频繁，请稍后再试" });
   const b = req.body || {};
-  const r = adminCrypto.createSession({ clientPubKey: b.clientPubKey, ts: b.ts, nonce: b.nonce, sig: b.sig });
+  let r;
+  try {
+    r = adminCrypto.createSession({ clientPubKey: b.clientPubKey, ts: b.ts, nonce: b.nonce, sig: b.sig });
+  } catch {
+    // kTokenOf() / ensureAdminToken() 读写配置盘抛错（磁盘只读、被锁等）：统一 401 文案，
+    // 不让 Express 兜成 HTML 500（前端解析会炸）
+    return unauthorized(res);
+  }
   if (!r.ok) return unauthorized(res);
   return res.json(r); // 只回公钥 / 会话号 / 签名，会话密钥不出内存（adminCrypto 的返回值里也没有）
 }
@@ -207,6 +214,13 @@ function rpcHandler({ commands, commandTable }) {
     try {
       let result = await commands.get(cmd)(null, req2.args && typeof req2.args === "object" ? req2.args : {});
       if (result === undefined || result === null) result = { ok: true };
+      // 浏览器形态按命令脱敏（不是 deny：命令可用，但本机路径不下发）——
+      // proxy_vault_status 的 dataDir 是本机绝对路径，只在桌面 IPC 返回
+      if (cmd === "proxy_vault_status" && result && typeof result === "object" && !Array.isArray(result)) {
+        const rest = { ...result };
+        delete rest.dataDir;
+        result = rest;
+      }
       // handler 返回 { ok:false }（业务失败）也走加密响应，不降级成明文错误
       const sealed = adminCrypto.seal(v.keys.kResp, JSON.stringify(result));
       return res.json({ nonce, iv: sealed.iv, ciphertext: sealed.ciphertext });
