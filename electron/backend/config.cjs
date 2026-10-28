@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 配置读写（Node 主进程侧）：框架配置（主题 / 模块顺序）与反代网关 / 远程目标配置
+// 配置读写（Node 主进程侧）：全局配置（主题 / 关窗行为 / 反代网关）与管理令牌等
 // 统一落在 Windows 惯例的用户应用数据目录（Electron userData = %APPDATA%\AgentHub），
 // 深合并默认值，临时文件原子落盘；敏感凭据用系统级密钥加密存储。
 "use strict";
@@ -227,6 +227,15 @@ function normalizeCheckinRules(rules) {
   return out;
 }
 
+// 本次 loadConfig 读到的是否为旧配置（磁盘无 configVersion 或 < 2）：版本升级日志（规格 9.1）
+// 据此在启动链里记一条「已升级到新版本」。模块级临时标记，随每次 loadConfig 刷新
+let lastLoadLegacy = false;
+
+/** 本次读取是否为旧配置（版本升级标记）：loadConfig 后取值，供启动链决定是否记升级日志 */
+function wasLastLoadLegacy() {
+  return lastLoadLegacy;
+}
+
 /** 加载配置（不存在/损坏时返回默认；损坏时留档 .bak） */
 function loadConfig() {
   const p = configPath();
@@ -245,6 +254,7 @@ function loadConfig() {
   // （新版关窗销毁界面进程，托盘是唯一的唤回入口）；用户显式关闭后随整份保存落盘 configVersion: 2，
   // 此后不再强制——所以判定只认磁盘原值，不能看合并结果（默认值恒为 2）
   const legacyConfig = Number(disk.configVersion || 0) < 2;
+  lastLoadLegacy = legacyConfig; // 版本升级标记（规格 9.1）：本次读取是否为旧配置
   const merged = mergeConfig(defaultConfig(), disk);
   // 迁移：旧版 proxy.autoStart / proxy.restoreOnLaunch 都是「网关是否随应用启动」的历史开关，
   // 现在固定为启动即监听（设置页已无对应选项），旧值一律丢弃，改完存盘即不再出现
@@ -469,7 +479,7 @@ function applyAutoStart(cfg) {
 module.exports = {
   dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
-  normalizeHm, normalizeJitter,
+  normalizeHm, normalizeJitter, wasLastLoadLegacy,
   saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS, validateProxyPort,
   ensureAdminToken, adminAccessInfo, setAdminToken, onAdminTokenChanged,
 };

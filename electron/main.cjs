@@ -460,6 +460,9 @@ if (!gotLock) {
   app.whenReady().then(() => {
     // 建窗前先应用主题，避免深色配置下标题栏先白后黑闪烁
     const bootCfg = config.loadConfig();
+    // 版本升级标记（规格 9.1）：本次读到旧配置（无 configVersion）→ boot 完成后记一条升级日志。
+    // 立即捕获布尔值，避免后续 loadConfig 读到已写回的 configVersion 把标记冲掉
+    const upgradedFromLegacy = config.wasLastLoadLegacy();
     applyNativeTheme(bootCfg.theme);
     // 管理令牌：首次启动自动生成（24 字节随机串，加密落盘），供局域网管理页登录。
     // 只记崩溃日志不拦启动：它内部会读写配置盘，磁盘只读/被锁时抛错不该决定应用能否起
@@ -477,7 +480,16 @@ if (!gotLock) {
     // 未处理的 rejection 会让主进程直接退出——症状是「窗口凭空消失、无崩溃事件、无 dump、无日志」。
     proxy
       .boot()
-      .then(() => queueAdminSync("boot"))
+      .then(() => {
+        queueAdminSync("boot");
+        // 版本升级日志（规格 9.1）：旧配置首次在新版本启动，记一条「已升级到新版本」的操作日志。
+        // 不阻塞启动：oplog 落库失败只静默，不影响启动链
+        if (upgradedFromLegacy) {
+          try {
+            require("./backend/proxy/oplog.cjs").log("info", "版本升级", `已升级到新版本（v${app.getVersion()}）`);
+          } catch { /* 升级日志失败不影响启动 */ }
+        }
+      })
       .catch((e) => __crashLog("proxy-boot-failed", __describe(e)));
     // 反代启停/换端口都会广播 status 事件：管理端口 = 反代端口 + 1，按配置端口联动重启
     try {
