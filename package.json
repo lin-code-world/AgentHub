@@ -1,6 +1,6 @@
 {
   "name": "agent-api-gateway",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "AgentApiGateway —— 反代网关：多渠道 AI 上游的反向代理与号池管理",
   "author": "沐晖",
   "type": "module",
