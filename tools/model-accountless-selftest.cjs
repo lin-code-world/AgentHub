@@ -115,11 +115,53 @@ async function main() {
   check("删光 Key 后重新判为无账号", keyGone.accountless.has(pmodel));
   check("删光 Key 后仍在黑名单", keyGone.disabledModels.includes(pmodel));
 
-  console.log("\n[5] index.cjs 接线");
+  console.log("\n[5] 写盘合并与用户手动开启");
+  // ① 写盘时保留其它反代配置字段（Focus 5）；先移除一个无账号模型，保证 sync 必然写盘
+  const beforeMarker = config.loadConfig();
+  beforeMarker.proxy.reviewMarker = "keep-me";
+  beforeMarker.proxy.disabledModels = (beforeMarker.proxy.disabledModels || []).filter((id) => !soloIds.includes(id));
+  config.saveConfig(beforeMarker);
+  modelAutoDisable.sync();
+  check("写盘保留其它反代配置字段", config.loadConfig().proxy.reviewMarker === "keep-me");
+
+  // ② 两次读盘之间外部写入的 disabledModels 不能被回滚
+  const resetDisk = config.loadConfig();
+  resetDisk.proxy.disabledModels = (resetDisk.proxy.disabledModels || []).filter((id) => !soloIds.includes(id));
+  config.saveConfig(resetDisk);
+  const realLoad = config.loadConfig;
+  let loads = 0;
+  config.loadConfig = () => {
+    const c = realLoad();
+    loads++;
+    if (loads === 2) c.proxy.disabledModels = [...(c.proxy.disabledModels || []), "user-closed-z"];
+    return c;
+  };
+  let mergedSync;
+  try {
+    mergedSync = modelAutoDisable.sync();
+  } finally {
+    config.loadConfig = realLoad;
+  }
+  check("第二次读盘新增的 disabledModels 不被回滚", (realLoad().proxy.disabledModels || []).includes("user-closed-z"));
+  check("写盘结果同时含自动关闭模型", soloIds.every((id) => mergedSync.disabledModels.includes(id)));
+
+  // ③ 有账号时用户手动开启 → 保持开启且不触发写盘
+  const acc2 = store.addAccount({ channel, name: "手动开启账号", token: "sk-selftest-2" });
+  const openDisk = config.loadConfig();
+  openDisk.proxy.disabledModels = (openDisk.proxy.disabledModels || []).filter((id) => !soloIds.includes(id));
+  config.saveConfig(openDisk);
+  const opened = modelAutoDisable.sync();
+  check("有账号时手动开启保持开启", soloIds.every((id) => !opened.accountless.has(id) && !opened.disabledModels.includes(id)));
+  check("有账号时手动开启不触发写盘", opened.changed === false);
+  store.removeAccount(acc2);
+
+  console.log("\n[6] index.cjs 接线");
   const src = fs.readFileSync(path.join(__dirname, "../electron/backend/proxy/index.cjs"), "utf8");
   check("proxy_models 调用 sync", /ipcMain\.handle\("proxy_models"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
   check("单删账号后同步", /proxy_account_remove"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
-  check("批删账号后同步", /proxy_account_remove_batch"[\s\S]{0,900}modelAutoDisable\.sync\(\)/.test(src));
+  check("单删账号后广播配置变更", /proxy_account_remove"[\s\S]{0,700}emitConfigChanged\(\)/.test(src));
+  check("批删仅在确实删除后同步", /if \(removed\) \{[\s\S]{0,300}modelAutoDisable\.sync\(\)/.test(src));
+  check("批删后广播配置变更", /if \(removed\) \{[\s\S]{0,400}emitConfigChanged\(\)/.test(src));
   check("删提供商 Key 后同步", /proxy_provider_remove_key"[\s\S]{0,400}modelAutoDisable\.sync\(\)/.test(src));
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);

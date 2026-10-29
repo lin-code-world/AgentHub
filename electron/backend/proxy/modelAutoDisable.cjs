@@ -45,20 +45,23 @@ function sync() {
   const proxy = cfg.proxy || {};
   const models = adapters.mergedModels(proxy);
   const accountless = accountlessIds(models, accountCounts());
-  const disabled = Array.isArray(proxy.disabledModels) ? proxy.disabledModels.slice() : [];
-  const seen = new Set(disabled);
+  const first = Array.isArray(proxy.disabledModels) ? proxy.disabledModels.slice() : [];
+  const firstSet = new Set(first);
   let changed = false;
   for (const id of accountless) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    disabled.push(id);
+    if (firstSet.has(id)) continue;
     changed = true;
+    break;
   }
+  let disabled = first;
   if (changed) {
-    // 以最新磁盘配置为底只改 disabledModels：同期用户可能刚保存过其它反代配置，
-    // 用先前读到的 cfg 整份回写会把那些改动覆盖掉
+    // 写盘前以**最新磁盘值**为底重新合并：首次读盘到现在可能有外部进程（或另一实例）
+    // 改过 disabledModels，直接回写首次数组会把那些改动静默回滚
     const disk = config.loadConfig();
     disk.proxy = disk.proxy || {};
+    const merged = new Set(Array.isArray(disk.proxy.disabledModels) ? disk.proxy.disabledModels : []);
+    for (const id of accountless) merged.add(id);
+    disabled = [...merged];
     disk.proxy.disabledModels = disabled;
     config.saveConfig(disk);
   }
