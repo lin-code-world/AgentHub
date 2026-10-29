@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 局域网访问：管理地址（反代端口 + 1，局域网地址优先展示、本机回环地址兜底）与访问令牌
+<!-- 设置 · 局域网访问：管理地址（反代端口 + 1，只展示局域网地址）与访问令牌
      （不展示令牌内容，仅提供复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
      令牌只有一处来源：config.admin.token（本页展示 / 修改的就是它）。 -->
 <script setup lang="ts">
@@ -106,18 +106,8 @@ async function saveToken() {
           <div class="set-desc">局域网内其他设备用这个地址访问管理页（反代端口 + 1）</div>
         </div>
         <div class="lan-ctl">
-          <span class="mono lan-text">{{ info?.lanUrl || (info && info.available ? "（未检测到局域网网络，请用本机地址）" : "（地址不可用）") }}</span>
+          <span class="mono lan-text">{{ info?.lanUrl || (info && info.available ? "（未检测到局域网地址）" : "（地址不可用）") }}</span>
           <button class="btn btn-ghost" :disabled="!info?.lanUrl" @click="info && info.lanUrl && copyText(info.lanUrl, '局域网地址')">复制</button>
-        </div>
-      </div>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">本机地址</div>
-          <div class="set-desc">仅本机浏览器可用（回环地址）</div>
-        </div>
-        <div class="lan-ctl">
-          <span class="mono lan-text">{{ info?.loopbackUrl || "（地址不可用）" }}</span>
-          <button class="btn btn-ghost" :disabled="!info?.loopbackUrl" @click="info && info.loopbackUrl && copyText(info.loopbackUrl, '本机地址')">复制</button>
         </div>
       </div>
       <div class="set-row">
