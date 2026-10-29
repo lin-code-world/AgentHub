@@ -118,12 +118,12 @@ async function rewriteJson(res, fn) {
   return jsonResponse(res.status, next);
 }
 
-function sseStreamResponse(frames) {
+function sseStreamResponse(frames, { keepOpen = false } = {}) {
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
       for (const f of frames) controller.enqueue(enc.encode("data: " + JSON.stringify(f) + "\n\n"));
-      controller.close();
+      if (!keepOpen) controller.close();
     },
   });
   return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -328,6 +328,26 @@ const fakeTable = {
   adminCrypto.__setFetch(relayFetch);
   ok("S9 重连后 seq 基线清零：重连首帧（seq=1）被接受", seen.length >= 3 && seen[2] && seen[2].seq === 1, `conns=${conns} seqs=${JSON.stringify(seen.map((p) => p && p.seq))}`);
   ok("S9 重连成功补发一条 {type:'resync'}（I6 断线补偿）", resyncs.length === 1, `resyncs=${JSON.stringify(resyncs)}`);
+
+  // ===== S9b：连接状态机（原容器自测 I6-a 迁入）：断流 → reconnecting，重连 → connected =====
+  // 网页端断线横幅的数据源就是这一路状态，删容器自测时不能连它一起丢掉
+  console.log("S9b 连接状态机");
+  const states = [];
+  let s9bConns = 0;
+  adminCrypto.__setFetch(async () => {
+    s9bConns++;
+    if (s9bConns === 1) return sseStreamResponse([]); // 立即结束 = 断线
+    return sseStreamResponse([frameOf(1, "hello")], { keepOpen: true }); // 重连后保持打开并给一帧
+  });
+  const offState = eventsApi.onWebEventState((s) => states.push(s));
+  const offStream = eventsApi.subscribeWebEvents(() => {});
+  const sawReconnect = await waitFor(() => states.includes("reconnecting"), 5000);
+  ok("S9b 断流后状态变 reconnecting", sawReconnect, states.join(","));
+  const sawConnected = await waitFor(() => states.filter((s) => s === "connected").length >= 2, 8000);
+  ok("S9b 重连成功后状态回到 connected", sawConnected, states.join(","));
+  offStream();
+  offState();
+  adminCrypto.__setFetch(relayFetch);
 
   // ===== S11：本地会话过期判断 =====
   console.log("S11 本地会话过期");
