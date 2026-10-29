@@ -23,10 +23,26 @@ const fs = require("node:fs");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-models-merge-"));
 process.env.AGENTHUB_DATA_DIR = tmp;
 
-let pass = 0, fail = 0; const fails = [];
+/** 沙箱目录用完即删：sqlite / watcher 句柄可能仍占用目录，删不掉不影响退出码 */
+function cleanup() {
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } catch {
+    /* 句柄未释放时留给系统临时目录清理 */
+  }
+}
+
+let pass = 0,
+  fail = 0;
+const fails = [];
 function check(name, cond, extra) {
-  if (cond) { pass++; console.log(`  ok  ${name}`); return; }
-  fail++; fails.push(name + (extra ? ` — ${extra}` : ""));
+  if (cond) {
+    pass++;
+    console.log(`  ok  ${name}`);
+    return;
+  }
+  fail++;
+  fails.push(name + (extra ? ` — ${extra}` : ""));
   console.log(`  FAIL ${name}${extra ? " — " + extra : ""}`);
 }
 const eq = (actual, expected, label) => check(label, JSON.stringify(actual) === JSON.stringify(expected), `期望 ${JSON.stringify(expected)} 实际 ${JSON.stringify(actual)}`);
@@ -39,6 +55,7 @@ function main() {
   const proxyDir = path.resolve(store.proxyDir()).toLowerCase();
   if (!proxyDir.startsWith(path.resolve(tmp).toLowerCase())) {
     console.error("拒绝运行：数据目录不在沙箱内（" + proxyDir + "）");
+    cleanup();
     process.exit(2);
   }
   store.open();
@@ -81,17 +98,52 @@ function main() {
   console.log("\n[2] 来源渠道明细");
   const row = list.find((m) => m.id === "deepseek-v4.1-flash");
   check("同一写法多来源时附明细", Array.isArray(row.sourceDetails) && row.sourceDetails.length === 2, JSON.stringify(row.sourceDetails));
-  check("明细里带各渠道自己的倍率", row.sourceDetails.every((d) => typeof d.rate === "number" || d.rate === null), JSON.stringify(row.sourceDetails));
-  eq(row.sourceDetails.map((d) => d.channel), ["workbuddy", "workbuddy_ai"], "明细按来源顺序列渠道");
-  eq(row.sourceDetails.map((d) => d.id), ["deepseek-v4.1-flash", "deepseek-v4.1-flash"], "明细带该渠道自己的模型 id");
-  eq(row.sourceDetails.map((d) => d.rate), [0.5, 0.8], "各来源倍率互不覆盖");
-  eq(row.sourceDetails.map((d) => d.contextLength), [100000, 200000], "明细上下文按渠道各自取值");
-  eq(row.sourceDetails.map((d) => d.maxOutputTokens), [8000, 16000], "明细最大输出按渠道各自取值");
-  eq(row.sourceDetails.map((d) => [d.capabilities.tools === true, d.capabilities.images === true]), [[true, false], [false, true]], "明细能力按渠道各自取值");
+  check(
+    "明细里带各渠道自己的倍率",
+    row.sourceDetails.every((d) => typeof d.rate === "number" || d.rate === null),
+    JSON.stringify(row.sourceDetails)
+  );
+  eq(
+    row.sourceDetails.map((d) => d.channel),
+    ["workbuddy", "workbuddy_ai"],
+    "明细按来源顺序列渠道"
+  );
+  eq(
+    row.sourceDetails.map((d) => d.id),
+    ["deepseek-v4.1-flash", "deepseek-v4.1-flash"],
+    "明细带该渠道自己的模型 id"
+  );
+  eq(
+    row.sourceDetails.map((d) => d.rate),
+    [0.5, 0.8],
+    "各来源倍率互不覆盖"
+  );
+  eq(
+    row.sourceDetails.map((d) => d.contextLength),
+    [100000, 200000],
+    "明细上下文按渠道各自取值"
+  );
+  eq(
+    row.sourceDetails.map((d) => d.maxOutputTokens),
+    [8000, 16000],
+    "明细最大输出按渠道各自取值"
+  );
+  eq(
+    row.sourceDetails.map((d) => [d.capabilities.tools === true, d.capabilities.images === true]),
+    [
+      [true, false],
+      [false, true],
+    ],
+    "明细能力按渠道各自取值"
+  );
 
   const upper = list.find((m) => m.id === "DeepSeek-V4.1-Flash");
   eq(upper.sources, ["loomy"], "大写写法只归属大写渠道");
-  eq(upper.sourceDetails.map((d) => [d.channel, d.id, d.rate]), [["loomy", "DeepSeek-V4.1-Flash", 1.2]], "单来源也带明细");
+  eq(
+    upper.sourceDetails.map((d) => [d.channel, d.id, d.rate]),
+    [["loomy", "DeepSeek-V4.1-Flash", 1.2]],
+    "单来源也带明细"
+  );
 
   console.log("\n[3] 行级合并口径不变（供全部视图与 /v1/models）");
   eq(row.sources, ["workbuddy", "workbuddy_ai"], "同行仍是多来源");
@@ -108,8 +160,12 @@ function main() {
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
     for (const f of fails) console.log(`  - ${f}`);
+    store.close();
+    cleanup();
     process.exit(1);
   }
+  store.close();
+  cleanup();
   process.exit(0); // sqlite 连接与 watcher 会让事件循环常驻，跑完显式退出
 }
 
@@ -117,5 +173,6 @@ try {
   main();
 } catch (e) {
   console.error(e);
+  cleanup();
   process.exit(1);
 }
