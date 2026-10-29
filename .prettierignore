@@ -4,5 +4,4 @@ dist/
 build/
 scripts/fixtures/
 package-lock.json
-gateway/package-lock.json
 *.md

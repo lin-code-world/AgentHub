@@ -12,7 +12,7 @@
 
 AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript），自身不带模型：把你本机已登录的 AI 编程工具订阅额度包成 OpenAI 兼容 API，配号池自动切换、额度签到与用量统计。
 
-它有两个形态：**Windows 桌面版**（网关 + 图形界面，见 [Windows 版下载与安装](#windows-版下载与安装)）和 **Docker 版**（headless 常驻，适合放到服务器上，见 [Docker 版下载与安装](#docker-版下载与安装)）。
+它只有 **Windows 桌面版**一种形态：网关与图形界面打包在同一个 exe 里（见 [Windows 版下载与安装](#windows-版下载与安装)）。局域网内其他电脑可以用浏览器打开它自带的网页控制台，看到并操作同一份数据。
 
 | 能力 | 一句话 | 适合谁 |
 | --- | --- | --- |
@@ -33,7 +33,6 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 ## 目录
 
 - [Windows 版下载与安装](#windows-版下载与安装)
-- [Docker 版下载与安装](#docker-版下载与安装)
 - [反代网关](#反代网关)
 - [常见问题](#常见问题)
 - [开发与自测](#开发与自测)
@@ -60,42 +59,6 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 
 - 所有配置与数据都存在 `%APPDATA%\AgentHub`，卸载程序不会删除它
 - 左下角「设置」= 全局项（通用 / 刷新周期 / 局域网访问）；反代网关右上角还有一个「配置」按钮，管的是网关自己的设置
-
----
-
-## Docker 版下载与安装
-
-Docker 版是 **headless 形态的反代网关**，适合把网关丢到服务器上常驻。渠道代码与桌面版同一套，账号凭据用 JSON 导入（两形态间没有自动传号通道）；镜像自带 **Web 控制台**，浏览器打开服务器地址就能管号池、Key 和渠道。
-
-前提：Docker 20.10+ 与 Compose v2，Linux 服务器 1 核 512MB 起。
-
-```bash
-git clone https://github.com/HUIdada1/AgentHub.git && cd AgentApiGateway
-
-# 凭据加密密钥，务必留存好：丢了以后已加密的凭据不可恢复
-export AGENTHUB_SECRET_KEY=$(openssl rand -base64 32)
-
-# 容器内以 uid 1000 运行，宿主数据目录属主要对齐
-mkdir -p gateway-data && sudo chown 1000:1000 gateway-data
-
-docker compose -f gateway/docker-compose.yml up -d --build
-```
-
-起来后自检：
-
-```bash
-curl -s http://127.0.0.1:9528/api/livez     # {"ok":true}，进程活着
-curl -s http://127.0.0.1:9528/api/readyz    # 503 = 池里还没账号，正常
-```
-
-- 浏览器打开 `http://<服务器>:9528/` 即 **Web 控制台**（需先设 `AGENTHUB_ADMIN_TOKEN`，登录时输入的就是它）
-- 客户端连 `http://<服务器>:9527/v1`，Key 在控制台里建，也可以用管理 API（`POST /api/keys`）
-- 管理 API 与 Web 控制台默认只绑宿主 `127.0.0.1:9528`；设了 `AGENTHUB_ADMIN_TOKEN` 才能从外部访问
-- 账号来源：桌面版号池「导出 → 导出明文凭据」的凭据 JSON，经 Web 控制台「粘贴 JSON 导入」或 `POST /api/accounts/import` 灌入
-- 容器里没有桌面客户端，**本机软件导入、切到 IDE、Qoder 双区**这些依赖 Windows 客户端的能力用不了
-- 别把桌面版的数据目录挂给容器：那边凭据是 DPAPI 密文，Linux 侧解不开
-
-端口、备份、密钥轮换、排障等完整说明见 [gateway/README.md](./gateway/README.md)。
 
 ---
 
@@ -250,15 +213,13 @@ http://127.0.0.1:9527/v1
 
 > **安全提示（务必读）**
 >
-> 1. 仅建议在**可信局域网**内使用：管理页本身没有 TLS，页面不可信、可被同网段嗅探或篡改——**不要映射到公网**；两种形态的保密程度不同：
->    - **桌面 exe 浏览器控制台**：业务数据与令牌都经过应用层加密（ECDH 协商、AES-GCM），令牌不以明文上网；但页面本身没有 TLS，仍只建议可信局域网内使用；
->    - **容器 Web 控制台**：Bearer 令牌 + 明文 JSON / SSE，抓包即可看到令牌与内容，必须放可信内网，或前置 TLS 反向代理；
+> 1. 仅建议在**可信局域网**内使用：管理页本身没有 TLS，页面不可信、可被同网段嗅探或篡改——**不要映射到公网**；业务数据与令牌都经过应用层加密（ECDH 协商、AES-GCM），令牌不以明文上网，但页面本身没有 TLS，仍只建议可信局域网内使用；
 > 2. 首次启用时 Windows 防火墙会弹窗，需要在**专用网络**上允许放行；只勾「公用网络」或点拒绝，局域网其他设备都打不开；
 > 3. 确需跨网访问，请在前面加一层带 TLS 的反向代理（Nginx / Caddy），只对外开 443，并保留令牌鉴权。
 
-### 多台电脑 / 容器之间传号
+### 多台电脑之间传号
 
-跨机或往容器里灌号走凭据 JSON：在号池页选中账号 →「导出」（产物含明文 token/refreshToken，`format=agenthub-credentials`），到另一处「粘贴 JSON 导入」，容器用 Web 控制台的导入或 `POST /api/accounts/import`。没有自动同步通道，也不需要配置任何服务器。
+跨机传号走凭据 JSON：在号池页选中账号 →「导出」（产物含明文 token/refreshToken，`format=agenthub-credentials`），到另一台电脑「粘贴 JSON 导入」。没有自动同步通道，也不需要配置任何服务器。
 
 ### 防监测与稳定性
 
@@ -337,10 +298,10 @@ Cline 双渠道专项自测（离线 + 本地假上游，不联网、不消耗�
 ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-cline-selftest.cjs   # 协议断言 + 假上游端到端
 ```
 
-Docker 形态闭包自检（防 COPY 缩水后无人察觉）：
+网关核心依赖闭包自检（防引用指向已删文件而无人察觉）：
 
 ```bash
-node tools/gateway-closure-check.cjs   # gateway 运行时依赖闭包清点（下限 107）
+node tools/gateway-closure-check.cjs   # 网关运行时依赖闭包清点（下限 109）
 ```
 
 代码结构：

@@ -8,18 +8,18 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 反代网关依赖闭包断言：从网关入口与核心模块出发，递归收集全部相对 require 目标，
-// 断言每个文件都存在。用途是卡住 Dockerfile 的 COPY 范围与真实闭包漂移——
-// 历史上白名单漏过 28 个文件（24 个用量适配器 + sqlcipher/sync-adapter/temp-util/crashlog），
-// 靠分支巧合与 try/catch 才没在启动时炸。
+// 反代网关依赖闭包断言：从网关核心模块出发，递归收集全部相对 require 目标，
+// 断言每个文件都存在。用途是卡住共享核心的引用漂移——历史上白名单漏过 28 个文件
+// （24 个用量适配器 + sqlcipher/sync-adapter/temp-util/crashlog），靠分支巧合与 try/catch
+// 才没在启动时炸。
 //
 // 用法：node tools/gateway-closure-check.cjs [--root <dir>] [--min <n>]
 //   --root  以该目录为仓库根（默认脚本的上一级）
-//   --min   闭包文件数下限（默认 111，防 COPY 缩水后无人察觉；闭包仅含网关运行时依赖，
+//   --min   闭包文件数下限（默认 109，防闭包缩水后无人察觉；闭包仅含网关运行时依赖，
 //           上游其它历史板块本就不在其中，不影响此数）
 //
-// 入口是显式清单：gateway/src/index.cjs 的核心模块全部用 path.join 动态拼路径，
-// 纯静态扫描抓不到，故把它的目标与共享核心一并列为入口。
+// 入口是显式清单：网关核心模块全部用 path.join 动态拼路径，纯静态扫描抓不到，
+// 故把它的目标与共享核心一并列为入口。
 "use strict";
 
 const fs = require("node:fs");
@@ -32,10 +32,9 @@ function argOf(flag, dft) {
 }
 
 const ROOT = path.resolve(argOf("--root", path.join(__dirname, "..")));
-const MIN = Number(argOf("--min", "111"));
+const MIN = Number(argOf("--min", "109"));
 
 const ENTRIES = [
-  "gateway/src/index.cjs",
   "electron/backend/proxy/server.cjs",
   "electron/backend/proxy/index.cjs",
   "electron/backend/proxy/store.cjs",
@@ -97,7 +96,7 @@ function walk(file) {
 for (const rel of ENTRIES) walk(path.resolve(ROOT, rel));
 
 const count = seen.size;
-console.log(`gateway 依赖闭包：${count} 个文件（下限 ${MIN}）`);
+console.log(`网关核心依赖闭包：${count} 个文件（下限 ${MIN}）`);
 if (missing.length) {
   console.log(`解析失败 ${missing.length} 项：`);
   for (const m of missing) console.log("  " + m);

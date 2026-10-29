@@ -1524,7 +1524,7 @@ table th,
 }
 
 .pill.blue {
-  color: var(--accent-strong, var(--accent));
-  background: var(--accent-dim);
+  color: var(--info);
+  background: var(--info-dim);
 }
 
