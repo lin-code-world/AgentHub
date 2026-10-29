@@ -173,6 +173,19 @@ async function main() {
     check("B5 响应头明示回退", (rr.headers.get("x-agenthub-fallback") || "").includes("ai-only-model"), String(rr.headers.get("x-agenthub-fallback")));
     cfg.fallbackModel = "";
 
+    // ===== B8 写法大小写不匹配 → 400 model_case_mismatch（不得误报成渠道关闭）=====
+    // 插在 B6 删号之前：本用例需要「渠道全开 + 号池有号」的正常状态，排除其它失败原因。
+    // 目录里是 shared-model；严格匹配下 SHARED-MODEL 不属于任何渠道。
+    // 若按忽略大小写去合并目录里找，会命中 shared-model 的 sources 并误报 channel_disabled，
+    // 把用户引去查「上游启闭 / 号池」——而实际原因只是写法不一致（上游对未知名还会静默回落）。
+    const hitsBeforeB8 = JSON.stringify(hits);
+    rr = await call({ model: "SHARED-MODEL", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("B8 写法大小写不匹配 → 400 model_case_mismatch", rr.status === 400 && /model_case_mismatch/.test(body), `${rr.status} ${body.slice(0, 220)}`);
+    check("B8 不误报渠道关闭", !/channel_disabled/.test(body), body.slice(0, 240));
+    check("B8 文案给出目录里的正确写法", /shared-model/.test(body), body.slice(0, 240));
+    check("B8 未发起上游请求", JSON.stringify(hits) === hitsBeforeB8, JSON.stringify(hits));
+
     // ===== B6 号池动态性：删光账号（=没有号池）→ 不列；重新有号 → 列出 =====
     store.removeAccount(w1);
     models = await getModels();

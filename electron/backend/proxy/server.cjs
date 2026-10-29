@@ -768,9 +768,12 @@ async function handleChat(req, res, settings, surface, convNotes) {
   }
   if (!resolvedMain.channel && !fallback) {
     const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
+    const catalog = adapters.mergedModels(settings);
     // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
-    // 前者在合并目录里查得到、只是所有归属渠道都被关/空池，给出可操作指引
-    const cat = adapters.mergedModels(settings).find((m) => String(m.id).toLowerCase() === actualModel.toLowerCase());
+    // 前者在合并目录里查得到、只是所有归属渠道都被关/空池，给出可操作指引。
+    // 查找必须**逐字**：严格匹配下写法（含大小写）不同即不同模型，用忽略大小写去找会把
+    // 「写法不一致」误报成「渠道被关闭/号池空」，把人引去查上游启闭（实际渠道完全正常）。
+    const cat = catalog.find((m) => m.id === actualModel);
     if (resolvedMain.disabledChannel || cat) {
       const owners = (resolvedMain.disabledChannel ? [resolvedMain.disabledChannel] : (cat.sources || []))
         .filter((c, i, arr) => arr.indexOf(c) === i);
@@ -780,6 +783,17 @@ async function handleChat(req, res, settings, surface, convNotes) {
         `模型 "${actualModel}" 由渠道 ${owners.map((c) => `「${store.channelDisplay(c)}」`).join("、")}提供，` +
         `当前该渠道已被关闭或号池不可用，请在上游启闭中开启、补充号池，或改用其它模型。可用模型：${hint}`,
         "invalid_request_error", "channel_disabled"
+      );
+    }
+    // 只差大小写：目录里有这个名字的另一种写法。上游对未知名会静默回落或直接 4xx，
+    // 不点明「目录里的正确写法」，用户只能靠反复试错（严格匹配后这类请求必然落到这里）
+    const caseHit = catalog.find((m) => String(m.id).toLowerCase() === actualModel.toLowerCase());
+    if (caseHit) {
+      record({ status: 400, error: "model case mismatch" });
+      return sink.endErr(
+        400,
+        `模型 "${actualModel}" 与目录里的写法不一致：模型名必须与目录完全一致（含大小写），目录里是「${caseHit.id}」。可用模型：${hint}`,
+        "invalid_request_error", "model_case_mismatch"
       );
     }
     record({ status: 400, error: "unknown model" });
