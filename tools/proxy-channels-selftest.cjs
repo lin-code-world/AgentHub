@@ -31,6 +31,7 @@ const caFault = require("../electron/backend/proxy/codearts/stream_fault.cjs");
 const caRedact = require("../electron/backend/proxy/codearts/redact.cjs");
 const caModels = require("../electron/backend/proxy/codearts/models.cjs");
 const loomyImages = require("../electron/backend/proxy/loomy/images.cjs");
+const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
 
 // ===== CodeArts 签名：尾斜杠 + 字符集 + Go 语义 =====
 (function testCodeArtsSigner() {
@@ -163,6 +164,13 @@ const loomyImages = require("../electron/backend/proxy/loomy/images.cjs");
   eq(caModels.resolveModelId(merged, "GLM-5.2"), "GLM-5.2", "CodeArts 真名命中");
   ok(caModels.isBenefitId(merged, "BENEFIT-1"), "CodeArts 福利判定大小写无关");
   ok(!caModels.isBenefitId(merged, "glm-5.2"), "CodeArts 非福利不误判");
+})();
+
+// ===== Loomy 倍率：上游展示名后缀拆成数字（与全站 catalog 的 rate 口径一致，前端 fmtRate 直接读数字）=====
+(function testLoomyRate() {
+  eq(loomyModels.splitRateSuffix("Kimi k2.6 (x6.5)"), { name: "Kimi k2.6", rate: 6.5 }, "Loomy 倍率后缀拆成数字");
+  eq(loomyModels.splitRateSuffix("某模型（x0.0）"), { name: "某模型", rate: 0 }, "Loomy 0 倍率保留为 0");
+  eq(loomyModels.splitRateSuffix("Spark-X2.6 正式版(限时免费)"), { name: "Spark-X2.6 正式版(限时免费)", rate: null }, "Loomy 非倍率后缀不误判");
 })();
 
 // ===== Loomy 图片：deepseek 标记改写 =====

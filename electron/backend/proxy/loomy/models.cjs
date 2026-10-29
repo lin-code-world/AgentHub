@@ -53,8 +53,8 @@ function splitRateSuffix(name) {
   const num = inner.startsWith("x") || inner.startsWith("X") ? inner.slice(1).trim() : null;
   if (!num || !/[0-9]/.test(num) || !/^[0-9.]+$/.test(num)) return { name, rate: null };
   const cleaned = body.trimEnd();
-  const rate = `x${num}`;
-  return { name: cleaned || name, rate };
+  // 与全站 catalog 的 rate 口径一致：存数字（前端 fmtRate 直接 Number 后拼 ×），不存 "x2.0" 字符串
+  return { name: cleaned || name, rate: Number(num) };
 }
 
 function capsBool(caps, key) {
@@ -88,7 +88,7 @@ function mapEntry(row) {
   const contextLength = pickNum(["context_length", "context_window", "input_token_limit", "max_input_tokens", "maxInputTokens"]);
   const maxOutputTokens = pickNum(["max_output_tokens", "max_completion_tokens", "max_tokens", "maxOutputTokens"]);
   const out = { id, name, rate: null, capabilities, contextLength, maxOutputTokens };
-  if (rate) out.rate = rate;
+  if (rate != null) out.rate = rate;
   return out;
 }
 
