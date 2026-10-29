@@ -1509,14 +1509,14 @@ function buildApp(settings) {
       }
       return aliveCache.get(c);
     };
-    // 只返回 OpenAI 模型列表该有的字段：合并视图里的 sourceDetails / rate / capabilities /
-    // contextLength 等是管理页展示用的内部明细，不该随对外接口吐给客户端。
+    // 既有元数据（sources / name / rate / capabilities / contextLength 等）全部保留，向后兼容；
+    // 只挡掉本次新增的内部明细 sourceDetails（每来源渠道的上游真名与倍率，属管理页展示用）。
     res.json({
       object: "list",
       data: adapters
         .listableModels(st)
         .filter((m) => (m.sources || []).some(channelHasAnyAccount))
-        .map((m) => ({ id: m.id, object: m.object, created: m.created, owned_by: m.owned_by })),
+        .map(({ sourceDetails, ...rest }) => rest),
     });
   });
 

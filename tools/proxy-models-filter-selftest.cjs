@@ -124,6 +124,11 @@ async function main() {
     const j = await r.json();
     return (j.data || []).map((m) => m.id);
   };
+  const getModelsRaw = async () => {
+    const r = await fetch(base + "/v1/models");
+    const j = await r.json();
+    return j.data || [];
+  };
   const call = (payload) =>
     fetch(base + "/v1/chat/completions", {
       method: "POST",
@@ -196,6 +201,17 @@ async function main() {
     body = await rr.text();
     check("B8d 绑定渠道不含该写法 → 403 model_not_in_channel", rr.status === 403 && /model_not_in_channel/.test(body), `${rr.status} ${body.slice(0, 220)}`);
     check("B8d 文案给出该渠道目录里的写法", /目录里的写法是「shared-model」/.test(body), body.slice(0, 240));
+
+    // ===== B9 /v1/models 的字段契约：既有元数据全部保留，只挡新增的内部明细 =====
+    {
+      const raw = await getModelsRaw();
+      check("B9 /v1/models 仍有模型条目", raw.length > 0, String(raw.length));
+      const one = raw[0] || {};
+      for (const f of ["id", "object", "created", "owned_by", "sources", "name", "rate", "capabilities", "contextLength"]) {
+        check(`B9 既有字段 ${f} 保留（向后兼容）`, Object.prototype.hasOwnProperty.call(one, f), JSON.stringify(Object.keys(one)));
+      }
+      check("B9 内部明细 sourceDetails 不外泄", !Object.prototype.hasOwnProperty.call(one, "sourceDetails"), JSON.stringify(Object.keys(one)));
+    }
 
     // ===== B8b 禁用判定逐字（大小写敏感），与 /v1/models 出口及目录页开关同口径 =====
     // 目录里是 shared-model：禁用它之后，SHARED-MODEL 是**另一条**模型（入口旧实现按
