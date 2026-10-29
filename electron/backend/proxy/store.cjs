@@ -811,6 +811,8 @@ function accountView(r) {
     lastError,
     /** 今日签到结果（号池行内按钮三态与详情弹窗数据源；只留当天一条，跨天由前端按 day 判为过期） */
     checkin: meta.checkin && typeof meta.checkin === "object" ? meta.checkin : null,
+    /** 多钱包渠道的钱包明细（Loomy：永久积分 / 每日赠送积分），表格余额列拆行展示 */
+    creditsDetail: Array.isArray(meta.creditsDetail) ? meta.creditsDetail : null,
     /** 首登奖励结算台账（小浣熊一次性新手福利；key → 结算时刻，落了即「已领取」） */
     onboardingGrants: meta.onboardingGrants && typeof meta.onboardingGrants === "object" ? meta.onboardingGrants : null,
     /** 账号备注（号池列表副行展示 + 备注弹窗；落 meta.note，随明文凭据导出带走） */
@@ -983,6 +985,18 @@ function updateAccount(id, patch) {
   vals.push(cur.id);
   db.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
   return true;
+}
+
+/** 多钱包渠道的钱包明细（Loomy 的永久 / 每日赠送）：落 meta，随账号视图回传给表格拆行展示。
+ *  读-改-写避免覆盖 meta 里的其他键（备注 / 签到 / 最近错误）；detail 为空时清掉旧值 */
+function setCreditsDetail(id, detail) {
+  if (!id) return;
+  const cur = getAccount(id);
+  if (!cur) return;
+  const meta = { ...parseMeta(cur.meta) };
+  if (Array.isArray(detail) && detail.length) meta.creditsDetail = detail;
+  else delete meta.creditsDetail;
+  updateAccount(id, { meta });
 }
 
 /** 记录账号最近一次上游错误（号池状态气泡展示用；只留最新一条，message 截 400 字）。
@@ -1716,7 +1730,7 @@ module.exports = {
   validateKeyParams,
   listAgents, setPoolStrategy, setAgentCostTier,
   listAccounts, getAccount, accountSecrets, addAccount, updateAccount, bumpAccountUsage, removeAccount, noteError, clearError, noteCheckin, noteOnboardingGrant, noteAccount,
-  setCreditPackages, listCreditPackages, listAllCreditPackages,
+  setCreditPackages, listCreditPackages, listAllCreditPackages, setCreditsDetail,
   insertOpLog, listOpLogs, listOpLogOps, exportOpLogRows,
   listModelCooldowns, upsertModelCooldown, deleteModelCooldowns,
   snapshotCredits,

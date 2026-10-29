@@ -127,6 +127,9 @@ async function refreshAccount(id) {
       fromPackages = true;
     }
   }
+  // 多钱包渠道（Loomy：永久积分 / 每日赠送积分）：钱包明细单独落 meta，账号级 credits 仍是合计；
+  // 没有 wallets 的渠道不写，避免在别的渠道上留一份过期明细
+  if (Array.isArray(r.wallets)) store.setCreditsDetail(acc.id, r.wallets);
 
   // 复活逻辑：拿到新余额后，relogin / exhausted（余额不足或到期被自动切走的）账号回 online。
   // 注意 acc 是本次刷新开始前的旧快照，中间隔了上游网络请求（数秒）——期间请求链路可能刚把

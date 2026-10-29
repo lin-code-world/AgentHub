@@ -1942,6 +1942,8 @@ onUnmounted(() => {
                     <el-tooltip :content="acc.channel === 'zcode' && acc.credits > 0 ? `${fmtInt(acc.credits)} Tokens` : ''" :disabled="!(acc.channel === 'zcode' && acc.credits > 0)" placement="top">
                       <span>{{ acc.hasToken ? (acc.credits === -1 ? "不限" : fmtBalance(acc.credits, acc.channel)) : "-" }}</span>
                     </el-tooltip>
+                    <!-- 多钱包渠道（Loomy）：合计之下拆出永久 / 每日赠送，避免两个账户混成一个数 -->
+                    <div v-if="acc.creditsDetail && acc.creditsDetail.length" class="credits-split">{{ acc.creditsDetail.map((w) => `${w.displayName} ${fmtInt(w.balance)}`).join(" · ") }}</div>
                   </td>
                   <td class="mono">{{ acc.expiresAt ? fmtDate(acc.expiresAt) : "-" }}</td>
                   <td class="mono num">{{ acc.todayReq }} 次 · {{ fmtK(acc.todayTokens) }}</td>
@@ -3519,6 +3521,15 @@ onUnmounted(() => {
 .pool-tbl th:last-child {
   width: 340px;
 }
+/* 多钱包渠道（Loomy）：余额列合计下方的小字，拆分展示永久 / 每日赠送 */
+.credits-split {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 /* 积分包展开：账号行下的只读明细表（数据来自 poolView 附的 packages） */
 .pkg-caret {
   border: none;

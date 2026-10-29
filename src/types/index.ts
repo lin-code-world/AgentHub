@@ -184,6 +184,8 @@ export interface ProxyAccount {
   modelCool?: { model: string; until: number; reason: string }[];
   /** 逐包明细（有包的渠道才有；无包的渠道这个字段不出，界面回落账号级聚合行） */
   packages?: ProxyCreditPackage[];
+  /** 多钱包明细（Loomy：永久积分 / 每日赠送积分）；无该字段的渠道按单一余额展示 */
+  creditsDetail?: { type: string; displayName: string; balance: number }[] | null;
   source: "scan" | "oauth" | "paste";
   /** 账号备注（备注弹窗写入；落 meta.note，副行展示 + 随明文凭据导出带走） */
   note?: string;

@@ -261,7 +261,7 @@ const PROXY_POOL = [
     checkinAuto: { enabled: true, time: "09:00", jitterMin: 0 },
     summary: { channel: "loomy", totalCredits: 10000, accountCount: 1, onlineCount: 1, earliestExpire: NOW + 6 * 86400000, expiringSoon: false, todayReq: 21, todayTokens: 51800, lastCreditsAt: ago(0) },
     accounts: [
-      { id: "a18", channel: "loomy", uid: "lm_139****8000", name: "手机 139****8000", status: "online", credits: 10000, creditsAt: ago(0), expiresAt: NOW + 6 * 86400000, coolUntil: 0, coolReason: "", source: "oauth", lastUsed: ago(1), todayReq: 21, todayTokens: 51800, createdAt: NOW - 6 * 86400000, hasToken: true, checkin: { day: TODAY, at: NOW - 1800000, action: "checkin", ok: true, already: false, credit: 5000, message: "每日赠送积分已刷新" } },
+      { id: "a18", channel: "loomy", uid: "lm_139****8000", name: "手机 139****8000", status: "online", credits: 10000, creditsAt: ago(0), expiresAt: NOW + 6 * 86400000, coolUntil: 0, coolReason: "", source: "oauth", lastUsed: ago(1), todayReq: 21, todayTokens: 51800, createdAt: NOW - 6 * 86400000, hasToken: true, creditsDetail: [ { type: "permanent_points", displayName: "永久积分", balance: 5000 }, { type: "daily_points", displayName: "每日赠送积分", balance: 5000 } ], checkin: { day: TODAY, at: NOW - 1800000, action: "checkin", ok: true, already: false, credit: 5000, message: "每日赠送积分已刷新" } },
     ],
   },
 ];

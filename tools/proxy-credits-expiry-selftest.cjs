@@ -112,6 +112,32 @@ async function main() {
     store.updateAccount(noExpId, { credits: 10, creditsAt: Date.now(), status: "online" });
     const picked2 = pool.pickAccount("raccoon", "expire_first", [], 0);
     assert(picked2 && picked2.id === noExpId, "expires_at=0 的账号必须可被选中（0 = 无到期/长期有效）");
+
+    // ⑤ 多钱包渠道（Loomy）：钱包明细要随刷新落到账号视图，供表格拆行展示永久 / 每日赠送
+    const loomyId = store.addAccount({
+      channel: "loomy",
+      uid: "expiry-loomy",
+      name: "Loomy 自测",
+      token: "loomy-session",
+      source: "paste",
+    });
+    adapters.get = (ch) =>
+      ch === "loomy"
+        ? {
+            queryCredits: async () => ({
+              credits: 15000,
+              wallets: [
+                { type: "permanent_points", displayName: "永久积分", balance: 10000 },
+                { type: "daily_points", displayName: "每日赠送积分", balance: 5000 },
+              ],
+            }),
+          }
+        : origGet.call(adapters, ch);
+    await credits.refreshAccount(loomyId);
+    const v = store.listAccounts("loomy").find((x) => x.id === loomyId);
+    assert(v.credits === 15000, `账号级余额应为合计 15000（实际 ${v.credits}）`);
+    assert(Array.isArray(v.creditsDetail) && v.creditsDetail.length === 2, `钱包明细应落进账号视图（实际 ${JSON.stringify(v.creditsDetail)}）`);
+    assert(v.creditsDetail[0].balance === 10000 && v.creditsDetail[1].balance === 5000, `钱包金额要对（实际 ${JSON.stringify(v.creditsDetail)}）`);
   } finally {
     adapters.get = origGet;
   }
