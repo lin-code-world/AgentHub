@@ -91,6 +91,7 @@ function main() {
   // 替换 ADAPTERS 为假适配器（只留 models()），复原时用拷贝，避免删键后自己拷自己
   const orig = { ...adapters.ADAPTERS };
   let list;
+  let listable;
   try {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, {
@@ -101,6 +102,8 @@ function main() {
       zcode: { models: () => ["no-catalog-model"] },
     });
     list = adapters.mergedModels({});
+    // 禁用集合逐字比对：只抹掉被禁的那条写法，不能把仅大小写不同的另一条一起抹掉
+    listable = adapters.listableModels({ disabledModels: ["deepseek-v4.1-flash"], channelEnabled: {} });
   } finally {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, orig);
@@ -182,6 +185,11 @@ function main() {
   ];
   eq(hiddenByRate(mixed, "", { workbuddy: true, trae: false }), true, "全部视图：任一来源有价而该模型无价即隐藏");
   eq(hiddenByRate([{ channel: "workbuddy", rate: 0 }], "", { workbuddy: true }), false, "倍率为 0 是有效值，不隐藏");
+
+  console.log("\n[6] 禁用集合逐字比对（listableModels）");
+  const listed = listable.map((m) => m.id);
+  check("被禁的写法不再对外列出", !listed.includes("deepseek-v4.1-flash"), JSON.stringify(listed));
+  eq(listable.filter((m) => m.id === "DeepSeek-V4.1-Flash").length, 1, "仅大小写不同的另一条仍在列");
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
