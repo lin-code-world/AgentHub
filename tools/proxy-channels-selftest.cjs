@@ -207,6 +207,9 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
   eq(loomyModels.resolveFrom(["DeepSeek-V4.1-Flash"], "deepseek-v4.1-flash"), null, "严格模式不再把大小写不同当成同一个模型");
   eq(loomyModels.resolveFrom(["DeepSeek-V4.1-Flash"], "DeepSeek-V4.1-Flash"), "DeepSeek-V4.1-Flash", "精确写法原样返回");
   eq(loomyModels.resolveFrom(ids, "KIMI-K2.6"), null, "目录多项时大小写不同同样不算命中");
+  eq(loomyModels.resolveFrom(ids, "Kimi-k2.6"), "Kimi-k2.6", "目录多项时精确写法仍能命中（不是只比第一项）");
+  eq(loomyModels.resolveFrom(["DeepSeek-V4.1-Flash"], " DeepSeek-V4.1-Flash "), null, "前后空白不算精确写法（校验不 trim，否则校验值与发送值不一致）");
+  eq(loomyModels.resolveFrom(["DeepSeek-V4.1-Flash"], ""), null, "空字符串不命中");
   eq(loomyModels.resolveFrom(ids, "nonexistent"), null, "Loomy 目录里没有的名字返回 null（不得静默透传）");
   eq(loomyModels.resolveFrom([], "deepseek-v4.1-flash"), null, "目录为空时无从判断，返回 null");
 
@@ -231,6 +234,58 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, origAdapters);
     adapters.get = origGet;
+  }
+
+  // ===== Loomy chat() 主路径：校验值与发送值一致（不改写 / 不精确不打上游 / 目录为空透传）=====
+  // 注入假 fetchStream 与 pumpSse，全程不触网；catalog.json 落系统临时目录，跑完即删
+  {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const { makeLoomy } = require("../electron/backend/proxy/loomy/adapter.cjs");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-loomy-chat-"));
+    const mk = () => {
+      const sent = [];
+      const adapter = makeLoomy({
+        rules: { get: () => ({}), rulesDir: () => dir },
+        httpJson: async () => ({}),
+        util: { verbose: () => {} },
+        firstByteBudgetMs: () => 5000,
+        fetchStream: async (url, opts) => {
+          sent.push(JSON.parse(opts.body));
+          return { resp: {}, cancelTimer: () => {} };
+        },
+        pumpSse: async (resp, onEvent) => { onEvent("message", "[DONE]"); },
+      });
+      return { adapter, sent };
+    };
+    const call = (adapter, model) =>
+      adapter.chat({ account: {}, secrets: { token: "test-session" }, model, body: { model, messages: [] }, emit: () => {} });
+    try {
+      // ① 目录为空（从未拉取过模型目录）：无从判断，照常透传。
+      //    必须放第一个跑：list() 读不到 catalog.json 时不置 loaded，后续场景仍会重新读盘
+      const empty = mk();
+      await call(empty.adapter, "whatever-model");
+      ok(empty.sent.length === 1 && empty.sent[0].model === "whatever-model", "Loomy chat 目录为空时原样透传（不因目录没有而拒绝）");
+
+      // ② 目录就绪：精确写法放行，发出的 body.model 必须与请求名逐字一致（不替用户改写）
+      fs.writeFileSync(path.join(dir, "catalog.json"), JSON.stringify({ loomy: { syncedAt: Date.now(), models: [{ id: "DeepSeek-V4.1-Flash" }] } }), "utf8");
+      const exact = mk();
+      await call(exact.adapter, "DeepSeek-V4.1-Flash");
+      ok(exact.sent.length === 1, "Loomy chat 精确写法放行");
+      eq(exact.sent[0] && exact.sent[0].model, "DeepSeek-V4.1-Flash", "Loomy chat 发出的模型名与请求名逐字一致（不改写）");
+
+      // ③ 不精确写法：400 且一次都不打上游（上游对未知名会静默回落 spark-x2.6，放过去等于让用户以为在跑别的模型）
+      for (const bad of ["deepseek-v4.1-flash", " DeepSeek-V4.1-Flash "]) {
+        const wrong = mk();
+        let err = null;
+        try { await call(wrong.adapter, bad); } catch (e) { err = e; }
+        eq(err && err.status, 400, `Loomy chat「${bad}」抛 400`);
+        eq(wrong.sent.length, 0, `Loomy chat「${bad}」不发上游请求`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   console.log(`\n通过 ${pass}，失败 ${fail}`);

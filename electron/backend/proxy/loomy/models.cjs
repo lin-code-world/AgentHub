@@ -152,14 +152,16 @@ async function refresh(env, rulesDir, channel, force, fetchImpl) {
 }
 
 /**
- * 按目录逐字校验请求的模型名（大小写敏感，不做归一）。
+ * 按目录逐字校验请求的模型名（大小写敏感、**不 trim**，不做归一）。
  * 为什么必须校验：Loomy 上游对模型名**大小写敏感**，且对不认识的 name 不报错，
  * 而是静默回落到 spark-x2.6（限时免费模型）——不拦下就会「请求 DeepSeek 实际跑 spark-x2.6」，
  * 还因为没有扣费而完全无感。写法不对就如实拒绝，不替用户改写。
+ * 为什么不能 trim：调用方发送的是未 trim 的原名，若这里 trim 后判为命中，
+ * 上游仍会收到带空白的名字并静默回落——校验值与发送值必须逐字一致。
  * 返回 null 表示目录里没有（或目录为空，无从判断），由调用方决定如何处置。
  */
 function resolveFrom(ids, requested) {
-  const want = String(requested || "").trim();
+  const want = String(requested || "");
   if (!want) return null;
   for (const id of ids || []) if (String(id) === want) return String(id);
   return null;
