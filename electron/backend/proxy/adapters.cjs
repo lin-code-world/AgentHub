@@ -5090,11 +5090,13 @@ function modelOwners(model, cfg) {
 function listableModels(cfg) {
   const c = cfg || proxyConfig();
   const disabled = c.disabledModels || [];
-  const off = new Set((disabled || []).map((s) => String(s).toLowerCase()));
+  // 逐字比对（与合并键、modelOwners 同口径）：合并视图已按精确写法分行后，
+  // 忽略大小写的过滤会把禁用 `deepseek-v4.1-flash` 顺手抹掉 `DeepSeek-V4.1-Flash` 这条独立模型
+  const off = new Set((disabled || []).map((s) => String(s)));
   const on = (ch) => channelOn(ch, c);
   return mergedModels(c)
     .filter((m) => (m.sources || []).some(on)) // 全源渠道都被关闭的模型不对外暴露（客户端不再看到）
-    .filter((m) => !off.has(m.id.toLowerCase()));
+    .filter((m) => !off.has(m.id));
 }
 
 /** 双表一致性报告（CHANNELS ↔ ADAPTERS）：两向差集非空即自测失败（tools/proxy-smoke.cjs 断言）。
