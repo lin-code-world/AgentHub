@@ -210,6 +210,26 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
   eq(loomyModels.resolveFrom(ids, "nonexistent"), null, "Loomy 目录里没有的名字返回 null（不得静默透传）");
   eq(loomyModels.resolveFrom([], "deepseek-v4.1-flash"), null, "目录为空时无从归一，返回 null");
 
+  // 渠道归属的大小写口径：精确写法优先，避免「Loomy 的大写写法顶替 WorkBuddy 的小写请求」
+  const adapters = require("../electron/backend/proxy/adapters.cjs");
+  const origGet = adapters.get;
+  const origAdapters = adapters.ADAPTERS;
+  try {
+    const fake = {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+    };
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, fake);
+    eq(adapters.modelOwners("deepseek-v4.1-flash", {}), ["workbuddy"], "精确写法命中时，大写写法的渠道不算归属");
+    eq(adapters.modelOwners("DeepSeek-V4.1-Flash", {}), ["loomy"], "大写写法命中时，小写写法的渠道不算归属");
+    eq(adapters.modelOwners("DEEPSEEK-V4.1-FLASH", {}), ["workbuddy", "loomy"], "无渠道精确命中才回退大小写不敏感匹配");
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, origAdapters);
+    adapters.get = origGet;
+  }
+
   console.log(`\n通过 ${pass}，失败 ${fail}`);
   process.exit(fail ? 1 : 0);
 })();

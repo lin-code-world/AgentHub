@@ -5040,7 +5040,8 @@ function mergedModels(cfg) {
 function modelOwners(model, cfg) {
   const c = cfg || proxyConfig();
   const rev = c.modelReverseAliases || {};
-  const lower = String(model || "").toLowerCase();
+  const wanted = String(model || "");
+  const lower = wanted.toLowerCase();
   const mapped = [];
   const entry = reverseAliasEntry(model, c);
   // channelOn 过滤（与目录循环 4114 同口径）：反向映射命中的已关闭渠道不算归属——
@@ -5053,17 +5054,28 @@ function modelOwners(model, cfg) {
     seen.add(ch);
     out.push(ch);
   }
+  // 精确写法优先：渠道目录里的模型 id 是**大小写敏感**的上游真名（Loomy 实测把未知名静默回落
+  // 到 spark-x2.6 且不报错）。客户端写 `deepseek-v4.1-flash` 时，WorkBuddy 目录里就是这一模一样的
+  // 写法，而 Loomy 写的是 `DeepSeek-V4.1-Flash`——后者不该顶替前者去接这个请求。
+  // 只有当没有任何渠道精确命中时，才回退到大小写不敏感匹配（客户端统一小写、渠道写大写的场景仍需可用）。
+  const exact = [];
+  const loose = [];
   for (const [channel, ad] of Object.entries(ADAPTERS)) {
     if (seen.has(channel)) continue;
     // 关闭的渠道不算归属：单源模型也判「不可用」（resolveChannel 拿到空列表 → 400 给可用模型提示），
     // 多源模型自动收窄到启用渠道（故障转移备选同步收窄，路由打分与备选队列全走这里）
     if (!channelOn(channel, c)) continue;
-    if (ad.models().some((m) => String(m).toLowerCase() === lower)) {
+    const ids = ad.models();
+    if (ids.some((m) => String(m) === wanted)) {
       seen.add(channel);
-      out.push(channel);
+      exact.push(channel);
+    } else if (ids.some((m) => String(m).toLowerCase() === lower)) {
+      seen.add(channel);
+      loose.push(channel);
     }
   }
-  return out;
+  // 反向映射命中的渠道已经在 out 里，精确/宽松只决定「目录归属」这一批怎么收
+  return [...out, ...(exact.length ? exact : loose)];
 }
 
 /** /v1/models 对外可列模型：合并视图减去 disabledModels（口径与请求路径 400 拦截一致）。
