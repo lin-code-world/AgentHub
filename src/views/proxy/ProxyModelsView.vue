@@ -41,6 +41,24 @@ const tabChannels = computed(() => channels.value.filter((c) => (modelsByChannel
 /** 各渠道是否提供倍率（随模型列表首条返回）：决定「无倍率模型」是否隐藏 */
 const channelRateFlags = computed<Partial<Record<ProxyChannelId, boolean>>>(() => models.value[0]?.channelRateFlags || {});
 
+/** 各渠道目录里的原始模型 id（随首条返回）：渠道 tab 下要显示该渠道自己的写法 */
+const channelModelIds = computed<Partial<Record<ProxyChannelId, string[]>>>(() => models.value[0]?.channelModelIds || {});
+
+/**
+ * 当前渠道 tab 下该模型「在该渠道目录里的真实写法」（大小写敏感）。
+ * 为什么需要：合并视图用一个统一 id 展示共享模型，取的是首个渠道的写法（WorkBuddy 早于 Loomy 注册，
+ * 所以 DeepSeek 显示小写）。但上游是按自己目录里的写法认模型的（Loomy 是 DeepSeek-V4.1-Flash），
+ * 在讯飞渠道页显示小写会让人照着发出一个讯飞根本不存在的名字 -> 路由到别的渠道。
+ * 无 tab（全部视图）或该渠道没有这个模型时回落合并 id。
+ */
+function displayId(m: ProxyModel): string {
+  const tab = activeTab.value;
+  if (!tab) return m.id;
+  const ids = channelModelIds.value[tab as ProxyChannelId] || [];
+  const lower = m.id.toLowerCase();
+  return ids.find((x) => x.toLowerCase() === lower) || m.id;
+}
+
 // 三重筛选的交集：渠道 tab → 启停状态 → 关键词（id 与显示名模糊匹配）。
 // 这个列表既是表格数据源，也是「一键开启/关闭/反选」的作用范围——所见即所改
 const rows = computed(() => {
@@ -53,7 +71,8 @@ const rows = computed(() => {
     if (statusFilter.value === "on" && !m.enabled) return false;
     if (statusFilter.value === "off" && m.enabled) return false;
     if (!kw) return true;
-    return m.id.toLowerCase().includes(kw) || String(m.name || "").toLowerCase().includes(kw);
+    // 搜索也要匹配「当前渠道的原始写法」：在讯飞页搜 DeepSeek-V4.1-Flash 不能搜不到
+    return m.id.toLowerCase().includes(kw) || displayId(m).toLowerCase().includes(kw) || String(m.name || "").toLowerCase().includes(kw);
   });
 });
 
@@ -495,8 +514,8 @@ onMounted(refresh);
               <tbody>
                 <tr v-for="(m, i) in rows" :key="m.id" :style="{ '--i': i }">
                   <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                    <el-tooltip :content="m.id" placement="top">
-                      <div class="mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.id }}</div>
+                    <el-tooltip :content="displayId(m)" placement="top">
+                      <div class="mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ displayId(m) }}</div>
                     </el-tooltip>
                     <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
                       <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
