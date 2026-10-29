@@ -65,8 +65,8 @@ const run = (args) => {
 async function main() {
   console.log("=== 1 命令存在与形态门控 ===");
   ok("proxy_account_import_text 在命令表里", commands.has("proxy_account_import_text"));
-  ok('modeOf("proxy_account_import_text", "browser") === "write"', commandTable.modeOf("proxy_account_import_text", "browser") === "write", commandTable.modeOf("proxy_account_import_text", "browser"));
-  ok("browser 形态无 deny 文案（浏览器可用）", commandTable.denyReason("proxy_account_import_text", "browser") == null);
+  ok('modeOf("proxy_account_import_text", "browser") === "write"', commandTable.modeOf("proxy_account_import_text") === "write", commandTable.modeOf("proxy_account_import_text"));
+  ok("browser 形态无 deny 文案（浏览器可用）", commandTable.denyReason("proxy_account_import_text") == null);
   const preloadSrc = fs.readFileSync(path.join(ROOT, "electron", "preload.cjs"), "utf8");
   ok("preload 白名单已同步 proxy_account_import_text", /"proxy_account_import_text"/.test(preloadSrc));
 
@@ -153,7 +153,7 @@ async function main() {
     // 顺手项：文件头的 UTF-8 BOM（Windows 记事本 / 部分导出工具会写）必须在交给后端前剥掉，
     // 否则 JSON.parse 直接报错、用户只看到「解析失败」却看不出文件没问题
     ok("前端读文件后剥掉 UTF-8 BOM", /\.replace\(\/\^\\uFEFF\//.test(vue), "未找到 \\uFEFF 剥离");
-    const deny = String(commandTable.denyReason("proxy_account_import_file", "browser"));
+    const deny = String(commandTable.denyReason("proxy_account_import_file"));
     ok("Ruling 29：browser 文案改指「选择 JSON 文件上传」", /选择 JSON 文件上传/.test(deny), deny);
     ok("Ruling 29：browser 文案不提前承诺 ZIP", !/zip/i.test(deny), deny);
     ok("Ruling 22 不回退：文案仍不自指「选择文件」", !deny.includes("选择文件"), deny);

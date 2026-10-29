@@ -60,8 +60,8 @@ function browserCapsPayload() {
   const collected = commandTable.collect({});
   const commands = {};
   for (const cmd of collected.keys()) {
-    const mode = commandTable.modeOf(cmd, "browser");
-    commands[cmd] = mode === "deny" ? { mode, reason: commandTable.denyReason(cmd, "browser") } : { mode };
+    const mode = commandTable.modeOf(cmd);
+    commands[cmd] = mode === "deny" ? { mode, reason: commandTable.denyReason(cmd) } : { mode };
   }
   return { ok: true, platform: "web", version: "0.0.0-test", modules: ["proxy"], features: { sse: false, serviceControl: false, fileDialog: false }, commands };
 }
@@ -72,14 +72,14 @@ async function main() {
   const ZCODE = Object.keys(commandTable.DENY_BROWSER).filter((c) => c.startsWith("proxy_zcode_"));
   ok(
     "简报点名的命令在 browser 形态全部 deny（含 proxy_oauth_submit_callback）",
-    NAMED.every((c) => commandTable.modeOf(c, "browser") === "deny"),
-    NAMED.filter((c) => commandTable.modeOf(c, "browser") !== "deny").join(",")
+    NAMED.every((c) => commandTable.modeOf(c) === "deny"),
+    NAMED.filter((c) => commandTable.modeOf(c) !== "deny").join(",")
   );
-  ok("proxy_zcode_* 一组在 browser 形态全部 deny", ZCODE.length >= 6 && ZCODE.every((c) => commandTable.modeOf(c, "browser") === "deny"), ZCODE.join(","));
+  ok("proxy_zcode_* 一组在 browser 形态全部 deny", ZCODE.length >= 6 && ZCODE.every((c) => commandTable.modeOf(c) === "deny"), ZCODE.join(","));
   ok(
     "每条 deny 都有浏览器口径文案（非空字符串）",
-    [...NAMED, ...ZCODE].every((c) => typeof commandTable.denyReason(c, "browser") === "string" && commandTable.denyReason(c, "browser").length >= 8),
-    [...NAMED, ...ZCODE].filter((c) => !commandTable.denyReason(c, "browser")).join(",")
+    [...NAMED, ...ZCODE].every((c) => typeof commandTable.denyReason(c) === "string" && commandTable.denyReason(c).length >= 8),
+    [...NAMED, ...ZCODE].filter((c) => !commandTable.denyReason(c)).join(",")
   );
 
   // ===== 2 前端门控：给定 caps（Web 托管形态） =====
@@ -98,13 +98,13 @@ async function main() {
   );
   ok(
     "deny 原因逐字等于服务端下发的 reason（前端不改写文案）",
-    denyCmds.every((c) => web.denyState(c).reason === commandTable.denyReason(c, "browser")),
-    denyCmds.filter((c) => web.denyState(c).reason !== commandTable.denyReason(c, "browser")).join(",")
+    denyCmds.every((c) => web.denyState(c).reason === commandTable.denyReason(c)),
+    denyCmds.filter((c) => web.denyState(c).reason !== commandTable.denyReason(c)).join(",")
   );
   ok(
     "denyReason 逐字透传服务端 reason",
-    denyCmds.every((c) => web.denyReason(c) === commandTable.denyReason(c, "browser")),
-    denyCmds.filter((c) => web.denyReason(c) !== commandTable.denyReason(c, "browser")).join(",")
+    denyCmds.every((c) => web.denyReason(c) === commandTable.denyReason(c)),
+    denyCmds.filter((c) => web.denyReason(c) !== commandTable.denyReason(c)).join(",")
   );
   ok(
     'commandMode 对 deny 命令返回 "deny"',
@@ -114,7 +114,7 @@ async function main() {
   for (const c of ["proxy_pool", "proxy_status", "proxy_oplog_list", "proxy_account_import_json"]) {
     ok(`非 deny 命令 ${c} 不置灰且无原因`, web.denyState(c).disabled === false && web.denyState(c).reason === null, JSON.stringify(web.denyState(c)));
   }
-  ok("多命令合并门控：任一 deny 即置灰、原因取命中那条", web.denyState("proxy_pool", "proxy_oauth_begin").disabled === true && web.denyState("proxy_pool", "proxy_oauth_begin").reason === commandTable.denyReason("proxy_oauth_begin", "browser"), JSON.stringify(web.denyState("proxy_pool", "proxy_oauth_begin")));
+  ok("多命令合并门控：任一 deny 即置灰、原因取命中那条", web.denyState("proxy_pool", "proxy_oauth_begin").disabled === true && web.denyState("proxy_pool", "proxy_oauth_begin").reason === commandTable.denyReason("proxy_oauth_begin"), JSON.stringify(web.denyState("proxy_pool", "proxy_oauth_begin")));
   ok("多命令合并门控：全可用时放行", web.denyState("proxy_pool", "proxy_account_import_json").disabled === false, JSON.stringify(web.denyState("proxy_pool", "proxy_account_import_json")));
 
   // ===== 3 桌面（无 caps）：全部可用，一个都不置灰 =====
@@ -239,7 +239,7 @@ async function main() {
   ok("前端 .vue 无自写的 deny 文案（统一取服务端 reason）", selfWritten.length === 0, selfWritten.map((p) => path.relative(ROOT, p)).join(","));
   const agentsSrc = fs.readFileSync(path.join(ROOT, "src", "views", "proxy", "ProxyAgentsView.vue"), "utf8");
   ok("ProxyAgentsView 无自维护的形态灌号引导文案", !agentsSrc.includes("容器形态灌号"), "仍含「容器形态灌号」文案块");
-  ok("Ruling 22：proxy_account_import_file 的 browser 文案不自指「选择文件」", !String(commandTable.denyReason("proxy_account_import_file", "browser")).includes("选择文件"), String(commandTable.denyReason("proxy_account_import_file", "browser")));
+  ok("Ruling 22：proxy_account_import_file 的 browser 文案不自指「选择文件」", !String(commandTable.denyReason("proxy_account_import_file")).includes("选择文件"), String(commandTable.denyReason("proxy_account_import_file")));
 
   console.log("");
   console.log(`RESULT: ${pass} passed / ${fail} failed`);

@@ -102,45 +102,61 @@ async function reachable(p) {
   ok("browser 形态 deny 原因带「浏览器访问时不可用」口径", !!(caps.commands && caps.commands.proxy_start) && typeof caps.commands.proxy_start.reason === "string" && caps.commands.proxy_start.reason.startsWith("浏览器访问时不可用"), String(caps.commands && caps.commands.proxy_start && caps.commands.proxy_start.reason));
   ok("Ruling 17：capabilities.features.sse === true（真实事件源已接通，前置条件满足）", !!caps.features && caps.features.sse === true && caps.features.serviceControl === false && caps.features.fileDialog === false, JSON.stringify(caps.features));
 
-  // ===== Ruling 11 + 评审 Critical 1：browser 独立文案表，容器形态措辞不得泄漏到浏览器文案 =====
-  const containerReason = commandTable.denyReason("proxy_start", "container");
-  ok('denyReason("proxy_start", "container") 保持原文案', typeof containerReason === "string" && !containerReason.includes("浏览器访问时不可用"), String(containerReason));
-  ok("denyReason 默认形态 = container", commandTable.denyReason("proxy_start") === containerReason);
-  ok(
-    "modeOf 共有 deny 集合两形态一致（proxy_start / proxy_pool）",
-    ["proxy_start", "proxy_pool"].every((c) => commandTable.modeOf(c, "browser") === commandTable.modeOf(c, "container"))
-  );
-  // Ruling 16：桌面专用命令在 browser 形态 deny（admin_access_info 会吐明文令牌，绝不能漏），container 形态照旧可用
+  // ===== 网页端文案表只有一张：27 条文案逐字固定（合并命令表时最容易手滑改字，这里当快照） =====
+  // 桌面专用命令（admin_access_info 会吐明文令牌，绝不能漏）：网页端最容易被当成可用的越权入口
   const browserOnly = ["admin_access_info", "admin_set_token", "browse_dir", "open_data_dir", "get_data_dir", "get_app_version", "load_config", "save_config"];
-  ok("Ruling 16：8 条桌面专用命令 browser 形态 deny、container 形态不变", browserOnly.every((c) => commandTable.modeOf(c, "browser") === "deny") && browserOnly.every((c) => commandTable.modeOf(c, "container") !== "deny") && commandTable.modeOf("save_config", "container") === "write", JSON.stringify(browserOnly.map((c) => [c, commandTable.modeOf(c, "browser"), commandTable.modeOf(c, "container")])));
+  ok("8 条桌面专用命令在网页端 deny", browserOnly.every((c) => commandTable.modeOf(c) === "deny"), JSON.stringify(browserOnly.map((c) => [c, commandTable.modeOf(c)])));
 
+  const DENY_SNAPSHOT = {
+    proxy_start: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+    proxy_stop: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+    proxy_restart: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
+    proxy_open_data_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+    proxy_open_rules_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+    proxy_account_import_file: "浏览器访问时不可用：请改用「选择 JSON 文件上传，或粘贴 JSON」导入",
+    proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
+    proxy_scan: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
+    proxy_oauth_begin: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
+    proxy_oauth_submit_callback: "浏览器访问时不可用：OAuth 登录请在桌面窗口操作",
+    proxy_ide_status: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
+    proxy_ide_switch: "浏览器访问时不可用：IDE 切号请在桌面窗口操作",
+    proxy_oplog_export: "浏览器访问时不可用：导出日志请在桌面窗口操作",
+    proxy_zcode_claim_mode: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+    proxy_zcode_device_repair: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+    proxy_zcode_device_status: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+    proxy_zcode_restore_mid: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+    proxy_zcode_switch_rollback: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
+    proxy_zcode_solve_captcha: "浏览器访问时不可用：人机校验请在桌面号池页领取",
+    admin_access_info: "浏览器访问时不可用：请在桌面窗口查看令牌",
+    admin_set_token: "浏览器访问时不可用：请在桌面窗口修改令牌",
+    browse_dir: "浏览器访问时不可用：选择目录请在桌面窗口操作",
+    open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
+    get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",
+    get_app_version: "浏览器访问时不可用：版本信息请在桌面窗口查看",
+    load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
+    save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
+  };
   const forbidden = ["容器", "编排", "docker", "宿主机", "gateway-data", "/api/accounts/import"];
-  const denyCmds = Object.keys(commandTable.DENY);
-  ok("DENY 命令集合 17 条", denyCmds.length === 17, String(denyCmds.length));
+  const denyCmds = Object.keys(commandTable.DENY_BROWSER);
+  ok("DENY_BROWSER 命令集合 27 条", denyCmds.length === 27, String(denyCmds.length));
+  const snapshotDiff = Object.keys(DENY_SNAPSHOT).filter((c) => commandTable.DENY_BROWSER[c] !== DENY_SNAPSHOT[c]);
+  const extraCmds = denyCmds.filter((c) => !(c in DENY_SNAPSHOT));
+  ok("27 条 deny 文案与快照逐字一致（合并时不许改字）", snapshotDiff.length === 0 && extraCmds.length === 0, `改动: ${snapshotDiff.join(",") || "-"} | 新增: ${extraCmds.join(",") || "-"}`);
+
   const leaks = [];
   for (const cmd of denyCmds) {
-    const browserReason = String(commandTable.denyReason(cmd, "browser") || "");
-    const container = String(commandTable.denyReason(cmd, "container") || "");
-    if (!browserReason) leaks.push(`${cmd}: browser 文案为空`);
-    for (const w of forbidden) if (browserReason.includes(w)) leaks.push(`${cmd}: 含「${w}」`);
-    if (browserReason === container) leaks.push(`${cmd}: 与 container 同文案`);
+    const reason = String(commandTable.denyReason(cmd) || "");
+    if (!reason) leaks.push(`${cmd}: 文案为空`);
+    for (const w of forbidden) if (reason.includes(w)) leaks.push(`${cmd}: 含「${w}」`);
   }
-  ok("每条 browser deny 原因独立改写且不含容器形态措辞", leaks.length === 0, leaks.join("; "));
+  ok("每条 deny 文案不含容器形态措辞", leaks.length === 0, leaks.join("; "));
   ok(
-    "Ruling 16：browser 专属 deny 文案面向用户且不含容器形态措辞",
-    browserOnly.every((c) => {
-      const r = String(commandTable.denyReason(c, "browser") || "");
-      return r.startsWith("浏览器访问时不可用") && !forbidden.some((w) => r.includes(w));
-    }),
-    browserOnly.map((c) => commandTable.denyReason(c, "browser")).join(" | ")
-  );
-  ok(
-    "Ruling 16：capabilities 里桌面专用命令同样下发 deny",
+    "capabilities 里桌面专用命令同样下发 deny",
     browserOnly.every((c) => caps.commands && caps.commands[c] && caps.commands[c].mode === "deny" && !!caps.commands[c].reason),
     JSON.stringify(browserOnly.map((c) => caps.commands && caps.commands[c]))
   );
   ok(
-    "capabilities 里下发的 deny 原因同样是浏览器口径",
+    "capabilities 里下发的 deny 原因不带容器形态措辞",
     Object.entries(caps.commands || {}).every(([cmd, v]) => v.mode !== "deny" || !forbidden.some((w) => String(v.reason || "").includes(w))),
     JSON.stringify(Object.entries(caps.commands || {}).filter(([cmd, v]) => v.mode === "deny" && forbidden.some((w) => String(v.reason || "").includes(w))))
   );
@@ -211,7 +227,7 @@ async function reachable(p) {
     proxyStatusCalls++;
     return realStatus(...args);
   });
-  const countedTable = { collect: () => counted, modeOf: (c, f) => commandTable.modeOf(c, f), denyReason: (c, f) => commandTable.denyReason(c, f) };
+  const countedTable = { collect: () => counted, modeOf: (c) => commandTable.modeOf(c), denyReason: (c) => commandTable.denyReason(c) };
   await admin.start({ port: PROXY_PORT_D, commandTable: countedTable, staticDir: STATIC_DIR });
   const st2 = await (await get(base(PROXY_PORT_D + 1) + "/api/status")).json();
   await get(base(PROXY_PORT_D + 1) + "/api/status");

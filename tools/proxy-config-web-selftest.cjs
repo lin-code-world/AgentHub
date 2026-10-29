@@ -53,11 +53,10 @@ console.log("");
 console.log("=== 1 命令存在与形态门控（Ruling 24）===");
 ok("proxy_config_get 在命令表里", commands.has("proxy_config_get"));
 ok("proxy_config_save 在命令表里", commands.has("proxy_config_save"));
-ok('modeOf("proxy_config_get", "browser") === "read"', commandTable.modeOf("proxy_config_get", "browser") === "read", commandTable.modeOf("proxy_config_get", "browser"));
-ok('modeOf("proxy_config_save", "browser") === "write"', commandTable.modeOf("proxy_config_save", "browser") === "write", commandTable.modeOf("proxy_config_save", "browser"));
-ok("两命令容器形态同口径（read / write）", commandTable.modeOf("proxy_config_get") === "read" && commandTable.modeOf("proxy_config_save") === "write", commandTable.modeOf("proxy_config_get") + "/" + commandTable.modeOf("proxy_config_save"));
-ok("两命令均不在 DENY_BROWSER（浏览器可用、无 deny 文案）", !commandTable.DENY_BROWSER.proxy_config_get && !commandTable.DENY_BROWSER.proxy_config_save && commandTable.denyReason("proxy_config_get", "browser") == null && commandTable.denyReason("proxy_config_save", "browser") == null);
-ok("load_config / save_config 在 browser 形态仍 deny", commandTable.modeOf("load_config", "browser") === "deny" && commandTable.modeOf("save_config", "browser") === "deny", commandTable.modeOf("load_config", "browser") + "/" + commandTable.modeOf("save_config", "browser"));
+ok('modeOf("proxy_config_get") === "read"', commandTable.modeOf("proxy_config_get") === "read", commandTable.modeOf("proxy_config_get"));
+ok('modeOf("proxy_config_save") === "write"', commandTable.modeOf("proxy_config_save") === "write", commandTable.modeOf("proxy_config_save"));
+ok("两命令均不在 DENY_BROWSER（网页端可用、无 deny 文案）", !commandTable.DENY_BROWSER.proxy_config_get && !commandTable.DENY_BROWSER.proxy_config_save && commandTable.denyReason("proxy_config_get") == null && commandTable.denyReason("proxy_config_save") == null);
+ok("load_config / save_config 在网页端仍 deny", commandTable.modeOf("load_config") === "deny" && commandTable.modeOf("save_config") === "deny", commandTable.modeOf("load_config") + "/" + commandTable.modeOf("save_config"));
 ok("proxy_config_get 在 READ 集合（仅界面分类）", commandTable.READ.has("proxy_config_get") && !commandTable.READ.has("proxy_config_save"));
 
 // —— 磁盘初值：模拟用户已用「上游启闭 / 自动签到」弹窗与手工改 config.json 设好 ——

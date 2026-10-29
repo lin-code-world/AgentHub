@@ -71,16 +71,15 @@ function modulesOf(commands) {
   return [...new Set([...commands.keys()].map((cmd) => (cmd.startsWith("proxy_") ? "proxy" : "app")))].sort();
 }
 
-/** /api/capabilities 载荷：命令清单按 browser 形态算（deny 集合同 container，文案换浏览器口径） */
+/** /api/capabilities 载荷：命令清单按网页端口径算（deny 表只有一张） */
 function capabilitiesOf(commands, commandTable) {
   const out = {};
   for (const cmd of commands.keys()) {
-    const mode = commandTable.modeOf(cmd, "browser");
-    out[cmd] = mode === "deny" ? { mode, reason: commandTable.denyReason(cmd, "browser") } : { mode };
+    const mode = commandTable.modeOf(cmd);
+    out[cmd] = mode === "deny" ? { mode, reason: commandTable.denyReason(cmd) } : { mode };
   }
   return {
     ok: true,
-    form: "browser",
     platform: platformForm(),
     version: appVersion(),
     modules: modulesOf(commands),
@@ -103,7 +102,7 @@ function statusOf() {
   } catch {
     /* server 不可用时按未运行降级 */
   }
-  return { ok: true, form: "browser", platform: platformForm(), version: appVersion(), gateway };
+  return { ok: true, platform: platformForm(), version: appVersion(), gateway };
 }
 
 /** 鉴权失败统一响应：不区分令牌错误 / 签名错误 / 时间窗过期 / 随机数重放 / 会话失效 / 密文被篡改 */

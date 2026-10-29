@@ -66,18 +66,18 @@ ok("收集表非空且规模合理（≥60）", commands.size >= 60, String(comm
 ok(`收集集合 == 源码注册集合（${registered.size}）`, diff(commands.keys(), registered).length === 0 && diff(registered, commands.keys()).length === 0, `仅收集有: ${diff(commands.keys(), registered).join(",") || "-"} | 仅源码有: ${diff(registered, commands.keys()).join(",") || "-"}`);
 ok(`收集集合 == preload 白名单集合（${allowed.size}）`, diff(commands.keys(), allowed).length === 0 && diff(allowed, commands.keys()).length === 0, `仅收集有: ${diff(commands.keys(), allowed).join(",") || "-"} | 仅白名单有: ${diff(allowed, commands.keys()).join(",") || "-"}`);
 ok("分类闭合：每条命令都有 read/write/deny 之一", [...commands.keys()].every((c) => ["read", "write", "deny"].includes(commandTable.modeOf(c))));
-ok("DENY 无未注册命令（防手滑写错名）", Object.keys(commandTable.DENY).every((c) => commands.has(c)), diff(new Set(Object.keys(commandTable.DENY)), commands).join(","));
+ok("DENY_BROWSER 无未注册命令（防手滑写错名）", Object.keys(commandTable.DENY_BROWSER).every((c) => commands.has(c)), diff(new Set(Object.keys(commandTable.DENY_BROWSER)), commands).join(","));
 ok("READ 无未注册命令", [...commandTable.READ].every((c) => commands.has(c)), diff(new Set(commandTable.READ), commands).join(","));
-ok("deny 与 read 无交集", [...commandTable.READ].every((c) => !commandTable.DENY[c]));
-ok("每条 deny 都有面向用户的说明", Object.values(commandTable.DENY).every((v) => typeof v === "string" && v.length >= 8));
+// proxy_scan 是唯一有意的重叠：界面分类为只读，网页端仍必须在服务端也拒（否则令牌能直读本机登录态候选）
+ok("deny 与 read 无交集（proxy_scan 除外）", [...commandTable.READ].every((c) => c === "proxy_scan" || !commandTable.DENY_BROWSER[c]));
+ok("每条 deny 都有面向用户的说明", Object.values(commandTable.DENY_BROWSER).every((v) => typeof v === "string" && v.length >= 8));
 
 ok('modeOf("proxy_pool") === "read"', commandTable.modeOf("proxy_pool") === "read", commandTable.modeOf("proxy_pool"));
 ok('modeOf("proxy_start") === "deny"', commandTable.modeOf("proxy_start") === "deny", commandTable.modeOf("proxy_start"));
-// I1：proxy_scan 只是界面分类为 read，浏览器形态必须在服务端也 deny（否则令牌能直读本机登录态候选）
-ok('modeOf("proxy_scan", "browser") === "deny"', commandTable.modeOf("proxy_scan", "browser") === "deny", commandTable.modeOf("proxy_scan", "browser"));
-ok('denyReason("proxy_scan", "browser") 有浏览器口径文案', /扫描本机登录态/.test(String(commandTable.denyReason("proxy_scan", "browser"))), String(commandTable.denyReason("proxy_scan", "browser")));
-ok('容器形态 proxy_scan 仍为 read（口径不变）', commandTable.modeOf("proxy_scan") === "read", commandTable.modeOf("proxy_scan"));
-ok('modeOf("save_config") === "write"', commandTable.modeOf("save_config") === "write", commandTable.modeOf("save_config"));
+// proxy_scan 只是界面分类为 read，网页端必须在服务端也 deny
+ok('modeOf("proxy_scan") === "deny"', commandTable.modeOf("proxy_scan") === "deny", commandTable.modeOf("proxy_scan"));
+ok('denyReason("proxy_scan") 有面向用户的文案', /扫描本机登录态/.test(String(commandTable.denyReason("proxy_scan"))), String(commandTable.denyReason("proxy_scan")));
+ok('modeOf("save_config") === "deny"（网页端不允许整份配置读写）', commandTable.modeOf("save_config") === "deny", commandTable.modeOf("save_config"));
 ok('denyReason("proxy_start") 是面向用户的文案', typeof commandTable.denyReason("proxy_start") === "string" && commandTable.denyReason("proxy_start").length >= 8, String(commandTable.denyReason("proxy_start")));
 ok('denyReason("proxy_pool") 为空（非 deny 命令无原因）', commandTable.denyReason("proxy_pool") == null, String(commandTable.denyReason("proxy_pool")));
 
