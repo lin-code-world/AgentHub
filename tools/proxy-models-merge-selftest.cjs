@@ -185,6 +185,9 @@ function main() {
   ];
   eq(hiddenByRate(mixed, "", { workbuddy: true, trae: false }), true, "全部视图：任一来源有价而该模型无价即隐藏");
   eq(hiddenByRate([{ channel: "workbuddy", rate: 0 }], "", { workbuddy: true }), false, "倍率为 0 是有效值，不隐藏");
+  eq(hiddenByRate([], "loomy", { loomy: true }), false, "没有来源明细的行保留（不因渠道有价而隐藏）");
+  eq(hiddenByRate([{ channel: "loomy", rate: 6.5 }], "loomy", { loomy: true }), false, "有价且有倍率 → 不隐藏");
+  eq(hiddenByRate([{ channel: "workbuddy", rate: null }], "loomy", { loomy: true }), false, "当前渠道不在来源里 → 不隐藏");
 
   console.log("\n[6] 禁用集合逐字比对（listableModels）");
   const listed = listable.map((m) => m.id);

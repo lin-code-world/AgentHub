@@ -504,9 +504,8 @@ onMounted(refresh);
               </el-tooltip>
             </div>
           </div>
-          <!-- 7 列合计 1052px，窄窗口按横向滚动处理：内联覆盖全局 .table-scroll 的 overflow:auto 是既有写法，
-               改成可滚动而不是裁切——hidden 会把「状态」列（模型开关）整列裁掉，实测 1280 布局下可用宽 860px -->
-          <div class="table-scroll" style="overflow-x: auto">
+          <!-- 7 列合计 1052px：窄窗口横向滚动走全局 .table-scroll 的 overflow:auto，宽窗口一屏放下 -->
+          <div class="table-scroll">
             <table class="table table-bare" style="table-layout: fixed; width: 100%">
               <colgroup>
                 <!-- 模型列：240px 容得下 deepseek-v4.1-flash 这类长 id，倍率灰字跟在 id 右侧 -->
