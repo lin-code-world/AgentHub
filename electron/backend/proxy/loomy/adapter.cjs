@@ -62,8 +62,8 @@ function makeLoomy(deps) {
       return models.refresh({ session }, rules.rulesDir(), channel, !!(opts && opts.force));
     },
 
-    /** 对话主流程：OpenAI 兼容 SSE。model 按目录归一成上游真实 id 后再发（见 models.resolveFrom：
-     *  上游大小写敏感，不对齐就会静默回落 spark-x2.6）。
+    /** 对话主流程：OpenAI 兼容 SSE。model 按目录**逐字校验**（见 models.resolveFrom：上游大小写敏感，
+     *  写错就会被静默回落 spark-x2.6，故写法不对直接 400，不替用户改写模型名）。
      *  图片适配：deepseek 系模型把 image_url 换成 <image_base64> 文本标记（见 images.cjs）。
      *  缺 session 返回 401。 */
     async chat({ account, secrets, model, body, emit, meta }) {
@@ -71,23 +71,20 @@ function makeLoomy(deps) {
       if (!session) throw Object.assign(new Error("Loomy 账号缺少 session，无法转发（请重新登录）"), { status: 401 });
 
       const rawModel = String((body && body.model) || model || "");
-      // 目录归一：小写请求 → 上游真名。目录为空（从未拉取）时无从判断，保持原样透传
+      // 目录校验：只认目录里的精确写法。目录为空（从未拉取）时无从判断，保持原样透传
       const catalogIds = models.list(rules.rulesDir(), channel);
-      const canonical = models.resolveFrom(catalogIds, rawModel);
-      if (!canonical && catalogIds.length) {
+      if (catalogIds.length && !models.resolveFrom(catalogIds, rawModel)) {
         // 不静默透传：上游对未知名会回落到 spark-x2.6 且不报错，用户会以为在用别的模型
         throw Object.assign(
-          new Error(`Loomy 模型目录里没有「${rawModel}」。上游对不认识的模型名会静默回落到 spark-x2.6 且不扣费，故在此拦下——请到模型目录页同步 Loomy 目录，或改用目录里的模型名`),
+          new Error(`Loomy 模型目录里没有「${rawModel}」——该渠道只接受目录里的精确写法（大小写敏感），请从模型目录页复制模型名`),
           { status: 400 }
         );
       }
-      const requestedModel = canonical || rawModel;
       let payload = body;
-      if (canonical && body && body.model !== canonical) payload = { ...body, model: canonical };
-      if (images.prefersTagFormat(requestedModel)) {
+      if (images.prefersTagFormat(rawModel)) {
         const rewritten = images.rewriteToTag(payload);
         if (rewritten.converted > 0 && util && typeof util.verbose === "function") {
-          util.verbose(`[Loomy] 模型 ${requestedModel} 只认 <image_base64> 标记：已转换 ${rewritten.converted} 个图片块`);
+          util.verbose(`[Loomy] 模型 ${rawModel} 只认 <image_base64> 标记：已转换 ${rewritten.converted} 个图片块`);
         }
         payload = rewritten.body;
       }
