@@ -183,8 +183,42 @@ async function main() {
     body = await rr.text();
     check("B8 写法大小写不匹配 → 400 model_case_mismatch", rr.status === 400 && /model_case_mismatch/.test(body), `${rr.status} ${body.slice(0, 220)}`);
     check("B8 不误报渠道关闭", !/channel_disabled/.test(body), body.slice(0, 240));
-    check("B8 文案给出目录里的正确写法", /shared-model/.test(body), body.slice(0, 240));
+    check("B8 文案给出目录里的正确写法", /目录里的写法是「shared-model」/.test(body), body.slice(0, 240));
     check("B8 未发起上游请求", JSON.stringify(hits) === hitsBeforeB8, JSON.stringify(hits));
+
+    // ===== B8d 绑定渠道不含该写法 → 403 文案给出该渠道目录里的正确写法 =====
+    const kb = store.createKey({ name: "绑定 workbuddy", route: "workbuddy", dailyQuota: 0, rateLimit: 0 });
+    rr = await fetch(base + "/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + kb.secret },
+      body: JSON.stringify({ model: "SHARED-MODEL", stream: false, messages: bodyMsg }),
+    });
+    body = await rr.text();
+    check("B8d 绑定渠道不含该写法 → 403 model_not_in_channel", rr.status === 403 && /model_not_in_channel/.test(body), `${rr.status} ${body.slice(0, 220)}`);
+    check("B8d 文案给出该渠道目录里的写法", /目录里的写法是「shared-model」/.test(body), body.slice(0, 240));
+
+    // ===== B8b 禁用判定逐字（大小写敏感），与 /v1/models 出口及目录页开关同口径 =====
+    // 目录里是 shared-model：禁用它之后，SHARED-MODEL 是**另一条**模型（入口旧实现按
+    // toLowerCase 折叠 → 大写请求也被拒成 model_disabled；而目录页开关是逐字的，那一行
+    // 根本没有关闭的开关，用户去关再开只会删 SHARED-MODEL 键 → 永远恢复不了 = 幽灵禁用）
+    cfg.disabledModels = ["shared-model"];
+    rr = await call({ model: "SHARED-MODEL", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("B8b 禁用小写写法后，大写写法不得被判成 model_disabled", !(rr.status === 400 && /model_disabled/.test(body)), `${rr.status} ${body.slice(0, 220)}`);
+    rr = await call({ model: "shared-model", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("B8b 被禁用的写法本身仍 400 model_disabled", rr.status === 400 && /model_disabled/.test(body), `${rr.status} ${body.slice(0, 220)}`);
+    cfg.disabledModels = [];
+
+    // ===== B8c 候选渠道全不可用时补「写法近邻」提示（只提示、不改路由）=====
+    // trae 目录里是大写 SHARED-MODEL（与 workbuddy 的 shared-model 是两条模型）且号池为空：
+    // 请求大写只会拿 503「号池无可用账号」，正确的解法其实是改用小写写法。
+    cat.trae.models = [...(cat.trae.models || []), ent("SHARED-MODEL")];
+    fs.writeFileSync(catFile, JSON.stringify(cat, null, 2));
+    rules.reload("catalog.json");
+    rr = await call({ model: "SHARED-MODEL", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("B8c 号池全空时文案给出目录里的另一种写法", rr.status === 503 && /目录里的写法是「shared-model」/.test(body), `${rr.status} ${body.slice(0, 260)}`);
 
     // ===== B6 号池动态性：删光账号（=没有号池）→ 不列；重新有号 → 列出 =====
     store.removeAccount(w1);

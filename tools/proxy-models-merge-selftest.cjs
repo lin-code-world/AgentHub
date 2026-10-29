@@ -194,6 +194,31 @@ function main() {
   check("被禁的写法不再对外列出", !listed.includes("deepseek-v4.1-flash"), JSON.stringify(listed));
   eq(listable.filter((m) => m.id === "DeepSeek-V4.1-Flash").length, 1, "仅大小写不同的另一条仍在列");
 
+  console.log("\n[7] 自定义参数与反向映射逐字（大小写不同的写法互不继承）");
+  const orig2 = { ...adapters.ADAPTERS };
+  try {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      workbuddy_ai: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+    });
+    const custCfg = { modelCustom: { "deepseek-v4.1-flash": { contextLength: 123456, maxOutputTokens: 4321, reasoningEffort: "off" } }, channelEnabled: {} };
+    const customList = adapters.mergedModels(custCfg);
+    const lowRow = customList.find((m) => m.id === "deepseek-v4.1-flash");
+    const upRow = customList.find((m) => m.id === "DeepSeek-V4.1-Flash");
+    eq([lowRow.contextLength, lowRow.maxOutputTokens, lowRow.capabilities.reasoning], [123456, 4321, false], "小写写法应用自己的自定义值");
+    eq([upRow.contextLength, upRow.maxOutputTokens], [300000, 32000], "大写写法不继承小写写法的自定义值");
+    check("大写写法的 reasoning 能力不被小写写法的自定义值污染", upRow.capabilities.reasoning === true, JSON.stringify(upRow.capabilities));
+    const revCfg = { modelReverseAliases: { "deepseek-v4.1-flash": { workbuddy: "mapped-real-model" } }, channelEnabled: {} };
+    eq(adapters.modelOwners("DEEPSEEK-V4.1-FLASH", revCfg), [], "大写写法不继承小写写法的反向映射归属");
+    eq(adapters.resolveModelTarget("DEEPSEEK-V4.1-FLASH", "workbuddy", revCfg), null, "大写写法不解析到小写写法的映射目标");
+    check("小写写法自身仍按映射归属", adapters.modelOwners("deepseek-v4.1-flash", revCfg).includes("workbuddy"));
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, orig2);
+  }
+
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
     for (const f of fails) console.log(`  - ${f}`);

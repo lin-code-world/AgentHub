@@ -4842,10 +4842,6 @@ function reverseAliasEntry(model, cfg) {
   const rev = (cfg || proxyConfig()).modelReverseAliases || {};
   const direct = rev[String(model || "")];
   if (direct && typeof direct === "object") return direct;
-  const lower = String(model || "").toLowerCase();
-  for (const [key, value] of Object.entries(rev)) {
-    if (key.toLowerCase() === lower && value && typeof value === "object") return value;
-  }
   return null;
 }
 
@@ -4973,13 +4969,7 @@ function mergedModels(cfg) {
     // 多源模型按来源顺序取第一个有值条目（catalog 顺序即渠道优先级）
     for (const channel of entry.sources) {
       let lookupId = entry.id;
-      let revMap = rev[entry.id];
-      if (!revMap) {
-        const lowerId = entry.id.toLowerCase();
-        for (const [rk, rv] of Object.entries(rev)) {
-          if (rk.toLowerCase() === lowerId) { revMap = rv; break; }
-        }
-      }
+      const revMap = rev[entry.id];
       if (revMap) {
         const mapped = reverseAliasTarget(entry.id, channel, c);
         if (mapped) lookupId = mapped;
@@ -5013,16 +5003,12 @@ function mergedModels(cfg) {
     }
   }
 
-  // 自定义参数（modelCustom）：覆写 contextLength、maxOutputTokens、reasoning 能力
+  // 自定义参数（modelCustom）：覆写 contextLength、maxOutputTokens、reasoning 能力。
+  // 查表**逐字**：与前端写入（updateModelCustom 用 m.id）、index.cjs 的出口口径一致——
+  // 折叠大小写会让一个写法的自定义值（含 reasoning 能力）渗到另一个写法上
   const customMap = c.modelCustom || {};
   for (const entry of seen.values()) {
-    let cust = customMap[entry.id];
-    if (!cust) {
-      const lower = entry.id.toLowerCase();
-      for (const [k, v] of Object.entries(customMap)) {
-        if (k.toLowerCase() === lower) { cust = v; break; }
-      }
-    }
+    const cust = customMap[entry.id];
     if (cust && typeof cust === "object") {
       if (typeof cust.contextLength === "number" && cust.contextLength > 0) {
         entry.contextLength = cust.contextLength;

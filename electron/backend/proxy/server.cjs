@@ -268,6 +268,25 @@ function concurrencyBlockedMessage(triedChannels, upstreamTries) {
   return `所有候选渠道均在途并发已满（${detail}），请稍后重试或降低并发`;
 }
 
+/** 目录里与请求名只差大小写的写法：严格匹配下它们是**两条不同模型**（各渠道对同一模型的
+ *  写法可能不同，大小写也是命名的一部分），所以只用于错误文案提示，绝不参与路由 / 映射。 */
+function caseNeighborId(model, ids) {
+  const wanted = String(model || "").toLowerCase();
+  if (!wanted) return "";
+  for (const id of ids || []) {
+    const name = String(id || "");
+    if (name && name !== model && name.toLowerCase() === wanted) return name;
+  }
+  return "";
+}
+
+/** 写法近邻提示（三处错误文案共用：未知模型 / 绑定渠道目录不含该模型 / 候选渠道全不可用）。
+ *  上游对未知名常静默回落或直接 4xx，不点明目录里的正确写法，用户只能靠反复试错。 */
+function caseWriteHint(model, ids) {
+  const hit = caseNeighborId(model, ids);
+  return hit ? `目录里的写法是「${hit}」（模型名大小写敏感）` : "";
+}
+
 /**
  * 与请求名「形近」的目录模型，最多 3 个（issue #117）。
  * 归一化：小写 + 去掉 - _ . 分隔符；判据是双向包含（漏后缀、写简写、少一段都能命中）。
@@ -732,10 +751,11 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // 客户端响应的 model 字段保持请求值（契约不变），记账备注标 alias→actual
   const aliased = (settings.modelAliases || {})[requestedModel];
   const actualModel = aliased && aliased !== requestedModel ? String(aliased) : requestedModel;
-  // 禁用判定与 /v1/models 出口同口径（大小写不敏感）：出口过滤用 toLowerCase，
-  // 入口若用大小写敏感的 includes，目录页登记小写名、客户端用变体大小写请求时会绕过入口直通上游
-  const disabledSet = new Set((settings.disabledModels || []).map((s) => String(s).toLowerCase()));
-  if (disabledSet.has(actualModel.toLowerCase())) {
+  // 禁用判定与 /v1/models 出口同口径：**逐字**（大小写敏感）。目录里 shared-model 与
+  // SHARED-MODEL 是两条不同模型，折叠大小写会把「目录页根本没有关闭开关的那一行」也拒掉，
+  // 用户无从恢复（幽灵禁用）
+  const disabledSet = new Set((settings.disabledModels || []).map((s) => String(s)));
+  if (disabledSet.has(actualModel)) {
     record({ status: 400, error: "model disabled" });
     return sink.endErr(400, `模型 "${actualModel}" 已被禁用（模型目录页可恢复）`, "invalid_request_error", "model_disabled");
   }
@@ -747,10 +767,10 @@ async function handleChat(req, res, settings, surface, convNotes) {
   const perModel = (settings.modelFallback || {})[actualModel];
   const globalFb = settings.autoFallbackEnabled === false ? "" : String(settings.fallbackModel || "");
   const fallback = perModel || globalFb;
-  // 回退模型自身被禁用时不入链（切过去也是 400，白费一跳），口径同上（大小写不敏感）。
+  // 回退模型自身被禁用时不入链（切过去也是 400，白费一跳），口径同上（逐字）。
   // Key 绑定渠道不使用自动回退模型：绑定渠道是显式物理边界，「请求模型被拒就是拒绝」，
   // 模型链只保留请求模型本身（否则执行失败时还会拿回退模型去试，报错也会变成回退模型的 403）
-  if (key.route === "auto" && fallback && fallback !== actualModel && fallback !== requestedModel && !disabledSet.has(fallback.toLowerCase())) {
+  if (key.route === "auto" && fallback && fallback !== actualModel && fallback !== requestedModel && !disabledSet.has(fallback)) {
     modelChain.push(fallback);
   }
 
@@ -764,7 +784,15 @@ async function handleChat(req, res, settings, surface, convNotes) {
   if (resolvedMain.notInChannel) {
     const f = resolvedMain.notInChannel;
     record({ status: 403, error: `model "${f.model}" not in bound channel ${f.channel}` });
-    return sink.endErr(403, `没有权限，模型名称 "${f.model}" 不在渠道「${store.channelDisplay(f.channel)}」的模型目录里`, "permission_error", "model_not_in_channel");
+    // 只差大小写时点明该渠道目录里的写法：绑定渠道下模型名必须与渠道目录逐字一致，
+    // 不提示的话用户只会看到「不在目录里」，误以为该渠道没有这个模型
+    const writeHint = caseWriteHint(f.model, adapters.channelModelIds(f.channel));
+    return sink.endErr(
+      403,
+      `没有权限，模型名称 "${f.model}" 不在渠道「${store.channelDisplay(f.channel)}」的模型目录里` + (writeHint ? `：${writeHint}` : ""),
+      "permission_error",
+      "model_not_in_channel"
+    );
   }
   if (!resolvedMain.channel && !fallback) {
     const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
@@ -787,12 +815,12 @@ async function handleChat(req, res, settings, surface, convNotes) {
     }
     // 只差大小写：目录里有这个名字的另一种写法。上游对未知名会静默回落或直接 4xx，
     // 不点明「目录里的正确写法」，用户只能靠反复试错（严格匹配后这类请求必然落到这里）
-    const caseHit = catalog.find((m) => String(m.id).toLowerCase() === actualModel.toLowerCase());
-    if (caseHit) {
+    const caseHint = caseWriteHint(actualModel, catalog.map((m) => m.id));
+    if (caseHint) {
       record({ status: 400, error: "model case mismatch" });
       return sink.endErr(
         400,
-        `模型 "${actualModel}" 与目录里的写法不一致：模型名必须与目录完全一致（含大小写），目录里是「${caseHit.id}」。可用模型：${hint}`,
+        `模型 "${actualModel}" 与目录里的写法不一致：${caseHint}。可用模型：${hint}`,
         "invalid_request_error", "model_case_mismatch"
       );
     }
@@ -923,6 +951,9 @@ async function handleChat(req, res, settings, surface, convNotes) {
     // 按模型链长度放大：预算按请求计但逐模型消耗，避免主模型耗尽预算后饿死回退模型
     let upstreamTries = 0;
     const triedChannels = []; // 本请求跳过或耗尽的渠道轨迹（最终错误消息用）：{ chan, accounts: string[], note?: string }
+    // 本请求真正进入候选队列的渠道（含被熔断/满并发跳过者）：收尾判定「是否全在降级中」用，
+    // 必须与选路队列同源，不能用轨迹里的 note 文本去猜（note 是文案，改字就会判定失真）
+    const candidateChannels = new Set();
     // 轨迹同时记「渠道名」与该渠道实际用过的「账号名」（渲染时脱敏）。只报渠道名会让用户
     // 误判「我已经停用了这个账号怎么还在用」——渠道名 ≠ 账号名（issue #74 的困惑来源）
     let failoverFrom = "";    // 成功渠道 ≠ 主渠道时记录 failover:主→实（记账轨迹）
@@ -967,6 +998,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
         queue.length,
         settings.channelFailover === false ? 1 : normalizeChannelFailoverMax(settings.channelFailoverMax)
       );
+      for (const c of queue) candidateChannels.add(c);
       const primaryChannel = queue[0];
       for (const chan of queue) {
         if (done || fatalErr) break;
@@ -1350,6 +1382,13 @@ async function handleChat(req, res, settings, surface, convNotes) {
     // 不点明的话会被读成「用这个渠道发过请求」。判定用 upstreamTries 而不是轨迹里的账号名：
     // fatal（上游 400 透传）那条路径刻意不往轨迹里 push，用轨迹会误报「没发过请求」
     if (!allConcBlocked && !upstreamTries) msg = `未发起任何上游请求（候选渠道号池为空或降级中）：${msg}`;
+    // 写法近邻提示只在**一次上游请求都没发出**时追加（号池空 / 无可用账号那类可能由写法
+    // 引起的输入），**只提示、不改路由**：发过上游 = 渠道在工作，失败原因与模型写法无关
+    // （WAF / 5xx / 429 …）；候选渠道全在降级/熔断中同理，那是渠道级退避（典型是上一跳被
+    // WAF 拦截），也不是写法问题
+    const allCooling = candidateChannels.size > 0 && [...candidateChannels].every((c) => !!channelCooling(c));
+    const writeHint = upstreamTries > 0 || allCooling ? "" : caseWriteHint(actualModel, adapters.mergedModels(settings).map((m) => m.id));
+    if (writeHint) msg += `（注意：${writeHint}，请求时须与目录完全一致）`;
     // 6004 原话是「usage exceeds frequency limit」，账号积分其实还在；用户很容易读成
     // 「额度用完」去充值。补一句本机口径（不替代上游 reset 时间，只解释错误性质）
     if (/\b6004\b/.test(msg) && !msg.includes("6004 =")) {
