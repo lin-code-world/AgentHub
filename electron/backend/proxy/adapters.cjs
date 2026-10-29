@@ -4914,14 +4914,17 @@ function mergedModels(cfg) {
     if (row.kind === "builtin") continue;
     catMaps[row.id] = providerCatalogMap(row);
   }
+  // 合并键用逐字原样（大小写敏感），与 modelOwners / nativeModel 的路由口径一致：
+  // 各渠道对同一模型的写法不同（WorkBuddy `deepseek-v4.1-flash`、Loomy `DeepSeek-V4.1-Flash`），
+  // 按忽略大小写合并会造出路由上并不存在的「共享模型」，前端也拿不到各渠道自己的倍率。
   for (const [channel, ad] of Object.entries(ADAPTERS)) {
     for (const m of ad.models()) {
       const id = String(m);
-      const cur = seen.get(id.toLowerCase());
+      const cur = seen.get(id);
       if (cur) {
         if (!cur.sources.includes(channel)) cur.sources.push(channel);
       } else {
-        seen.set(id.toLowerCase(), { id, object: "model", created: 0, owned_by: channel, sources: [channel] });
+        seen.set(id, { id, object: "model", created: 0, owned_by: channel, sources: [channel] });
       }
     }
   }
@@ -4930,17 +4933,16 @@ function mergedModels(cfg) {
   const rev = c.modelReverseAliases || {};
   for (const [unifiedId, chMap] of Object.entries(rev)) {
     if (!unifiedId || !chMap || typeof chMap !== "object") continue;
-    const lowerUnified = unifiedId.toLowerCase();
     const mappedSources = Object.keys(chMap).filter((ch) => ADAPTERS[ch] && reverseAliasTarget(unifiedId, ch, c));
     if (!mappedSources.length) continue;
-    const existing = seen.get(lowerUnified);
+    const existing = seen.get(unifiedId);
     if (existing) {
       existing.id = unifiedId; // 使用用户定义的统一请求名字面形态
       for (const ch of mappedSources) {
         if (!existing.sources.includes(ch)) existing.sources.push(ch);
       }
     } else {
-      seen.set(lowerUnified, {
+      seen.set(unifiedId, {
         id: unifiedId,
         object: "model",
         created: 0,
@@ -4957,8 +4959,8 @@ function mergedModels(cfg) {
     if (row.kind === "builtin") continue;
     for (const e of compatModelEntries(row)) {
       const id = `${row.id}/${e.client}`;
-      if (seen.has(id.toLowerCase())) continue;
-      seen.set(id.toLowerCase(), { id, object: "model", created: 0, owned_by: row.id, sources: [row.id] });
+      if (seen.has(id)) continue;
+      seen.set(id, { id, object: "model", created: 0, owned_by: row.id, sources: [row.id] });
     }
   }
 
@@ -4984,6 +4986,17 @@ function mergedModels(cfg) {
       }
       const meta = catMaps[channel].get(lookupId.toLowerCase()) || catMaps[channel].get(entry.id.toLowerCase());
       if (!meta) continue;
+      // 来源渠道明细：每个渠道自己的 id / 倍率 / 上限 / 能力，供界面按渠道分列展示。
+      // 行级字段仍是各来源的合并值（上面/下面那套逻辑不变），明细只做补充。
+      entry.sourceDetails = entry.sourceDetails || [];
+      entry.sourceDetails.push({
+        channel,
+        id: lookupId,
+        rate: meta.rate != null && !Number.isNaN(Number(meta.rate)) ? Number(meta.rate) : null,
+        contextLength: Number(meta.contextLength) || 0,
+        maxOutputTokens: Number(meta.maxOutputTokens) || 0,
+        capabilities: meta.capabilities || {},
+      });
       if (meta.name && meta.name !== entry.id && entry.name === entry.id) entry.name = String(meta.name);
       if (entry.rate == null && meta.rate != null && !Number.isNaN(Number(meta.rate))) entry.rate = Number(meta.rate);
       // images 走 OR（任一来源支持即支持），避免单渠道的 false 污染共享模型名；其余能力沿用后者覆盖

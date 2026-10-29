@@ -1,0 +1,121 @@
+/**
+ * ============================================================
+ *  作者：沐晖
+ *  日期：2026-10-29
+ *  版权声明：本代码归沐晖所有。
+ *    · 禁止滥用本人代码（含用于违法违规、恶意攻击、侵犯他人权益等用途）；
+ *    · 禁止在未经本人授权的情况下直接搬运本代码（含复制、转载、用于商业项目）。
+ *    此注释为版权与授权声明，禁止删除。
+ * ============================================================
+ */
+// 合并模型目录「按精确写法分行 + 来源渠道明细」自测
+// 用法：node tools/proxy-models-merge-selftest.cjs
+//
+// 合并键必须与路由（modelOwners / nativeModel）同口径，逐字精确：
+// WorkBuddy 的 deepseek-v4.1-flash 与 Loomy 的 DeepSeek-V4.1-Flash 是两个不同模型，
+// 合成一条会让 /v1/models 与路由口径分裂，前端也拿不到各渠道自己的倍率。
+// 行级字段（rate / capabilities / contextLength / maxOutputTokens）的合并口径不变。
+"use strict";
+const os = require("node:os");
+const path = require("node:path");
+const fs = require("node:fs");
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-models-merge-"));
+process.env.AGENTHUB_DATA_DIR = tmp;
+
+let pass = 0, fail = 0; const fails = [];
+function check(name, cond, extra) {
+  if (cond) { pass++; console.log(`  ok  ${name}`); return; }
+  fail++; fails.push(name + (extra ? ` — ${extra}` : ""));
+  console.log(`  FAIL ${name}${extra ? " — " + extra : ""}`);
+}
+const eq = (actual, expected, label) => check(label, JSON.stringify(actual) === JSON.stringify(expected), `期望 ${JSON.stringify(expected)} 实际 ${JSON.stringify(actual)}`);
+
+function main() {
+  const store = require("../electron/backend/proxy/store.cjs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const adapters = require("../electron/backend/proxy/adapters.cjs");
+
+  const proxyDir = path.resolve(store.proxyDir()).toLowerCase();
+  if (!proxyDir.startsWith(path.resolve(tmp).toLowerCase())) {
+    console.error("拒绝运行：数据目录不在沙箱内（" + proxyDir + "）");
+    process.exit(2);
+  }
+  store.open();
+  rules.init();
+
+  // ===== 沙箱目录：小写写法两个渠道（各自倍率/上限不同）+ 大写写法一个渠道 =====
+  const ent = (id, extra) => ({ id, name: id, rate: null, capabilities: {}, contextLength: 0, maxOutputTokens: 0, ...extra });
+  const catFile = path.join(rules.rulesDir(), "catalog.json");
+  const cat = JSON.parse(fs.readFileSync(catFile, "utf8"));
+  cat.workbuddy = { syncedAt: 0, models: [ent("deepseek-v4.1-flash", { rate: 0.5, capabilities: { tools: true }, contextLength: 100000, maxOutputTokens: 8000 })] };
+  cat.workbuddy_ai = { syncedAt: 0, models: [ent("deepseek-v4.1-flash", { rate: 0.8, capabilities: { images: true }, contextLength: 200000, maxOutputTokens: 16000 })] };
+  cat.loomy = { syncedAt: 0, models: [ent("DeepSeek-V4.1-Flash", { rate: 1.2, capabilities: { reasoning: true }, contextLength: 300000, maxOutputTokens: 32000 })] };
+  cat.zcode = { syncedAt: 0, models: [] };
+  fs.writeFileSync(catFile, JSON.stringify(cat, null, 2));
+  rules.reload("catalog.json");
+
+  // 替换 ADAPTERS 为假适配器（只留 models()），复原时用拷贝，避免删键后自己拷自己
+  const orig = { ...adapters.ADAPTERS };
+  let list;
+  try {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      workbuddy_ai: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+      // 该渠道在目录里没有任何条目：不产生来源明细
+      zcode: { models: () => ["no-catalog-model"] },
+    });
+    list = adapters.mergedModels({});
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, orig);
+  }
+
+  console.log("\n[1] 合并键按精确写法分行");
+  eq(list.filter((m) => m.id === "deepseek-v4.1-flash").length, 1, "小写写法自占一行");
+  eq(list.filter((m) => m.id === "DeepSeek-V4.1-Flash").length, 1, "大写写法自占一行");
+  eq(list.filter((m) => m.id.toLowerCase() === "deepseek-v4.1-flash").length, 2, "两种写法共两行（不再并成一条）");
+
+  console.log("\n[2] 来源渠道明细");
+  const row = list.find((m) => m.id === "deepseek-v4.1-flash");
+  check("同一写法多来源时附明细", Array.isArray(row.sourceDetails) && row.sourceDetails.length === 2, JSON.stringify(row.sourceDetails));
+  check("明细里带各渠道自己的倍率", row.sourceDetails.every((d) => typeof d.rate === "number" || d.rate === null), JSON.stringify(row.sourceDetails));
+  eq(row.sourceDetails.map((d) => d.channel), ["workbuddy", "workbuddy_ai"], "明细按来源顺序列渠道");
+  eq(row.sourceDetails.map((d) => d.id), ["deepseek-v4.1-flash", "deepseek-v4.1-flash"], "明细带该渠道自己的模型 id");
+  eq(row.sourceDetails.map((d) => d.rate), [0.5, 0.8], "各来源倍率互不覆盖");
+  eq(row.sourceDetails.map((d) => d.contextLength), [100000, 200000], "明细上下文按渠道各自取值");
+  eq(row.sourceDetails.map((d) => d.maxOutputTokens), [8000, 16000], "明细最大输出按渠道各自取值");
+  eq(row.sourceDetails.map((d) => [d.capabilities.tools === true, d.capabilities.images === true]), [[true, false], [false, true]], "明细能力按渠道各自取值");
+
+  const upper = list.find((m) => m.id === "DeepSeek-V4.1-Flash");
+  eq(upper.sources, ["loomy"], "大写写法只归属大写渠道");
+  eq(upper.sourceDetails.map((d) => [d.channel, d.id, d.rate]), [["loomy", "DeepSeek-V4.1-Flash", 1.2]], "单来源也带明细");
+
+  console.log("\n[3] 行级合并口径不变（供全部视图与 /v1/models）");
+  eq(row.sources, ["workbuddy", "workbuddy_ai"], "同行仍是多来源");
+  eq(row.rate, 0.5, "行级倍率取第一个有值来源");
+  eq([row.capabilities.tools === true, row.capabilities.images === true, row.capabilities.reasoning], [true, true, undefined], "行级能力沿用既有合并（images 取 OR、其余后者覆盖）");
+  eq(row.contextLength, 200000, "行级上下文取各来源最大声明");
+  eq(row.maxOutputTokens, 16000, "行级最大输出取各来源最大声明");
+
+  console.log("\n[4] 没有目录条目的渠道不产生明细");
+  const bare = list.find((m) => m.id === "no-catalog-model");
+  check("模型仍列出", !!bare, JSON.stringify(list.map((m) => m.id)));
+  check("无目录条目不写 sourceDetails", bare.sourceDetails === undefined, JSON.stringify(bare.sourceDetails));
+
+  console.log(`\n结果：${pass} 通过，${fail} 失败`);
+  if (fail) {
+    for (const f of fails) console.log(`  - ${f}`);
+    process.exit(1);
+  }
+  process.exit(0); // sqlite 连接与 watcher 会让事件循环常驻，跑完显式退出
+}
+
+try {
+  main();
+} catch (e) {
+  console.error(e);
+  process.exit(1);
+}
