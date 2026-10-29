@@ -15,7 +15,8 @@ import { computed, onMounted, ref } from "vue";
 import * as api from "../../api/ipc";
 import type { ModelCustomEntry, ProxyChannelId, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, fmtRate, parseCtxInput } from "./format";
+import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, parseCtxInput } from "./format";
+import { hiddenByRate } from "./rateGate";
 
 const app = useAppStore();
 const models = ref<ProxyModel[]>([]);
@@ -59,14 +60,35 @@ function displayId(m: ProxyModel): string {
   return ids.find((x) => x.toLowerCase() === lower) || m.id;
 }
 
+/** 来源渠道明细的单项：该渠道自己的 id / 倍率 / 上下文 / 最大输出 / 能力 */
+type SourceDetail = NonNullable<ProxyModel["sourceDetails"]>[number];
+
+/** 渠道视图下取该渠道自己的目录元数据；全部视图（或该渠道没有目录明细）返回 null */
+function channelMetaOf(m: ProxyModel): SourceDetail | null {
+  const tab = activeTab.value;
+  if (!tab) return null;
+  return (m.sourceDetails || []).find((d) => d.channel === tab) || null;
+}
+
+/** 上下文 / 能力 / 倍率的取数来源：渠道视图用该渠道自己的元数据，全部视图用行级合并值 */
+const metaOf = (m: ProxyModel): SourceDetail | ProxyModel => channelMetaOf(m) || m;
+
+/** 渠道视图下的倍率：只显示该渠道自己的值（全部视图在「来源渠道」列里逐个渠道显示） */
+const activeTabRate = (m: ProxyModel): number | null => channelMetaOf(m)?.rate ?? null;
+
+/** 「来源渠道」列的标签：每个来源渠道各自带上自己的倍率（该渠道无目录明细时倍率未知，只显示渠道名） */
+function sourceTags(m: ProxyModel): { channel: string; rate: number | null }[] {
+  return m.sources.map((s) => ({ channel: s, rate: (m.sourceDetails || []).find((d) => d.channel === s)?.rate ?? null }));
+}
+
 // 三重筛选的交集：渠道 tab → 启停状态 → 关键词（id 与显示名模糊匹配）。
 // 这个列表既是表格数据源，也是「一键开启/关闭/反选」的作用范围——所见即所改
 const rows = computed(() => {
   const kw = filter.value.trim().toLowerCase();
   return models.value.filter((m) => {
-    // 倍率为空（界面显示「×—」）的模型：只要来源里有「上游会标价」的渠道就不显示；
+    // 无倍率的模型按**来源渠道**逐个判断：该渠道有价而此模型没价就隐藏；
     // 整个渠道都不标价的（Trae / ZCode / 魔搭 / Cline / 小浣熊）保留，否则会被整渠道清空
-    if (m.rate == null && m.sources.some((s) => channelRateFlags.value[s])) return false;
+    if (hiddenByRate(m.sourceDetails || [], activeTab.value, channelRateFlags.value)) return false;
     if (activeTab.value && !m.sources.includes(activeTab.value as ProxyChannelId)) return false;
     if (statusFilter.value === "on" && !m.enabled) return false;
     if (statusFilter.value === "off" && m.enabled) return false;
@@ -108,9 +130,9 @@ const REASONING_EFFORT_OPTIONS = [
 // 不在草稿态做任何格式化，用户输入的每个字符都原样保留，光标不会跳。
 const ctxDraft = ref<Record<string, string>>({});
 
-/** 该模型当前生效的上下文长度（自定义优先，否则渠道目录值） */
+/** 该模型当前生效的上下文长度（自定义优先，否则当前视图对应渠道的目录值） */
 function ctxValue(m: ProxyModel): number {
-  return Number((app.config.proxy.modelCustom || {})[m.id]?.contextLength) || Number(m.contextLength) || 0;
+  return Number((app.config.proxy.modelCustom || {})[m.id]?.contextLength) || Number(metaOf(m).contextLength) || 0;
 }
 
 /** 非编辑态显示值：K/M 缩写 */
@@ -482,29 +504,30 @@ onMounted(refresh);
               </el-tooltip>
             </div>
           </div>
-          <div class="table-scroll" style="overflow-x: hidden">
+          <!-- 7 列合计 1052px，窄窗口按横向滚动处理：内联覆盖全局 .table-scroll 的 overflow:auto 是既有写法，
+               改成可滚动而不是裁切——hidden 会把「状态」列（模型开关）整列裁掉，实测 1280 布局下可用宽 860px -->
+          <div class="table-scroll" style="overflow-x: auto">
             <table class="table table-bare" style="table-layout: fixed; width: 100%">
               <colgroup>
-                <col style="width: auto; min-width: 150px" />
+                <!-- 模型列：240px 容得下 deepseek-v4.1-flash 这类长 id，倍率灰字跟在 id 右侧 -->
+                <col style="width: 240px" />
                 <!-- 上下文列：输入框 62px + 自badge 21px + 左右 padding 24px = 107px 起步（显示 131K / 1M 缩写） -->
                 <col style="width: 108px" />
                 <!-- 思考强度列：select 90px + 自badge 21px + 左右 padding 24px = 135px 起步 -->
                 <col style="width: 136px" />
-                <col style="width: 58px" />
-                <col style="width: 78px" />
-                <col v-if="!activeTab" style="width: 110px" />
-                <!-- 渠道覆盖列：select 固定 100px + 单元格左右 padding 各 12px = 124px 起步（118 仍差 6px） -->
-                <col style="width: 124px" />
+                <col style="width: 120px" />
+                <col v-if="!activeTab" style="width: 220px" />
+                <!-- 渠道覆盖列：select 固定 100px + 单元格左右 padding 各 12px = 124px 起步 -->
+                <col style="width: 156px" />
                 <!-- 状态列：开关固定 40px + 单元格左右 padding 各 12px = 64px 起步。
                      48px 的内容区只有 24px，开关必然溢出被裁（4K@200% 报障的直接原因） -->
-                <col style="width: 68px" />
+                <col style="width: 72px" />
               </colgroup>
               <thead>
                 <tr>
                   <th>模型</th>
                   <th>上下文</th>
                   <th>思考强度</th>
-                  <th>倍率</th>
                   <th>能力</th>
                   <th v-if="!activeTab">来源渠道</th>
                   <th>渠道覆盖</th>
@@ -514,9 +537,12 @@ onMounted(refresh);
               <tbody>
                 <tr v-for="(m, i) in rows" :key="m.id" :style="{ '--i': i }">
                   <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                    <el-tooltip :content="displayId(m)" placement="top">
-                      <div class="mono" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ displayId(m) }}</div>
-                    </el-tooltip>
+                    <div class="model-id-line">
+                      <el-tooltip :content="displayId(m)" placement="top">
+                        <div class="mono model-id">{{ displayId(m) }}</div>
+                      </el-tooltip>
+                      <span v-if="activeTabRate(m) != null" class="rate-inline">×{{ activeTabRate(m) }}</span>
+                    </div>
                     <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
                       <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
                     </el-tooltip>
@@ -569,18 +595,17 @@ onMounted(refresh);
                       </el-tooltip>
                     </div>
                   </td>
-                  <td class="mono">{{ fmtRate(m.rate) }}</td>
                   <!-- 能力/来源渠道：列宽固定且内容可多值，悬停展开完整清单 -->
                   <td>
-                    <el-tooltip placement="top" :show-after="120" :disabled="!capabilityTags(m).length" popper-class="glass-popper qa-tip">
+                    <el-tooltip placement="top" :show-after="120" :disabled="!capabilityTags(metaOf(m)).length" popper-class="glass-popper qa-tip">
                       <template #content>
                         <div class="tip-title">模型能力</div>
-                        <div v-for="n in capabilityNames(m)" :key="n" class="tip-line">· {{ n }}</div>
+                        <div v-for="n in capabilityNames(metaOf(m))" :key="n" class="tip-line">· {{ n }}</div>
                         <div v-if="ctxValue(m)" class="tip-line">· 上下文 {{ fmtCtx(ctxValue(m)) }}（{{ ctxValue(m).toLocaleString("en-US") }}）</div>
                       </template>
-                      <span class="tip-host" :class="{ 'can-tip': capabilityTags(m).length }">
-                        <span v-for="t in capabilityTags(m)" :key="t" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ t }}</span>
-                        <span v-if="!capabilityTags(m).length" style="color: var(--text-3)">—</span>
+                      <span class="tip-host" :class="{ 'can-tip': capabilityTags(metaOf(m)).length }">
+                        <span v-for="t in capabilityTags(metaOf(m))" :key="t" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ t }}</span>
+                        <span v-if="!capabilityTags(metaOf(m)).length" style="color: var(--text-3)">—</span>
                       </span>
                     </el-tooltip>
                   </td>
@@ -591,7 +616,9 @@ onMounted(refresh);
                         <div v-for="s in m.sources" :key="s" class="tip-line">· {{ channelName(s) }}</div>
                       </template>
                       <span class="tip-host src-list" :class="{ 'can-tip': m.sources.length > 1 }">
-                        <span v-for="s in m.sources" :key="s" class="tag tag-dim src-tag">{{ channelName(s) }}</span>
+                        <span v-for="d in sourceTags(m)" :key="d.channel" class="tag tag-dim src-tag">
+                          {{ channelName(d.channel) }}<template v-if="d.rate != null"> ×{{ d.rate }}</template>
+                        </span>
                       </span>
                     </el-tooltip>
                   </td>
@@ -632,7 +659,7 @@ onMounted(refresh);
                   </td>
                 </tr>
                 <tr v-if="!rows.length">
-                  <td :colspan="activeTab ? 7 : 8" style="text-align: center; color: var(--text-3); padding: 24px 0">
+                  <td :colspan="activeTab ? 6 : 7" style="text-align: center; color: var(--text-3); padding: 24px 0">
                     <template v-if="models.length && (statusFilter !== 'all' || filter.trim())">
                       当前筛选条件下无匹配模型 ——
                       <button class="link-btn" @click="resetFilters">清空筛选</button>
@@ -1120,6 +1147,23 @@ onMounted(refresh);
   font-size: 12px;
   color: var(--text-3);
   margin-top: 2px;
+}
+/* 模型名列：id 与渠道倍率同一行，倍率是模型名右侧的灰字，不额外占行高 */
+.model-id-line {
+  display: flex;
+  align-items: center;
+}
+.model-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rate-inline {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: 6px;
 }
 .alias-form {
   display: flex;

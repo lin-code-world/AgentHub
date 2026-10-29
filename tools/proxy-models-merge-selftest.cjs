@@ -19,9 +19,25 @@
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
+const Module = require("node:module");
+
+const ROOT = path.join(__dirname, "..");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-models-merge-"));
 process.env.AGENTHUB_DATA_DIR = tmp;
+
+// TS 源文件直载（esbuild 编译成 CJS 后经 require.extensions 挂载），测真实现而不是副本
+function installTsLoader() {
+  const esbuild = require(path.join(ROOT, "node_modules", "esbuild"));
+  Module._extensions[".ts"] = (mod, file) => {
+    const src = fs.readFileSync(file, "utf8");
+    const out = esbuild.transformSync(src, { loader: "ts", format: "cjs", sourcefile: file }).code;
+    mod._compile(out, file);
+  };
+}
+
+installTsLoader();
+const { hiddenByRate } = require(path.join(ROOT, "src", "views", "proxy", "rateGate.ts"));
 
 /** 沙箱目录用完即删：sqlite / watcher 句柄可能仍占用目录，删不掉不影响退出码 */
 function cleanup() {
@@ -156,6 +172,16 @@ function main() {
   const bare = list.find((m) => m.id === "no-catalog-model");
   check("模型仍列出", !!bare, JSON.stringify(list.map((m) => m.id)));
   check("无目录条目不写 sourceDetails", bare.sourceDetails === undefined, JSON.stringify(bare.sourceDetails));
+
+  console.log("\n[5] 无倍率模型的隐藏规则（按来源渠道判断）");
+  eq(hiddenByRate([{ channel: "loomy", rate: null }], "loomy", { loomy: true }), true, "渠道有价而该模型无价 → 隐藏");
+  eq(hiddenByRate([{ channel: "trae", rate: null }], "trae", { trae: false }), false, "渠道本身不标价 → 不隐藏");
+  const mixed = [
+    { channel: "workbuddy", rate: null },
+    { channel: "trae", rate: null },
+  ];
+  eq(hiddenByRate(mixed, "", { workbuddy: true, trae: false }), true, "全部视图：任一来源有价而该模型无价即隐藏");
+  eq(hiddenByRate([{ channel: "workbuddy", rate: 0 }], "", { workbuddy: true }), false, "倍率为 0 是有效值，不隐藏");
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
