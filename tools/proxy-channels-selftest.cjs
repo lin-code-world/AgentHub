@@ -176,5 +176,23 @@ const loomyImages = require("../electron/backend/proxy/loomy/images.cjs");
   eq(body.messages[0].content[1].text, "<image_base64>BBBB</image_base64>", "Loomy <image_base64> 标记");
 })();
 
-console.log(`\n通过 ${pass}，失败 ${fail}`);
-process.exit(fail ? 1 : 0);
+// ===== Loomy 余额归一：上游摘要必须变成数字（账号级 credits 按 Number() 落库，数组会被吞成 0）=====
+(async () => {
+  const loomyBalance = require("../electron/backend/proxy/loomy/balance.cjs");
+  const fakeFetch = async () =>
+    new Response(JSON.stringify({ code: "000000", desc: "成功", data: { balance: 5000, dailyBalance: 5000, dailyLimitPoints: 5000, dailyRemainingPoints: 5000, total: 0, list: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const bal = await loomyBalance.queryBalance({ session: "test-session" }, fakeFetch);
+  ok(typeof bal.credits === "number", "Loomy 余额 credits 是数字（账号级字段按数字落库）");
+  eq(bal.credits, 10000, "Loomy credits = 永久 5000 + 每日赠送 5000");
+  eq(
+    bal.wallets.map((w) => w.balance),
+    [5000, 5000],
+    "Loomy 双钱包明细保留"
+  );
+
+  console.log(`\n通过 ${pass}，失败 ${fail}`);
+  process.exit(fail ? 1 : 0);
+})();

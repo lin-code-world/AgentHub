@@ -68,16 +68,15 @@ async function queryBalance(env, fetchImpl) {
     wallets[1].remaining = dailyRemaining;
     wallets[1].limit = dailyLimit;
   }
-  // credits 固定两行（与 wallets 同序同口径）：永久在前、每日在后；daily:true 是界面「每日重置」判据
-  const credits = [
-    { name: "永久积分", remain: permanent },
-    { name: "每日赠送积分", remain: daily, daily: true },
-  ];
+  // 账号级 credits 必须是数字：refreshAccount 直接把它交给 store.updateAccount，
+  // 后者按 Number(patch.credits) 落库——数组会被 Number() 吞成 NaN 再兜成 0（曾导致 Loomy 余额恒显 0）。
+  // 双钱包明细另走 wallets，别把展示结构塞进 credits。
+  const total = permanent + daily;
   return {
-    available: permanent + daily,
+    available: total,
     unit: "积分",
     wallets,
-    credits,
+    credits: total,
     raw: payload,
   };
 }
