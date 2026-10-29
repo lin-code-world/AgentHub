@@ -10,11 +10,9 @@
  */
 // 服务端能力清单（Web 托管形态的单一事实源）：
 //   - 判定"这是网关托管的 Web UI 还是纯前端预览（dev:web）"——前者走 RPC，后者走 mock
-//   - 板块裁剪：只渲染服务端声明支持的模块（容器形态只有 proxy）
+//   - 板块裁剪：只渲染服务端声明支持的模块
 //   - 命令门控：deny 命令在 call() 层统一拦下，文案由服务端下发（前端不重复维护）
 export type CommandMode = "read" | "write" | "deny";
-/** 服务端形态：容器管理面（Bearer + 明文） / 桌面局域网控制台（ECDH + 密文） */
-export type WebForm = "browser" | "container";
 
 export interface CommandCaps {
   mode: CommandMode;
@@ -24,9 +22,6 @@ export interface CommandCaps {
 export interface Caps {
   platform: string;
   version: string;
-  /** 形态分流（Ruling 36）：container = 容器管理面（Bearer + 明文 RPC/SSE）；
-   *  browser = 桌面局域网控制台（ECDH 会话 + 密文）。缺省按 browser 处理（兼容未升级的后端） */
-  form?: WebForm;
   modules: string[];
   features: Record<string, boolean>;
   commands: Record<string, CommandCaps>;
@@ -36,17 +31,6 @@ let caps: Caps | null = null;
 
 export function isWebTransport(): boolean {
   return caps !== null;
-}
-
-/** 当前 Web 托管形态；桌面窗口（无 caps）为 null */
-export function webForm(): WebForm | null {
-  if (!caps) return null;
-  return caps.form === "container" ? "container" : "browser";
-}
-
-/** 容器形态（Bearer + 明文）：传输层与登录方式都走旧实现，桌面局域网控制台走 ECDH 密文 */
-export function isContainerWeb(): boolean {
-  return caps?.form === "container";
 }
 
 /** 全局设置弹窗在 Web 托管形态不可用：通用 / 刷新周期都依赖整份配置读写
@@ -85,7 +69,7 @@ export function commandMode(cmd: string): CommandMode | undefined {
 /** deny 命令的拦截文案：命中返回原因（调用层直接抛），未命中返回 null */
 export function denyReason(cmd: string): string | null {
   const c = caps?.commands[cmd];
-  return c && c.mode === "deny" ? c.reason || "该操作在容器形态不可用" : null;
+  return c && c.mode === "deny" ? c.reason || "该操作在网页端不可用" : null;
 }
 
 /** 按钮门控（置灰 + 原因展示）：任一命令被服务端 deny 即 disabled，reason 原样取服务端下发文案（前端不另写）。

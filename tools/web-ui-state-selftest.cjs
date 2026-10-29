@@ -59,8 +59,8 @@ const mainSrc = read("src/main.ts");
 // ===== I4：浏览器启动路径的旧令牌清理接线 =====
 console.log("=== I4 桌面浏览器形态清旧令牌 ===");
 ok("main.ts 浏览器启动路径调用 clearLegacyToken", /clearLegacyToken\(\)/.test(mainSrc));
-ok("main.ts 只在桌面浏览器形态清（容器 Bearer 仍需要该键）", /caps\s*&&\s*!isContainerWeb\(\)\s*\)\s*clearLegacyToken\(\)/.test(mainSrc));
-ok("main.ts 登录判定按形态分流（容器看令牌 / 桌面看 ECDH 会话）", /isContainerWeb\(\)\s*\?\s*!!getToken\(\)\s*:\s*hasSession\(\)/.test(mainSrc));
+ok("main.ts 探测到托管形态即清旧令牌", /if\s*\(caps\)\s*clearLegacyToken\(\)/.test(mainSrc));
+ok("main.ts 登录判定只看 ECDH 会话", /const authed = hasSession\(\)/.test(mainSrc));
 
 // ===== I5：号池页只认 {type:"pool"} 并 2 秒节流 =====
 console.log("=== I5 号池事件接线 ===");
