@@ -596,7 +596,7 @@ async function main() {
   const badTrae = store.addAccount({ channel: "trae", uid: "bad", name: "坏号", token: "bad-token", source: "paste", expiresAt: Date.now() + 3600000 });
   const goodTrae = store.addAccount({ channel: "trae", uid: "good", name: "好号", token: "good-token", source: "paste", expiresAt: Date.now() + 7200000 });
   const e2eDisabledFlag = [];
-  const e2eSettings = () => ({ port: 19529, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false, humanizeJitter: false, disabledModels: e2eDisabledFlag, modelFallback: { "not-exist-model": "deepseek-v4-flash" }, channelCooldownMs: 800, channelCooldownCapMs: 3200 });
+  const e2eSettings = () => ({ port: 19529, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false, humanizeJitter: false, disabledModels: e2eDisabledFlag, modelFallback: { "not-exist-model": "DeepSeek-V4-Flash" }, channelCooldownMs: 800, channelCooldownCapMs: 3200 });
   const sr2 = await server.start(e2eSettings);
   assert(sr2.ok, "E2E 网关启动: " + (sr2.message || ""));
   const base2 = "http://127.0.0.1:19529";
@@ -608,7 +608,7 @@ async function main() {
     });
 
   // 10.1 流式：坏号 1005 → 自动换好号，客户端无感（error chunk 不下发）
-  let rr = await call({ model: "deepseek-v4-flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  let rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
   assert(rr.status === 200, "流式 200: " + rr.status);
   const sseText = await rr.text();
     assert(sseText.includes('"content":"Hello"') && sseText.includes('"content":" world"'), "SSE 内容来自好号");
@@ -620,7 +620,7 @@ async function main() {
   assert(usageRows[0].status === 200 && usageRows[0].accountName === "好号" && usageRows[0].promptTokens === 7, "流水记录好号 + usage");
 
   // 10.2 非流式：本地聚合
-  rr = await call({ model: "deepseek-v4-flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
   const aggBody = await rr.json();
   assert(aggBody.object === "chat.completion" && aggBody.choices[0].message.content === "Hello world", "非流式聚合: " + JSON.stringify(aggBody).slice(0, 120));
   assert(aggBody.usage.total_tokens === 12, "非流式 usage");
@@ -660,7 +660,7 @@ async function main() {
   headersCfg.trae.chatUrl = "http://127.0.0.1:19530/trae/broken";
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
-  rr = await call({ model: "deepseek-v4-flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
   const brokenText = await rr.text();
   assert(rr.status === 200 && brokenText.includes('"content":"Hello"'), "断流场景 200（已输出后收尾）");
   assert((brokenText.match(/content":"Hello"/g) || []).length === 1, "已输出内容不重复（不换号重发）: " + brokenText.slice(0, 200));
@@ -672,7 +672,7 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   const misCfg = store.addAccount({ channel: "trae", uid: "mis", name: "配置错号", token: "mis-token", source: "paste", expiresAt: Date.now() + 7200000 });
-  rr = await call({ model: "deepseek-v4-flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
   // 状态 404 而非 502：4001 的语义是「该模型在当前 function 通道不可用」（实测
   // trae 的实测映射表 [4008→429, 4001→404, 20101→502] 逐条钉住）。
   // 报 502 会让客户端以为上游故障并盲目重试同一个必死的模型；404 才让客户端换模型。
@@ -684,7 +684,7 @@ async function main() {
   headersCfg.trae.chatUrl = "http://127.0.0.1:19530/trae/toolarge";
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
-  rr = await call({ model: "deepseek-v4-flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
   assert(rr.status === 413, "输入过大按 413 收尾: " + rr.status);
   assert(store.getAccount(misCfg).status === "online", "输入过大不罚号（账号保持 online）");
   // 10.4b 的夹具账号用完即回收：它 creditsAt=0（未知余额）不参与零余额跳过，
@@ -703,13 +703,13 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   for (let i = 1; i <= 2; i++) {
-    rr = await call({ model: "deepseek-v4-flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+    rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
     assert(rr.status >= 500, `第 ${i} 次 5xx 按上游错误收尾（状态码原样透传）: ` + rr.status);
     await rr.text();
     assert(store.getAccount(srvAcc).status === "online", `第 ${i} 次 server 错误不罚号（网络抖动不再打空号池）`);
   }
   await new Promise((r) => setTimeout(r, 1200)); // 等 800ms 渠道降级过期，让第三次真实命中账号
-  rr = await call({ model: "deepseek-v4-flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
   await rr.text();
   assert(store.getAccount(srvAcc).status === "cooling", "连续 3 次 server 错误才熔断");
   assert(store.getAccount(srvAcc).cool_until > Date.now() + 29 * 60000, "熔断档位 30 分钟起（指数封顶 6h）");
@@ -723,7 +723,7 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   flaky429Hits = 0;
-  rr = await call({ model: "deepseek-v4-flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
   const retryText = await rr.text();
   assert(rr.status === 200 && retryText.includes('"content":"Hello"'), "429 经同号退避重试后成功: " + rr.status);
   assert(flaky429Hits === 2, "上游确实被打了两次（首枪 429 + 退避重放）: " + flaky429Hits);
@@ -758,7 +758,7 @@ async function main() {
   assert(rr.status === 200 && fbText.includes('"content":"Hello"'), "未知模型经回退链成功: " + rr.status);
   assert(fbText.includes('"model":"not-exist-model"'), "响应模型字段保持请求值（契约不变）");
   const fbRow = store.recentRequests(1)[0];
-  assert(fbRow.error === "fallback→deepseek-v4-flash", "流水备注回退命中: " + fbRow.error);
+  assert(fbRow.error === "fallback→DeepSeek-V4-Flash", "流水备注回退命中: " + fbRow.error);
 
   // 10.9 模型禁用：直接 400 model_disabled（disabledModels 每请求读设置热生效，无需重启）
   e2eDisabledFlag.push("glm-4.6");
