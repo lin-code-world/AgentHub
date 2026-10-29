@@ -359,7 +359,7 @@ const MSG = (extra) => Object.assign({ model: MODEL, max_tokens: 512, stream: tr
   const SETTINGS = () => Object.assign({
     port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
     routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false,
-    humanizeJitter: false, disabledModels: [], modelFallback: {}, modelAliases: {},
+    humanizeJitter: false, disabledModels: [], modelFallback: {},
     // 渠道降级时长压到 1ms：channelHealth / channelFailStreaks 是 server 的模块私有态，
     // 进程内跨用例残留（dev-sink-golden 因此一场景一子进程）。本闸不测降级行为，
     // 把冷却墙钟缩到即刻过期，用例之间就互不污染、也不依赖用例顺序。

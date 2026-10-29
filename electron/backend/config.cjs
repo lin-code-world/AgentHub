@@ -137,7 +137,6 @@ function defaultConfig() {
       humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
       disabledModels: [],       // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
       modelFallback: {},        // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）
-      modelAliases: {},         // 自定义模型映射：别名 → 目标模型 id（请求入口先解析再路由）
       modelReverseAliases: {},  // 反向模型映射：统一请求名 → { [channelId]: 渠道实际模型名 }
       modelCustom: {},          // 模型自定义参数覆盖：modelId → { contextLength?, maxOutputTokens?, reasoningEffort? }
       autoFallbackEnabled: true, // 不可用时自动切换模型（统一设置，默认开）

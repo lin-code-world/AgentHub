@@ -745,12 +745,9 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // 写成「上游并发已满」把责任推给上游——issue #106 的全部症状即来源于此，已改为按渠道计数
   const maxConc = Number(settings.concurrency) > 0 ? Math.floor(Number(settings.concurrency)) : 8;
 
-  // ===== Dispatch：Key → 渠道（别名解析 → 模型禁用 → 回退链） =====
+  // ===== Dispatch：Key → 渠道（模型禁用 → 回退链） =====
   const requestedModel = String(body.model);
-  // 自定义模型映射（别名）：请求的模型名先过别名表得实际模型，路由/转发都用实际模型；
-  // 客户端响应的 model 字段保持请求值（契约不变），记账备注标 alias→actual
-  const aliased = (settings.modelAliases || {})[requestedModel];
-  const actualModel = aliased && aliased !== requestedModel ? String(aliased) : requestedModel;
+  const actualModel = requestedModel;
   // 禁用判定与 /v1/models 出口同口径：**逐字**（大小写敏感）。目录里 shared-model 与
   // SHARED-MODEL 是两条不同模型，折叠大小写会把「目录页根本没有关闭开关的那一行」也拒掉，
   // 用户无从恢复（幽灵禁用）
@@ -1307,9 +1304,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
           store.updateAccount(usageRow.accountId, { credits: Math.max(0, cur.credits - creditUsed), creditsAt: Date.now() });
         }
       }
-      // 记账轨迹：别名 / 跨渠道 failover / 模型回退 / 反向映射可同时发生，改为拼接而非互斥三目
+      // 记账轨迹：跨渠道 failover / 模型回退 / 反向映射可同时发生，改为拼接而非互斥三目
       const errParts = [];
-      if (actualModel !== requestedModel) errParts.push("alias→" + actualModel);
       if (failoverFrom) errParts.push(`failover:${failoverFrom}→${usageRow.channel}`);
       if (usedModel !== actualModel) errParts.push("fallback→" + usedModel);
       else if ((usedForwardModel || usedTargetModel) !== actualModel) errParts.push("rev→" + (usedForwardModel || usedTargetModel));

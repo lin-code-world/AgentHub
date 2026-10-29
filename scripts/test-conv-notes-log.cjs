@@ -137,7 +137,7 @@ const WITH_THINKING = [
   const SETTINGS = () => ({
     port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
     routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false,
-    humanizeJitter: false, disabledModels: [], modelFallback: {}, modelAliases: {},
+    humanizeJitter: false, disabledModels: [], modelFallback: {},
     channelCooldownMs: 1, channelCooldownCapMs: 1,
   });
 

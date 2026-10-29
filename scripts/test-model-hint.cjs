@@ -85,7 +85,7 @@ function post(body, headers) {
   const SETTINGS = () => ({
     port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
     routeStrategy: "smart", fixedChannel: "", modelOverrides: {}, debugStatus: false,
-    humanizeJitter: false, disabledModels: [], modelFallback: {}, modelAliases: {},
+    humanizeJitter: false, disabledModels: [], modelFallback: {},
     channelCooldownMs: 1, channelCooldownCapMs: 1,
   });
   const sr = await server.start(SETTINGS);

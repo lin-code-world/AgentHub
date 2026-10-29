@@ -8,8 +8,8 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道覆盖 / 倍率与能力 / 自定义模型映射
-     管理态存框架整体配置（disabledModels / modelOverrides / modelAliases），保存即热生效（服务端每请求读盘） -->
+<!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道覆盖 / 倍率与能力 / 反向模型映射
+     管理态存框架整体配置（disabledModels / modelOverrides / modelReverseAliases），保存即热生效（服务端每请求读盘） -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import * as api from "../../api/ipc";
@@ -26,7 +26,7 @@ const syncing = ref("");
 const filter = ref("");
 const statusFilter = ref<"all" | "on" | "off">("all"); // 状态筛选：全部 / 已开启 / 已关闭
 const activeTab = ref(""); // "" = 全部
-const mainTab = ref<"catalog" | "alias" | "reverse">("catalog");
+const mainTab = ref<"catalog" | "reverse">("catalog");
 const ruleDialogOpen = ref(false);
 
 // 渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
@@ -174,11 +174,6 @@ async function updateModelCustom(m: ProxyModel, patch: Partial<ModelCustomEntry>
   await persist(`模型 ${m.id} 自定义参数已生效`);
   await refresh();
 }
-
-// ===== 模型映射（别名）管理 =====
-const aliasName = ref("");
-const aliasTarget = ref("");
-const aliases = computed<[string, string][]>(() => Object.entries(app.config.proxy.modelAliases || {}));
 
 // ===== 反向模型映射管理（统一请求名 -> 各渠道实际模型） =====
 const reverseName = ref("");
@@ -342,29 +337,6 @@ async function setOverride(m: ProxyModel, v: string) {
   await refresh();
 }
 
-async function addAlias() {
-  const from = aliasName.value.trim();
-  const to = aliasTarget.value;
-  if (!from || !to) return;
-  if (from === to) {
-    err.value = "别名与目标模型不能相同";
-    return;
-  }
-  const al = { ...(app.config.proxy.modelAliases || {}) };
-  al[from] = to;
-  app.config.proxy.modelAliases = al;
-  aliasName.value = "";
-  aliasTarget.value = "";
-  await persist(`映射 ${from} → ${to} 已生效`);
-}
-
-async function removeAlias(from: string) {
-  const al = { ...(app.config.proxy.modelAliases || {}) };
-  delete al[from];
-  app.config.proxy.modelAliases = al;
-  await persist(`已移除映射 ${from}`);
-}
-
 /** 拉取官方模型目录（云端接口，用号池账号 token，不依赖本地软件）：写回 rules/catalog.json 热生效 */
 async function syncCatalog(channel: string) {
   if (syncing.value) return;
@@ -417,13 +389,10 @@ onMounted(refresh);
     <div class="page-body">
       <div v-if="err" class="card err-card"><div class="set-desc err-text">{{ err }}</div></div>
 
-      <!-- 顶部三大 Tab：合并模型目录 / 自定义模型映射 / 全渠道反向模型映射 + 路由说明按钮 -->
+      <!-- 顶部两大 Tab：合并模型目录 / 全渠道反向模型映射 + 路由说明按钮 -->
       <div class="models-main-tabs">
         <button class="main-tab-btn" :class="{ active: mainTab === 'catalog' }" @click="mainTab = 'catalog'">
           {{ activeTab ? channelName(activeTab) + "模型目录" : "合并模型目录" }}
-        </button>
-        <button class="main-tab-btn" :class="{ active: mainTab === 'alias' }" @click="mainTab = 'alias'">
-          自定义模型映射
         </button>
         <button class="main-tab-btn" :class="{ active: mainTab === 'reverse' }" @click="mainTab = 'reverse'">
           全渠道反向模型映射
@@ -674,34 +643,7 @@ onMounted(refresh);
         </div>
       </template>
 
-      <!-- Tab 2: 自定义模型映射 -->
-      <div v-else-if="mainTab === 'alias'" class="card">
-        <div class="card-title">
-          自定义模型映射
-          <span class="right">客户端请求别名 → 实际模型 · 响应模型字段保持请求值</span>
-        </div>
-        <div class="alias-form">
-          <input v-model="aliasName" class="input" style="width: 220px" placeholder="别名（如 gpt-4o）" />
-          <span class="alias-arrow">→</span>
-          <el-select v-model="aliasTarget" class="f-el-select" popper-class="glass-popper" :persistent="false" style="width: 260px" placeholder="目标模型" filterable>
-            <el-option v-for="m in models" :key="m.id" :value="m.id" :label="m.id" />
-          </el-select>
-          <button class="btn" :disabled="!aliasName.trim() || !aliasTarget" @click="addAlias">添加映射</button>
-        </div>
-        <div v-if="aliases.length" class="alias-list">
-          <span v-for="[from, to] in aliases" :key="from" class="tag tag-dim alias-item">
-            <span class="mono">{{ from }}</span> → <span class="mono">{{ to }}</span>
-            <el-tooltip content="移除映射" placement="top">
-              <button class="alias-del" @click="removeAlias(from)">×</button>
-            </el-tooltip>
-          </span>
-        </div>
-        <div v-else class="set-desc" style="margin-top: 8px; color: var(--text-3)">
-          暂无映射 —— 例如把 gpt-4o 映射到 kimi-k3，客户端按 gpt-4o 请求即自动走 kimi-k3
-        </div>
-      </div>
-
-      <!-- Tab 3: 全渠道反向模型映射 -->
+      <!-- Tab 2: 全渠道反向模型映射 -->
       <div v-else-if="mainTab === 'reverse'" class="card">
         <div class="card-title">
           全渠道反向模型映射
@@ -801,12 +743,11 @@ onMounted(refresh);
           </header>
           <div class="rule-body">
             <div class="rule-item"><b>1. 渠道路由：</b>模型仅存在于单渠道 → 强制走该渠道；多源重叠 → per-model 覆盖优先，否则按路由策略打分。</div>
-            <div class="rule-item"><b>2. 自定义模型映射：</b>请求入口先把别名解析为实际模型再路由（响应模型字段保持请求值）。</div>
-            <div class="rule-item"><b>3. 反向模型映射：</b>一个统一请求名映射到各渠道不同模型名，渠道确定后自动转为该渠道模型转发（响应保持统一请求名）。实际模型与统一名相同且属于渠道原生模型时，按恒等映射处理。</div>
-            <div class="rule-item"><b>4. 上下文与思考强度：</b>支持在表格中行内自定义覆盖，修改后即时注入出站参数并反映在模型目录。</div>
-            <div class="rule-item"><b>5. 全局回退降级：</b>模型未知或号池耗尽 → 按配置页「不可用时自动切换模型」统一设置切到全局回退模型（客户端无感）。</div>
-            <div class="rule-item"><b>6. 模型级负缓存：</b>模型级限流（6004）/ 该号不支持（11102）→ 只冷却「账号×模型」组合，切模型即豁免。</div>
-            <div class="rule-item"><b>7. 用量统计标记：</b>切换命中会在用量明细的备注列标记 alias→实际模型 / rev→实际模型 / fallback→实际模型。</div>
+            <div class="rule-item"><b>2. 反向模型映射：</b>一个统一请求名映射到各渠道不同模型名，渠道确定后自动转为该渠道模型转发（响应保持统一请求名）。实际模型与统一名相同且属于渠道原生模型时，按恒等映射处理。</div>
+            <div class="rule-item"><b>3. 上下文与思考强度：</b>支持在表格中行内自定义覆盖，修改后即时注入出站参数并反映在模型目录。</div>
+            <div class="rule-item"><b>4. 全局回退降级：</b>模型未知或号池耗尽 → 按配置页「不可用时自动切换模型」统一设置切到全局回退模型（客户端无感）。</div>
+            <div class="rule-item"><b>5. 模型级负缓存：</b>模型级限流（6004）/ 该号不支持（11102）→ 只冷却「账号×模型」组合，切模型即豁免。</div>
+            <div class="rule-item"><b>6. 用量统计标记：</b>切换命中会在用量明细的备注列标记 rev→实际模型 / fallback→实际模型。</div>
           </div>
           <footer class="rule-foot">
             <button class="btn btn-primary" @click="ruleDialogOpen = false">我知道了</button>
@@ -1163,38 +1104,6 @@ onMounted(refresh);
   font-size: 11px;
   color: var(--text-3);
   margin-left: 6px;
-}
-.alias-form {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.alias-arrow {
-  color: var(--text-3);
-}
-.alias-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-.alias-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.alias-del {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 2px;
-}
-.alias-del:hover {
-  color: var(--err, #e05555);
 }
 /* 自定义单元格（上下文与思考强度） */
 .custom-cell {

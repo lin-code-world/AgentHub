@@ -371,7 +371,7 @@ function runScenario(id) {
     .start(() => ({
       port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
       routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false,
-      humanizeJitter: false, disabledModels: [], modelFallback: sc.fallback || {}, modelAliases: {},
+      humanizeJitter: false, disabledModels: [], modelFallback: sc.fallback || {},
     }))
     .then(async (sr) => {
       if (!sr.ok) throw new Error("网关起不来：" + sr.message);

@@ -74,7 +74,7 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 > | `POST /v1/messages`（另有 `POST /v1/messages/count_tokens`） | Anthropic Messages | Claude Code / Anthropic SDK |
 > | `POST /v1/responses` | OpenAI Responses | Codex CLI |
 >
-> 三条面共用同一套调度：鉴权、模型别名、模型禁用、回退链、号池换号、冷却决策与记账完全一致，区别只在「怎么读网关 Key」和「写成什么字节」。所以 **Claude Code 与 Codex 可以直接把网关地址填进去，用到全部渠道**，不必再经 CC Switch 做协议翻译。
+> 三条面共用同一套调度：鉴权、模型禁用、回退链、号池换号、冷却决策与记账完全一致，区别只在「怎么读网关 Key」和「写成什么字节」。所以 **Claude Code 与 Codex 可以直接把网关地址填进去，用到全部渠道**，不必再经 CC Switch 做协议翻译。
 
 ### 支持的渠道
 
@@ -115,7 +115,7 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 | 总览 | 网关服务开关、接入地址与端点复制；用量统计：时间区间可选（今天 / 7 天 / 30 天 / 90 天 / 自定义）、KPI 与趋势（请求数 / Token / 成功率 / 延迟多指标切换，悬停看精确数值）、Token 构成与请求状态环形图、用量占比 TOP（渠道 / 模型 / Key / 账号 × 按请求 / 按 Token，含请求与响应 token 分列）、各 Key 用量、明细（Key / 模型模糊搜索 + 渠道 / 状态筛选）；流水保留期可配（默认 90 天） |
 | 号池 | 按渠道管理账号：状态、余额、套餐到期、策略、添加账号、一键签到、切到 IDE |
 | API Keys | 生成/停用 Key，配置日配额与限速；完整 Key 随时可查看复制 |
-| 模型目录 | 全渠道模型合并视图，逐模型启停、指定渠道、设置倍率与别名；各渠道官方目录可一键从云端拉取 |
+| 模型目录 | 全渠道模型合并视图，逐模型启停、指定渠道、设置倍率与上下文；各渠道官方目录可一键从云端拉取 |
 | 日志 | 请求流水与操作日志，可筛选、导出 Excel |
 
 ### 上手教程

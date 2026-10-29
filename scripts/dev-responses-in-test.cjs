@@ -317,7 +317,7 @@ const MSG = (extra) => Object.assign({ model: MODEL, input: "你好", stream: tr
   const SETTINGS = () => Object.assign({
     port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
     routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false,
-    humanizeJitter: false, disabledModels: [], modelFallback: {}, modelAliases: {},
+    humanizeJitter: false, disabledModels: [], modelFallback: {},
     // 渠道降级时长压到 1ms：module 私有态（channelHealth / channelFailStreaks）跨用例残留
     // 会让后面的用例拿到误导性的 503。本闸不测降级，缩墙钟即可，用例与顺序无关。
     channelCooldownMs: 1, channelCooldownCapMs: 1,

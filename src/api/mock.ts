@@ -46,7 +46,6 @@ function defaultConfig(): AppConfig {
       humanizeJitter: true,
       disabledModels: [],
       modelFallback: {},
-      modelAliases: { "gpt-4o": "kimi-k3" },
       modelReverseAliases: {},
       modelCustom: {},
       autoFallbackEnabled: true,

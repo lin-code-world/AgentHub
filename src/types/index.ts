@@ -79,8 +79,6 @@ export interface ProxyConfig {
   disabledModels: string[];
   /** 模型 → 回退模型（未知模型/号池耗尽时自动切换，单跳；旧版 per-model 配置，优先于全局回退） */
   modelFallback: Record<string, string>;
-  /** 自定义模型映射：别名 → 目标模型 id（请求入口先解析别名再路由，响应 model 字段保持请求值） */
-  modelAliases: Record<string, string>;
   /** 反向模型映射：统一请求模型名 → { [渠道 id]: 渠道实际模型名 }（渠道确定后解析并转发实际模型，响应 model 字段保持统一请求名） */
   modelReverseAliases: Record<string, Record<string, string>>;
   /** 模型参数自定义覆盖：modelId → 自定义参数（上下文长度、最大输出、思考强度） */
