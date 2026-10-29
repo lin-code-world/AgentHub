@@ -913,15 +913,25 @@ onMounted(refresh);
   white-space: nowrap;
 }
 /* 渠道分段选择器：容器框住选项，选中项点亮（与号池弹窗的方式切换同一语言）；
-   容器 padding 3px + 内项 22px + 边框 = 30px，与右侧 .btn / 搜索框同高成一条线 */
+   容器 padding 3px + 内项 22px + 边框 = 30px，与右侧 .btn / 搜索框同高成一条线。
+   渠道多达十几个，必须允许换行：单行会把右侧工具栏挤到下一行、渠道也被裁掉 */
 .seg {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--bg-soft);
+}
+/* 渠道组占满剩余宽度后才有空间真正换行（inline-flex 的宽度会收缩到内容宽度） */
+.models-head .seg-group:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.models-head .seg-group:first-child .seg {
+  width: 100%;
 }
 .seg-item {
   display: inline-flex;
