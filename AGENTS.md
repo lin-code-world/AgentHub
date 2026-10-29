@@ -87,8 +87,8 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 - 管理服务 `electron/backend/admin.cjs`，端口 = 反代端口 + 1，监听 `0.0.0.0`；命令表 `electron/backend/commandTable.cjs` 与桌面 IPC 共用。
 - 浏览器登录用 ECDH（`adminCrypto.cjs` ↔ `src/api/adminCrypto.ts` 协议逐字对齐），令牌不上网、不落浏览器，会话 12 小时。
-- 浏览器形态按 `capabilities.form === "browser"` 走加密通道；容器形态（`container`）仍 Bearer + 明文，本次未改造。
-- 号池同步（WebDAV/S3）与远程实例已整体移除；容器传号走凭据 JSON 导入。
+- 浏览器控制台走 ECDH 加密通道（会话 12 小时，令牌不落浏览器）。
+- 号池同步（WebDAV/S3）与远程实例已整体移除；传号走凭据 JSON 导出 / 导入。
 - 装饰动画已删除（保留功能性 loading 与 transition）；`vite.config.ts` 已排除后端/产物目录的监听；号池倒计时 5 秒。
 - 开发时只改前端可用 `AGENTHUB_DEV_SKIP_SERVICES=1` 跳过网关与管理服务。
 - 发版前仍需：真机双机验收、`npm run electron:pack` 后确认 asar 静态资源可加载。
