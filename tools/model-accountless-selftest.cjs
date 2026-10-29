@@ -115,6 +115,13 @@ async function main() {
   check("删光 Key 后重新判为无账号", keyGone.accountless.has(pmodel));
   check("删光 Key 后仍在黑名单", keyGone.disabledModels.includes(pmodel));
 
+  console.log("\n[5] index.cjs 接线");
+  const src = fs.readFileSync(path.join(__dirname, "../electron/backend/proxy/index.cjs"), "utf8");
+  check("proxy_models 调用 sync", /ipcMain\.handle\("proxy_models"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
+  check("单删账号后同步", /proxy_account_remove"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
+  check("批删账号后同步", /proxy_account_remove_batch"[\s\S]{0,900}modelAutoDisable\.sync\(\)/.test(src));
+  check("删提供商 Key 后同步", /proxy_provider_remove_key"[\s\S]{0,400}modelAutoDisable\.sync\(\)/.test(src));
+
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
     for (const f of fails) console.log(`  - ${f}`);

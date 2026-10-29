@@ -21,6 +21,7 @@ const store = require("./store.cjs");
 const rules = require("./rules.cjs");
 const pool = require("./pool.cjs");
 const adapters = require("./adapters.cjs");
+const modelAutoDisable = require("./modelAutoDisable.cjs");
 const provider = require("./provider.cjs");
 const discovery = require("./discovery.cjs");
 const credits = require("./credits.cjs");
@@ -184,6 +185,16 @@ function importAccounts(list) {
 function emitPool() {
   try {
     events.emit({ type: "pool" });
+  } catch {
+    /* 广播失败不影响业务 */
+  }
+}
+
+/** 服务端自动改写配置后的通知（单来源无账号模型自动关闭）：渲染层据此重拉快照，
+ *  否则它随后的整份保存会用旧快照把刚写下的 disabledModels 回滚掉 */
+function emitConfigChanged() {
+  try {
+    events.emit({ event: "config-changed" });
   } catch {
     /* 广播失败不影响业务 */
   }
@@ -918,6 +929,9 @@ function register(ipcMain) {
     // （2h TTL），工具续接窗口内其他账号的请求可把 tool 结果提交到已消失账号的 conversation
     try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响删除 */ }
     oplog.log("info", "号池账号", `移除 ${store.channelDisplay(acc.channel)} 账号「${acc.name}」`, { channel: acc.channel, target: acc.name });
+    // 账号删光后模型要立即自动关闭（不必等用户打开模型页）
+    const auto = modelAutoDisable.sync();
+    if (auto.changed) emitConfigChanged();
     emitPool();
     return ok({});
   }));
@@ -934,7 +948,12 @@ function register(ipcMain) {
       try { require("./catpaw/registry.cjs").registry.clearAccount(id); } catch { /* 无会话不影响删除 */ }
     }
     if (removed) oplog.log("info", "号池账号", `批量删除 ${removed} 个账号（选择 ${list.length} 个${missing ? `，${missing} 个已不存在` : ""}）`, {});
-    if (removed) emitPool();
+    if (removed) {
+      // 可能把某个渠道清空：立即固化关闭，与单删同一口径
+      const auto = modelAutoDisable.sync();
+      if (auto.changed) emitConfigChanged();
+      emitPool();
+    }
     return ok({ removed, missing });
   }));
   // 明文导出选中账号（号池多选 →「导出凭据」）：与元数据导出（format=agenthub-accounts，
@@ -1273,15 +1292,20 @@ function register(ipcMain) {
   // ===== 模型目录 =====
   // 合并视图 + 管理态（启停/渠道覆盖/回退模型/自定义参数）；管理态由渲染层写回整体配置（app.save），服务端每请求读盘热生效
   ipcMain.handle("proxy_models", handle(() => {
+    // 单来源且渠道无账号的模型先固化关闭：sync 写盘后 settings() 才能读到新的 disabledModels
+    const auto = modelAutoDisable.sync();
+    if (auto.changed) emitConfigChanged();
     const cfg = settings();
     const channelModelIds = Object.fromEntries(
       Object.keys(adapters.ADAPTERS).map((channel) => [channel, adapters.channelModelIds(channel)])
     );
     const channelRateFlags = adapters.channelRateFlags();
-    return adapters.mergedModels(cfg).map((m, index) => {
+    return auto.models.map((m, index) => {
       const item = {
         ...m,
         enabled: !(cfg.disabledModels || []).includes(m.id),
+        // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
+        accountless: auto.accountless.has(m.id),
         override: (cfg.modelOverrides || {})[m.id] || "",
         fallback: (cfg.modelFallback || {})[m.id] || "",
         custom: (cfg.modelCustom || {})[m.id] || undefined,
@@ -1344,7 +1368,15 @@ function register(ipcMain) {
   ipcMain.handle("proxy_provider_update", handle((input) => provider.update(input.id, input)));
   ipcMain.handle("proxy_provider_delete", handle(({ id }) => provider.remove(id)));
   ipcMain.handle("proxy_provider_add_key", handle(({ id, name, key }) => provider.addKey(id, { name, key })));
-  ipcMain.handle("proxy_provider_remove_key", handle(({ accountId }) => provider.removeKey(accountId)));
+  ipcMain.handle("proxy_provider_remove_key", handle(({ accountId }) => {
+    const r = provider.removeKey(accountId);
+    if (r && r.ok) {
+      // 提供商 Key 删光后其模型同样要自动关闭
+      const auto = modelAutoDisable.sync();
+      if (auto.changed) emitConfigChanged();
+    }
+    return r;
+  }));
   // 探测用「表单里当场填的 Key + 地址」，未保存的配置也能试；编辑态不重填时改传 accountId，
   // 由主进程解密——两条都不动号池（不 pickAccount、不写流水、不进冷却），探完好 Key 还是好的
   ipcMain.handle("proxy_provider_test", handle((input) => provider.probe(input)));
