@@ -240,7 +240,8 @@ async function main() {
   assert(!adapters.modelOwners("AgentHub-1.0", selfMapCfg).includes("catpaw"), "自映射渠道不得进入反向映射归属");
   assert(adapters.modelOwners("gpt-5").length === 1 && adapters.modelOwners("gpt-5")[0] === "workbuddy", "gpt-5 归属 CN workbuddy（AI 区目录已无此型号）");
   assert(adapters.modelOwners("deepseek-v4.1-flash").length === 1 && adapters.modelOwners("deepseek-v4.1-flash")[0] === "workbuddy_ai", "deepseek-v4.1-flash 归属国际版 workbuddy_ai");
-  assert(adapters.modelOwners("deepseek-v4-flash")[0] === "trae", "单源模型归属");
+  assert(adapters.modelOwners("DeepSeek-V4-Flash")[0] === "trae", "单源模型归属（大写写法走 trae）");
+  assert(adapters.modelOwners("deepseek-v4-flash")[0] === "lobster", "严格匹配：小写写法归 lobster");
 
   // ===== 商汤小浣熊（raccoon 渠道）离线断言 =====
   const rc = adapters.get("raccoon");
