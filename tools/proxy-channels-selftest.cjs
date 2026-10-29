@@ -185,6 +185,7 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
 })();
 
 // ===== Loomy 余额归一：上游摘要必须变成数字（账号级 credits 按 Number() 落库，数组会被吞成 0）=====
+// ===== Loomy 模型名归一：上游大小写敏感且对未知名静默回落 spark-x2.6 =====
 (async () => {
   const loomyBalance = require("../electron/backend/proxy/loomy/balance.cjs");
   const fakeFetch = async () =>
@@ -200,6 +201,14 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
     [5000, 5000],
     "Loomy 双钱包明细保留"
   );
+
+  const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
+  const ids = ["DeepSeek-V4.1-Flash", "MiniMax-M3", "Kimi-k2.6", "GLM-5.3-Flash", "spark-x"];
+  eq(loomyModels.resolveFrom(ids, "deepseek-v4.1-flash"), "DeepSeek-V4.1-Flash", "Loomy 小写请求归一到目录真名");
+  eq(loomyModels.resolveFrom(ids, "KIMI-K2.6"), "Kimi-k2.6", "Loomy 大写请求也归一");
+  eq(loomyModels.resolveFrom(ids, "Kimi-k2.6"), "Kimi-k2.6", "Loomy 原名原样返回");
+  eq(loomyModels.resolveFrom(ids, "nonexistent"), null, "Loomy 目录里没有的名字返回 null（不得静默透传）");
+  eq(loomyModels.resolveFrom([], "deepseek-v4.1-flash"), null, "目录为空时无从归一，返回 null");
 
   console.log(`\n通过 ${pass}，失败 ${fail}`);
   process.exit(fail ? 1 : 0);

@@ -151,4 +151,25 @@ async function refresh(env, rulesDir, channel, force, fetchImpl) {
   return { ok: true, added: count, count };
 }
 
-module.exports = { list, entries, refresh, parseModels, mapEntry, splitRateSuffix, isReasoningModel };
+/**
+ * 按目录把请求的模型名归一到上游真实 id（大小写不敏感）。
+ * 为什么必须做：Loomy 上游对模型名**大小写敏感**，且对不认识的 name 不报错，
+ * 而是静默回落到 spark-x2.6（限时免费模型）——客户端普遍小写请求，不归一就会
+ * 「请求 DeepSeek 实际跑 spark-x2.6」，还因为没有扣费而完全无感。
+ * 返回 null 表示目录里没有（或目录为空，无从判断），由调用方决定如何处置。
+ */
+function resolveFrom(ids, requested) {
+  const want = String(requested || "").trim().toLowerCase();
+  if (!want) return null;
+  for (const id of ids || []) {
+    if (String(id).toLowerCase() === want) return String(id);
+  }
+  return null;
+}
+
+/** 按渠道目录归一（运行时用：读内存缓存 / catalog.json） */
+function resolveId(rulesDir, channel, requested) {
+  return resolveFrom(list(rulesDir, channel), requested);
+}
+
+module.exports = { list, entries, refresh, resolveFrom, resolveId, parseModels, mapEntry, splitRateSuffix, isReasoningModel };
