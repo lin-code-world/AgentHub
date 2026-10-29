@@ -1470,7 +1470,15 @@ function buildApp(settings) {
       }
       return aliveCache.get(c);
     };
-    res.json({ object: "list", data: adapters.listableModels(st).filter((m) => (m.sources || []).some(channelHasAnyAccount)) });
+    // 只返回 OpenAI 模型列表该有的字段：合并视图里的 sourceDetails / rate / capabilities /
+    // contextLength 等是管理页展示用的内部明细，不该随对外接口吐给客户端。
+    res.json({
+      object: "list",
+      data: adapters
+        .listableModels(st)
+        .filter((m) => (m.sources || []).some(channelHasAnyAccount))
+        .map((m) => ({ id: m.id, object: m.object, created: m.created, owned_by: m.owned_by })),
+    });
   });
 
   // 探活：无健康渠道时 503（只看启用渠道：全关时探活如实报不可用）
