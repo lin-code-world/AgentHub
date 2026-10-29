@@ -228,8 +228,10 @@ async function persist(successMsg: string) {
   setTimeout(() => (msg.value = ""), 2000);
 }
 
-/** 启停开关：默认开；关闭即写入 disabledModels 落盘（软件记录，重启保持） */
+/** 启停开关：默认开；关闭即写入 disabledModels 落盘（软件记录，重启保持）。
+ *  无账号来源的模型由服务端强制关闭，开关置灰，点击不生效 */
 async function toggleEnabled(m: ProxyModel, v: string | number | boolean) {
+  if (m.accountless) return;
   const on = !!v;
   const list = new Set(app.config.proxy.disabledModels || []);
   if (on) list.delete(m.id);
@@ -248,7 +250,8 @@ const bulkConfirm = ref<{ mode: "off" | "invert"; title: string; desc: string } 
 
 /** 打开批量操作入口：开启是安全动作直接执行，关闭与反选先弹确认 */
 function requestBulk(mode: "on" | "off" | "invert") {
-  const ids = rows.value.map((m) => m.id);
+  // 无账号模型由服务端强制关闭，批量操作跳过它们（否则「开启」点了也不会生效）
+  const ids = rows.value.filter((m) => !m.accountless).map((m) => m.id);
   if (!ids.length || bulkBusy.value) return;
   if (mode === "on") {
     void applyBulk("on");
@@ -269,7 +272,7 @@ async function confirmBulk() {
 }
 
 async function applyBulk(mode: "on" | "off" | "invert") {
-  const ids = rows.value.map((m) => m.id);
+  const ids = rows.value.filter((m) => !m.accountless).map((m) => m.id);
   if (!ids.length || bulkBusy.value) return;
   bulkBusy.value = true;
   try {
@@ -498,6 +501,9 @@ onMounted(refresh);
                     <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
                       <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
                     </el-tooltip>
+                    <el-tooltip v-if="m.accountless" content="单来源渠道未配置账号，模型已自动关闭" placement="top">
+                      <span class="tag tag-dim accountless-tag">无账号</span>
+                    </el-tooltip>
                   </td>
                   <td>
                     <div class="custom-cell">
@@ -593,7 +599,11 @@ onMounted(refresh);
                     </el-tooltip>
                   </td>
                   <td style="text-align: center">
+                    <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
+                      <div class="switch locked" role="switch" aria-checked="false" aria-disabled="true"></div>
+                    </el-tooltip>
                     <div
+                      v-else
                       class="switch"
                       :class="{ on: m.enabled }"
                       role="switch"
@@ -1288,5 +1298,15 @@ onMounted(refresh);
 }
 .rev-route-ch {
   color: var(--text-3);
+}
+.accountless-tag {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 10px;
+  padding: 1px 4px;
+}
+.switch.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

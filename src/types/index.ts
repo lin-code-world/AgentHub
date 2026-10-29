@@ -480,6 +480,8 @@ export interface ProxyModel {
   contextLength?: number;
   maxOutputTokens?: number;
   /** 管理态（proxy_models 返回时合并）：启用 / per-model 渠道覆盖 / 回退模型 / 自定义参数 */
+  /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
+  accountless?: boolean;
   enabled: boolean;
   override: "" | ProxyChannelId;
   fallback: string;
