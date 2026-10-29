@@ -168,7 +168,6 @@ function defaultConfig() {
     },
     // 局域网管理访问：浏览器登录管理页的令牌（落盘密文；明文只经桌面 IPC admin_access_info 交给设置页）。
     // 首次启动由 main.cjs 调 ensureAdminToken() 自动生成 24 字节随机串，不允许清空。
-    // 令牌来源分形态：桌面管理服务只认本字段，容器仍认 AGENTHUB_ADMIN_TOKEN 环境变量（详见下方「管理令牌」段）
     admin: {
       token: "",
     },
@@ -296,7 +295,7 @@ function loadConfig() {
   delete merged.webdav;
   delete merged.webdavShared;
   if (merged.proxy) delete merged.proxy.poolsyncSchedule;
-  // 远程实例（桌面连远程 Docker 版的目标管理与命令转发）已随功能移除：
+  // 远程实例已随功能移除：
   // remoteTargets / remoteActiveId 与上面同理，旧配置残留字段一律剔除，不再读写
   delete merged.remoteTargets;
   delete merged.remoteActiveId;
@@ -393,11 +392,7 @@ function saveConfigFromUI(cfg) {
 // ===== 管理令牌（局域网浏览器登录管理页用） =====
 // 令牌是敏感凭据：落盘走 encryptSecret 密文，明文只经桌面 IPC 交给设置页展示，
 // 不写日志、不进崩溃日志。
-// 令牌来源分形态（供任务 5 管理 HTTP 服务照此接线）：
-//   · 桌面：管理服务只认本文件的 config.admin.token（ensureAdminToken 自动生成 / setAdminToken 修改），
-//     桌面没有只读令牌；
-//   · 容器（Docker headless）：仍认 AGENTHUB_ADMIN_TOKEN（及可选 AGENTHUB_ADMIN_READONLY_TOKEN）环境变量，
-//     见 gateway/README.md，不读这里的配置字段。
+// 令牌来源只有一处：本文件的 config.admin.token（ensureAdminToken 自动生成 / setAdminToken 修改）。
 
 /** 令牌生成（幂等）：已有可解出的令牌直接复用，缺失 / 解不开才生成 24 字节随机串并加密落盘 */
 function ensureAdminToken() {

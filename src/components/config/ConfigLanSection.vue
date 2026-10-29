@@ -10,8 +10,7 @@
 -->
 <!-- 设置 · 局域网访问：管理地址（反代端口 + 1，局域网地址优先展示、本机回环地址兜底）与访问令牌
      （不展示令牌内容，仅提供复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
-     令牌来源分形态：桌面管理服务只认 config.admin.token（本页展示 / 修改的就是它），
-     容器（Docker headless）仍认 AGENTHUB_ADMIN_TOKEN 环境变量；桌面没有只读令牌 -->
+     令牌只有一处来源：config.admin.token（本页展示 / 修改的就是它）。 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";

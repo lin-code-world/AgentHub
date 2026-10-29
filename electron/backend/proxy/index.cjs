@@ -140,7 +140,7 @@ function parseAccountsJson(text, fallbackChannel) {
     throw new Error("JSON 解析失败：内容不是合法 JSON");
   }
   // 桌面端「导出选中账号」是元数据包（format=agenthub-accounts，故意不含 token）。
-  // 它与容器灌号所需的凭据包语义不同，直接按「缺 token」报错会把用户引向错误方向。
+  // 它与明文凭据包的语义不同，直接按「缺 token」报错会把用户引向错误方向。
   if (parsed && parsed.format === "agenthub-accounts") {
     return { list: [], invalid: Array.isArray(parsed.accounts) ? parsed.accounts.length : 0, reason: "metadata-only" };
   }
@@ -468,12 +468,10 @@ function stopCheckinAuto() {
 }
 
 /** 启动装配：规则热加载初始化 + 数据库 + 定时额度刷新 + 网关随应用启动
- *  网关不再有「记住上次开关」选项：打开应用即监听（桌面形态），手动停止只影响本次会话。
- *  Docker 形态传 { startServer: false } 自行接管监听（见 gateway/src/index.cjs）。 */
-async function boot(opts = {}) {
+ *  网关不再有「记住上次开关」选项：打开应用即监听，手动停止只影响本次会话。 */
+async function boot() {
   if (booted) return;
   booted = true;
-  const startServer = opts.startServer !== false;
   rules.init();
   store.open();
   // 存量迁移（deviceMid 撞车自愈启动闸）：历史版本会给「导入时是本机登录态」的账号继承
@@ -491,20 +489,17 @@ async function boot(opts = {}) {
   // 网关随应用启动：设置页已移除「记住网关开关」选项，打开应用即监听配置里的端口。
   // 启动失败（端口被占等）必须留痕：此前 `.catch(() => {})` 连失败原因一起丢掉，
   // 用户只会看到「网关没起来」而日志里没有任何线索
-  if (startServer) {
-    void server
-      .start(settings)
-      .then((r) => {
-        oplog.log(r && r.ok ? "info" : "error", "网关启停", r && r.ok ? `随应用启动（端口 ${r.port}${r.already ? "，本就运行中" : ""}）` : `随应用启动失败：${(r && r.message) || "未知原因"}`);
-        events.emit({ type: "status" });
-      })
-      .catch((e) => oplog.log("error", "网关启停", `随应用启动异常：${(e && e.message) || e}`));
-  }
+  void server
+    .start(settings)
+    .then((r) => {
+      oplog.log(r && r.ok ? "info" : "error", "网关启停", r && r.ok ? `随应用启动（端口 ${r.port}${r.already ? "，本就运行中" : ""}）` : `随应用启动失败：${(r && r.message) || "未知原因"}`);
+      events.emit({ type: "status" });
+    })
+    .catch((e) => oplog.log("error", "网关启停", `随应用启动异常：${(e && e.message) || e}`));
 }
 
 /** 停掉本模块持有的全部定时设施与在途流程（额度刷新 / 自动签到 / 在途 OAuth）。
- *  shutdown 与容器停机序列共用——网关监听停不停由调用方决定（桌面 shutdown 停 server；
- *  容器先 drain 在途请求再关） */
+ *  shutdown 时与网关监听一起停。 */
 function stopTimers() {
   credits.stopScheduler();
   stopCheckinAuto();
