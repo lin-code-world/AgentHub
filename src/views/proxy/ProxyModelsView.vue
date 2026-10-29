@@ -38,11 +38,17 @@ const CHANNEL_OPTIONS = computed<{ value: "" | ProxyChannelId; label: string }[]
 // 渠道 tab 只显示有模型的渠道：复用下方 modelsByChannel 预分组（O(渠道) 查直值，不再 O(渠道×模型) 逐对扫描）
 const tabChannels = computed(() => channels.value.filter((c) => (modelsByChannel.value[c.id] || []).length > 0));
 
+/** 各渠道是否提供倍率（随模型列表首条返回）：决定「无倍率模型」是否隐藏 */
+const channelRateFlags = computed<Partial<Record<ProxyChannelId, boolean>>>(() => models.value[0]?.channelRateFlags || {});
+
 // 三重筛选的交集：渠道 tab → 启停状态 → 关键词（id 与显示名模糊匹配）。
 // 这个列表既是表格数据源，也是「一键开启/关闭/反选」的作用范围——所见即所改
 const rows = computed(() => {
   const kw = filter.value.trim().toLowerCase();
   return models.value.filter((m) => {
+    // 倍率为空（界面显示「×—」）的模型：只要来源里有「上游会标价」的渠道就不显示；
+    // 整个渠道都不标价的（Trae / ZCode / 魔搭 / Cline / 小浣熊）保留，否则会被整渠道清空
+    if (m.rate == null && m.sources.some((s) => channelRateFlags.value[s])) return false;
     if (activeTab.value && !m.sources.includes(activeTab.value as ProxyChannelId)) return false;
     if (statusFilter.value === "on" && !m.enabled) return false;
     if (statusFilter.value === "off" && m.enabled) return false;

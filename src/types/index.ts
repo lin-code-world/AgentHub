@@ -471,6 +471,8 @@ export interface ProxyModel {
   sources: ProxyChannelId[];
   /** 各渠道适配器声明的原始模型 id；反向映射目标必须从这里选，不能从融合后的 sources 反推 */
   channelModelIds?: Partial<Record<ProxyChannelId, string[]>>;
+  /** 各渠道目录是否提供倍率（随首条返回）：决定无倍率模型是否隐藏，按渠道自己的目录判断 */
+  channelRateFlags?: Partial<Record<ProxyChannelId, boolean>>;
   /** 目录元数据（catalog.json）：显示名 / 倍率（积分倍率，null=未知）/ 能力 / 上下文长度 */
   name?: string;
   rate?: number | null;

@@ -4820,6 +4820,24 @@ function channelModelIds(channel) {
   return out;
 }
 
+/** 各渠道目录是否提供倍率（rate）：前端据此决定「无倍率模型」要不要隐藏。
+ *  必须按渠道自己的原始目录判断，不能看融合后的模型（多源模型会借用别的渠道的倍率）——
+ *  上游根本不标价的渠道（Trae / ZCode / 魔搭 / Cline / 小浣熊）不能因为「没倍率」被整渠道清空。 */
+function channelRateFlags() {
+  const out = {};
+  for (const channel of Object.keys(ADAPTERS)) {
+    let any = false;
+    for (const meta of catalogMap(channel).values()) {
+      if (meta && meta.rate != null && !Number.isNaN(Number(meta.rate))) {
+        any = true;
+        break;
+      }
+    }
+    out[channel] = any;
+  }
+  return out;
+}
+
 function reverseAliasEntry(model, cfg) {
   const rev = (cfg || proxyConfig()).modelReverseAliases || {};
   const direct = rev[String(model || "")];
@@ -5072,7 +5090,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）

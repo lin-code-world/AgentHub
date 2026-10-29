@@ -1277,6 +1277,7 @@ function register(ipcMain) {
     const channelModelIds = Object.fromEntries(
       Object.keys(adapters.ADAPTERS).map((channel) => [channel, adapters.channelModelIds(channel)])
     );
+    const channelRateFlags = adapters.channelRateFlags();
     return adapters.mergedModels(cfg).map((m, index) => {
       const item = {
         ...m,
@@ -1291,6 +1292,8 @@ function register(ipcMain) {
       // ad.models() 均为空（见 adapters.mergedModels：逐渠道并集、无过滤），此时
       // channelModelIds 各值本就为空数组。切勿把本字段挪到别处或改成逐条挂载（会重复传输）。
       if (index === 0) item.channelModelIds = channelModelIds;
+      // 各渠道是否提供倍率（同上只挂首条）：前端用它决定「无倍率模型」隐藏与否
+      if (index === 0) item.channelRateFlags = channelRateFlags;
       return item;
     });
   }));
