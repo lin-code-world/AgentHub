@@ -46,6 +46,31 @@ ok("collect 同时收集框架命令与网关命令", commands.has("load_config"
 ok("每条命令的 handler 都是函数", commands.size > 0 && [...commands.values()].every((fn) => typeof fn === "function"), String(commands.size));
 ok("注入的 handle 收到同一批 handler（IPC 只是转发）", injected.length === commands.size && injected.every(([c, fn]) => commands.get(c) === fn), `injected=${injected.length} commands=${commands.size}`);
 
+// ===== 三集合比对（原 tools/proxy-command-table-selftest.cjs 并入）=====
+// 真源是注册逻辑本身：ipc.cjs 的 handle("…") 与 proxy/index.cjs 的 ipcMain.handle("…")。
+// 收集漏了 → 网页端静默不可达；preload 漏了 → 桌面端调用被白名单拦下。
+function diff(a, b) {
+  // Map 要取 keys()：直接 new Set(map) 得到的是 [key, fn] 条目对，has(字符串) 永远 false
+  const bs = b instanceof Set ? b : new Set(b instanceof Map ? b.keys() : b);
+  return [...a].filter((x) => !bs.has(x));
+}
+const registered = new Set([
+  ...[...fs.readFileSync(path.join(ROOT, "electron", "backend", "ipc.cjs"), "utf8").matchAll(/handle\(\s*"([^"]+)"/g)].map((m) => m[1]),
+  ...[...fs.readFileSync(path.join(ROOT, "electron", "backend", "proxy", "index.cjs"), "utf8").matchAll(/ipcMain\.handle\(\s*"([^"]+)"/g)].map((m) => m[1]),
+]);
+const preloadSrc = fs.readFileSync(path.join(ROOT, "electron", "preload.cjs"), "utf8");
+const allowBlock = preloadSrc.slice(preloadSrc.indexOf("const ALLOWED_COMMANDS"), preloadSrc.indexOf("contextBridge.exposeInMainWorld"));
+const allowed = new Set([...allowBlock.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
+
+ok("收集表非空且规模合理（≥60）", commands.size >= 60, String(commands.size));
+ok(`收集集合 == 源码注册集合（${registered.size}）`, diff(commands.keys(), registered).length === 0 && diff(registered, commands.keys()).length === 0, `仅收集有: ${diff(commands.keys(), registered).join(",") || "-"} | 仅源码有: ${diff(registered, commands.keys()).join(",") || "-"}`);
+ok(`收集集合 == preload 白名单集合（${allowed.size}）`, diff(commands.keys(), allowed).length === 0 && diff(allowed, commands.keys()).length === 0, `仅收集有: ${diff(commands.keys(), allowed).join(",") || "-"} | 仅白名单有: ${diff(allowed, commands.keys()).join(",") || "-"}`);
+ok("分类闭合：每条命令都有 read/write/deny 之一", [...commands.keys()].every((c) => ["read", "write", "deny"].includes(commandTable.modeOf(c))));
+ok("DENY 无未注册命令（防手滑写错名）", Object.keys(commandTable.DENY).every((c) => commands.has(c)), diff(new Set(Object.keys(commandTable.DENY)), commands).join(","));
+ok("READ 无未注册命令", [...commandTable.READ].every((c) => commands.has(c)), diff(new Set(commandTable.READ), commands).join(","));
+ok("deny 与 read 无交集", [...commandTable.READ].every((c) => !commandTable.DENY[c]));
+ok("每条 deny 都有面向用户的说明", Object.values(commandTable.DENY).every((v) => typeof v === "string" && v.length >= 8));
+
 ok('modeOf("proxy_pool") === "read"', commandTable.modeOf("proxy_pool") === "read", commandTable.modeOf("proxy_pool"));
 ok('modeOf("proxy_start") === "deny"', commandTable.modeOf("proxy_start") === "deny", commandTable.modeOf("proxy_start"));
 // I1：proxy_scan 只是界面分类为 read，浏览器形态必须在服务端也 deny（否则令牌能直读本机登录态候选）
