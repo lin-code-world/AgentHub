@@ -210,7 +210,7 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
   eq(loomyModels.resolveFrom(ids, "nonexistent"), null, "Loomy 目录里没有的名字返回 null（不得静默透传）");
   eq(loomyModels.resolveFrom([], "deepseek-v4.1-flash"), null, "目录为空时无从归一，返回 null");
 
-  // 渠道归属的大小写口径：精确写法优先，避免「Loomy 的大写写法顶替 WorkBuddy 的小写请求」
+  // 渠道归属逐字精确匹配：写法不同即不同模型（上游大小写敏感，未知名会被静默回落）
   const adapters = require("../electron/backend/proxy/adapters.cjs");
   const origGet = adapters.get;
   const origAdapters = adapters.ADAPTERS;
@@ -221,9 +221,12 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
     };
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, fake);
-    eq(adapters.modelOwners("deepseek-v4.1-flash", {}), ["workbuddy"], "精确写法命中时，大写写法的渠道不算归属");
-    eq(adapters.modelOwners("DeepSeek-V4.1-Flash", {}), ["loomy"], "大写写法命中时，小写写法的渠道不算归属");
-    eq(adapters.modelOwners("DEEPSEEK-V4.1-FLASH", {}), ["workbuddy", "loomy"], "无渠道精确命中才回退大小写不敏感匹配");
+    eq(adapters.modelOwners("deepseek-v4.1-flash", {}), ["workbuddy"], "小写写法只归属小写渠道");
+    eq(adapters.modelOwners("DeepSeek-V4.1-Flash", {}), ["loomy"], "大写写法只归属大写渠道");
+    eq(adapters.modelOwners("DEEPSEEK-V4.1-FLASH", {}), [], "无渠道精确命中时归属为空（不回退忽略大小写）");
+    // 反向映射不受严格匹配影响：配了映射就按映射结果走（resolveModelTarget 依赖 nativeModel）
+    const revCfg = { modelReverseAliases: { "my-deepseek": { workbuddy: "deepseek-v4.1-flash" } } };
+    eq(adapters.resolveModelTarget("my-deepseek", "workbuddy", revCfg), "deepseek-v4.1-flash", "反向映射目标仍能命中（严格匹配不影响映射）");
   } finally {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, origAdapters);
