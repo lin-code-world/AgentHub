@@ -559,8 +559,8 @@ onMounted(refresh);
                         <div class="tip-title">来源渠道（{{ m.sources.length }}）</div>
                         <div v-for="s in m.sources" :key="s" class="tip-line">· {{ channelName(s) }}</div>
                       </template>
-                      <span class="tip-host" :class="{ 'can-tip': m.sources.length > 1 }">
-                        <span v-for="s in m.sources" :key="s" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ channelName(s) }}</span>
+                      <span class="tip-host src-list" :class="{ 'can-tip': m.sources.length > 1 }">
+                        <span v-for="s in m.sources" :key="s" class="tag tag-dim src-tag">{{ channelName(s) }}</span>
                       </span>
                     </el-tooltip>
                   </td>
@@ -1156,6 +1156,20 @@ onMounted(refresh);
 /* 有可展开内容时才给 help 光标，暗示可悬停（浮窗禁用时不误导） */
 .tip-host.can-tip {
   cursor: help;
+}
+/* 来源渠道：一个渠道一个标签，放不下自动换行——横排单行会把这一列顶到很远 */
+.src-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  white-space: normal;
+  overflow: visible;
+}
+.src-tag {
+  font-size: 10px;
+  padding: 1px 4px;
+  white-space: nowrap;
 }
 .tip-title {
   font-weight: 600;
