@@ -18,6 +18,7 @@
 //
 // 语义边界（务必与 main.cjs 的 close 分支一致）：
 //   · quitting              —— 托盘「退出」/更新重启：放行，真正退出
+//   · packaged=false        —— 开发运行（npm run dev）：关窗即退出，不驻留托盘
 //   · minimizeToTray=true   —— 关窗销毁界面进程，托盘与后台服务照常运行（唤回时重建）
 //   · minimizeToTray=false  —— 关窗即退出应用（托盘不保留）
 "use strict";
@@ -28,12 +29,16 @@ const ACTIONS = Object.freeze(["quit", "destroy"]);
 /**
  * 决定「用户点了关闭按钮」时该做什么。
  *
- * @param {{quitting?: boolean, minimizeToTray?: boolean}} input
+ * @param {{quitting?: boolean, minimizeToTray?: boolean, packaged?: boolean}} input
+ *   packaged=false 表示开发运行（npm run dev）：关窗一律退出，改完代码不该被托盘留着跑旧进程
  * @returns {"quit"|"destroy"}
  */
 function decideCloseAction(input) {
   const it = input || {};
   if (it.quitting === true) return "quit";
+  // 开发运行不驻留托盘：省得每次改完代码还要去托盘右键退出（且旧进程会占着 9527 端口）。
+  // packaged 缺省按 true 处理——保守方向是「不改变已装用户的关窗行为」
+  if (it.packaged === false) return "quit";
   return it.minimizeToTray === true ? "destroy" : "quit";
 }
 

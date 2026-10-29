@@ -69,6 +69,10 @@ const renderers = (list) => list.filter((p) => p.type === "renderer").length;
   // 正确做法：只用 --user-data-dir=<沙箱>，单实例锁是按 userData 作用域隔离的，
   // 因此既不与用户正在跑的实例抢锁，子进程命令行也全都带得上沙箱路径。
   const env = { ...process.env, VITE_DEV_SERVER_URL: `http://127.0.0.1:${PORT}` };
+  // 本测试跑的是未打包的 electron .，默认「关窗即退出」（开发运行语义）。
+  // 它要验证的是打包产物的托盘常驻链路（销毁界面进程 / 唤回重建 / 几何恢复），
+  // 故用该开关强制按打包形态处理
+  env.AGENTHUB_TRAY_RESIDENT = "1";
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.AGENTHUB_ALLOW_MULTI;
   const el = spawn(ELECTRON, [".", "--user-data-dir=" + DATA], { cwd: ROOT, env, stdio: "ignore" });

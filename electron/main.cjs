@@ -288,6 +288,10 @@ function createWindow() {
     const action = windowMode.decideCloseAction({
       quitting,
       minimizeToTray: !!(cfg.schedule && cfg.schedule.minimizeToTray),
+      // 开发运行（npm run dev）关窗即退出：不占着 9527 端口、不留旧进程。
+      // AGENTHUB_TRAY_RESIDENT=1 强制按打包形态处理——供端到端自测验证「销毁后唤回重建」，
+      // 也方便开发时手工调托盘行为
+      packaged: app.isPackaged || process.env.AGENTHUB_TRAY_RESIDENT === "1",
     });
     if (action === "quit") {
       // 未开托盘常驻：关窗即退出应用。window-all-closed 是空实现（托盘常驻形态），

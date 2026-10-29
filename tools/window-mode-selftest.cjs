@@ -75,6 +75,20 @@ T("S5 releasesRenderer 只对 destroy 为真", () => {
   eq(mode.releasesRenderer("hide"), false);
 });
 
+T("S5b 开发运行（未打包）关窗一律 quit：改代码后不该被托盘留着跑旧进程", () => {
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true, packaged: false }), "quit");
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: false, packaged: false }), "quit");
+});
+
+T("S5c 打包产物仍按最小化设置：开托盘常驻 → destroy，关 → quit", () => {
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true, packaged: true }), "destroy");
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: false, packaged: true }), "quit");
+});
+
+T("S5d packaged 缺省按打包产物处理（保守：不改变现有安装版的关窗行为）", () => {
+  eq(mode.decideCloseAction({ quitting: false, minimizeToTray: true }), "destroy");
+});
+
 T("S6 ACTIONS 常量与决策返回值闭合（防新增动作忘了登记）", () => {
   const all = [];
   for (const q of [true, false]) for (const m of [true, false]) {
