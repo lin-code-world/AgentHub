@@ -466,6 +466,10 @@ async function syncAll() {
       const skipInfo = skipped ? `，已跳过 ${skipped} 个未登录渠道` : "";
       msg.value = `已拉取 ${okParts.join("、")}${skipInfo}`;
       setTimeout(() => (msg.value = ""), 3000);
+    } else if (!failParts.length) {
+      // 一个能拉的都没有（全部渠道未登录且目录需登录）：给一句说明，避免点了没反应
+      msg.value = `没有可拉取的渠道：${skipped} 个渠道都需要先登录账号，请到「号池」导入`;
+      setTimeout(() => (msg.value = ""), 4000);
     }
     if (failParts.length) {
       err.value = failParts.join("；");

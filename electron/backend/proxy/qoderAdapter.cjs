@@ -324,8 +324,9 @@ function makeQoder(product, deps) {
      *   · 未拉取过目录（目录为空）→ 才退回本 product 的静态兜底，保证首次可用性。
      */
     models() {
-      // 只列拉取到的目录（不回落静态表：没拉过目录就不该宣称拥有模型）
-      return [...catalogIndex().byKey.keys()];
+      // 只列拉取到的目录（不回落静态表：没拉过目录就不该宣称拥有模型）。
+      // byKey 的键是小写化 id，这里取条目的原始 id，保持与目录写入时一致的大小写
+      return [...catalogIndex().byKey.values()].map((m) => String(m.id || "")).filter(Boolean);
     },
 
     /**

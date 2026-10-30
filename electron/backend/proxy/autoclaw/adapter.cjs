@@ -110,9 +110,10 @@ function makeAutoClaw(channel, deps) {
     id: channel,
     cfg,
 
-    /** 模型 id 清单（同步；管理页/路由用）：只认拉取到的目录 */
+    /** 模型 id 清单（同步；管理页/路由用）：只认拉取到的目录。
+     *  byKey 键是小写化 id，这里取条目原始 id 保持大小写（models 的消费方按原样匹配） */
     models() {
-      return [...catalogIndex().byKey.keys()];
+      return [...catalogIndex().byKey.values()].map((m) => String(m.id || "")).filter(Boolean);
     },
 
     /** 拉取官方目录：GET {userapi}{catalogPath}，签名头。响应顶层直接是 {models:[…]}（无信封）。 */
