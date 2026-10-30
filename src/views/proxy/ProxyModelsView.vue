@@ -17,6 +17,7 @@ import type { ModelCustomEntry, ProxyChannelId, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, parseCtxInput } from "./format";
 import { hiddenByRate } from "./rateGate";
+import { mergeAliasRows } from "./channelRows";
 
 const app = useAppStore();
 const models = ref<ProxyModel[]>([]);
@@ -83,6 +84,14 @@ function sourceTags(m: ProxyModel): { channel: string; rate: number | null }[] {
 
 // 三重筛选的交集：渠道 tab → 启停状态 → 关键词（id 与显示名模糊匹配）。
 // 这个列表既是表格数据源，也是「一键开启/关闭/反选」的作用范围——所见即所改
+// 渠道页合并：反向映射注入的别名行并入该渠道的原生行（全部视图不合并，规则在 channelRows.ts）
+const mergedView = computed(() =>
+  mergeAliasRows(models.value, activeTab.value, app.config.proxy.modelReverseAliases || {})
+);
+const aliasOf = computed(() => mergedView.value.aliasOf);
+/** 合并行对应的别名请求名（无则空串） */
+const aliasText = (m: ProxyModel) => aliasOf.value[m.id] || "";
+
 const rows = computed(() => {
   const kw = filter.value.trim().toLowerCase();
   return models.value.filter((m) => {
@@ -90,11 +99,18 @@ const rows = computed(() => {
     // 整个渠道都不标价的（Trae / ZCode / 魔搭 / Cline / 小浣熊）保留，否则会被整渠道清空
     if (hiddenByRate(m.sourceDetails || [], activeTab.value, channelRateFlags.value)) return false;
     if (activeTab.value && !m.sources.includes(activeTab.value as ProxyChannelId)) return false;
+    // 已被合并进原生行的别名行不再单独占一行
+    if (!mergedView.value.visibleIds.includes(m.id)) return false;
     if (statusFilter.value === "on" && !m.enabled) return false;
     if (statusFilter.value === "off" && m.enabled) return false;
     if (!kw) return true;
-    // 搜索也要匹配「当前渠道的原始写法」：在讯飞页搜 DeepSeek-V4.1-Flash 不能搜不到
-    return m.id.toLowerCase().includes(kw) || displayId(m).toLowerCase().includes(kw) || String(m.name || "").toLowerCase().includes(kw);
+    // 搜索也要匹配「当前渠道的原始写法」与合并进来的别名：在讯飞页搜 DeepSeek-V4.1-Flash 不能搜不到
+    return (
+      m.id.toLowerCase().includes(kw) ||
+      displayId(m).toLowerCase().includes(kw) ||
+      String(m.name || "").toLowerCase().includes(kw) ||
+      aliasText(m).toLowerCase().includes(kw)
+    );
   });
 });
 
@@ -510,6 +526,10 @@ onMounted(refresh);
                         <div class="mono model-id">{{ displayId(m) }}</div>
                       </el-tooltip>
                       <span v-if="activeTabRate(m) != null" class="rate-inline">×{{ activeTabRate(m) }}</span>
+                      <!-- 合并进来的统一请求名：点它不是另一个模型，只是这张渠道页上的别名入口 -->
+                      <el-tooltip v-if="aliasText(m)" :content="`别名：${aliasText(m)}`" placement="top">
+                        <span class="tag tag-dim alias-tag">别名</span>
+                      </el-tooltip>
                     </div>
                     <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
                       <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
@@ -1113,6 +1133,13 @@ onMounted(refresh);
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-3);
+  margin-left: 6px;
+}
+/* 合并行的别名标签：不参与省略，跟随 id 行右侧 */
+.alias-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 4px;
   margin-left: 6px;
 }
 /* 自定义单元格（上下文与思考强度） */
