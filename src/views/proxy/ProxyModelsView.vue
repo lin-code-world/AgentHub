@@ -11,7 +11,7 @@
 <!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道覆盖 / 倍率与能力 / 反向模型映射
      管理态存框架整体配置（disabledModels / modelOverrides / modelReverseAliases），保存即热生效（服务端每请求读盘） -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import type { ModelCustomEntry, ProxyChannelId, ProxyChannelView, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
@@ -482,6 +482,14 @@ async function syncAll() {
 }
 
 onMounted(refresh);
+
+/** 本页是否处于前台：v-show 保活的页面切走后不会重新挂载（App.vue 的 visited 懒挂载），
+ *  渠道启闭（侧栏「上游启闭」弹窗等）发生在其他入口时，本页收不到事件。
+ *  切回本页（顶部 tab 切到「模型目录」）时补一次全量刷新，渠道显隐即时跟随。 */
+const active = computed(() => app.activeModule === "proxy" && app.activePage === "models");
+watch(active, (on) => {
+  if (on) refresh();
+});
 </script>
 
 <template>
