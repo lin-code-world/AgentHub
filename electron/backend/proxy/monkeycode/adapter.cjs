@@ -207,11 +207,14 @@ function makeMonkeyCode(channel, deps) {
         if (status === 401 || status === 403) return { authError: true, message: "MonkeyCode 登录态已失效，请重新粘贴 session" };
         return { error: String((e && e.message) || e) };
       }
+      // 上游 wallet 的 balance 单位是「厘」（千分之一积分）：实测 balance=40821246 对应 40821.246 积分。
+      // 每日额度（daily_token_balance）单位是 token，原样显示。主余额优先每日额度，无每日额度时回落到积分。
+      const points = w.balance / 1000;
       return {
-        credits: w.dailyTokenBalance > 0 ? w.dailyTokenBalance : w.balance,
+        credits: w.dailyTokenBalance > 0 ? w.dailyTokenBalance : points,
         wallets: [
           { type: "daily_token", displayName: "每日额度剩余", balance: w.dailyTokenBalance, known: true },
-          { type: "points", displayName: "积分", balance: w.balance, known: true },
+          { type: "points", displayName: "积分", balance: points, known: true },
         ],
       };
     },

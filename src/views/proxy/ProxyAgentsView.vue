@@ -16,7 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import type { ProxyChannelView, ProxyAccount, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier, ProxyScanCandidate, ProxyCheckinRow, ZcodeDeviceRow } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr } from "./format";
+import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr, fmtDetailNum } from "./format";
 // 顶部渠道切换（收起态方块）与「上游启闭」弹窗共用同一份渠道图标映射
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
@@ -1955,7 +1955,7 @@ onUnmounted(() => {
                       <span>{{ acc.hasToken ? (acc.credits === -1 ? "不限" : fmtBalance(acc.credits, acc.channel)) : "-" }}</span>
                     </el-tooltip>
                     <!-- 多钱包渠道（Loomy）：合计之下拆出永久 / 每日赠送，避免两个账户混成一个数 -->
-                    <div v-if="acc.creditsDetail && acc.creditsDetail.length" class="credits-split">{{ acc.creditsDetail.map((w) => `${w.displayName} ${fmtInt(w.balance)}`).join(" · ") }}</div>
+                    <div v-if="acc.creditsDetail && acc.creditsDetail.length" class="credits-split">{{ acc.creditsDetail.map((w) => `${w.displayName} ${fmtDetailNum(w.balance)}`).join(" · ") }}</div>
                   </td>
                   <td class="mono">{{ acc.expiresAt ? fmtDate(acc.expiresAt) : "-" }}</td>
                   <td class="mono num">{{ acc.todayReq }} 次 · {{ fmtK(acc.todayTokens) }}</td>

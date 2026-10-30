@@ -12,6 +12,10 @@
 /** 千分位 */
 export const fmtInt = (n: number) => Math.round(n || 0).toLocaleString("en-US");
 
+/** 明细数值（积分等）：千分位保留小数（最多 3 位，去尾零），整数不受影响。
+ *  MonkeyCode 的积分以「厘」计价（balance/1000），整数化会丢掉真实的 .246 这类尾数。 */
+export const fmtDetailNum = (n: number): string => (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
+
 /** 大数缩写：1,234 → 1.2K */
 export function fmtK(n: number): string {
   const v = n || 0;
@@ -54,7 +58,7 @@ export function fmtAgo(ts: number): string {
 }
 
 /**
- * 大数中文数量级：万 / 百万 / 千万 / 亿 / 百亿，换算档固定保留两位小数。
+ * 大数数量级：万 / M（百万）/ 亿 / 百亿，换算档固定保留两位小数。
  * 渠道额度共用一套换算（积分与 Token 同规）；不足 1 万保持千分位整数。
  */
 export function fmtCnAmount(n: number): string {
@@ -62,8 +66,8 @@ export function fmtCnAmount(n: number): string {
   if (v <= 0) return "0";
   if (v >= 1e10) return (v / 1e10).toFixed(2) + " 百亿";
   if (v >= 1e8) return (v / 1e8).toFixed(2) + " 亿";
-  if (v >= 1e7) return (v / 1e7).toFixed(2) + " 千万";
-  if (v >= 1e6) return (v / 1e6).toFixed(2) + " 百万";
+  // 百万及以上统一用 M（国际缩写）：1000 万 → 10.00M（原「千万 / 百万」两档合并）
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
   if (v >= 1e4) return (v / 1e4).toFixed(2) + " 万";
   return fmtInt(v);
 }
