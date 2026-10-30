@@ -483,7 +483,7 @@ export interface ProxyModel {
   maxOutputTokens?: number;
   /** 来源渠道明细：各渠道自己的模型 id / 倍率 / 上下文 / 最大输出 / 能力（合并键按精确写法，
    *  因此同一行的各来源写法一致；没有 catalog 条目的渠道不产生明细） */
-  sourceDetails?: { channel: ProxyChannelId; id: string; rate: number | null; contextLength: number; maxOutputTokens: number; capabilities: { images?: boolean; reasoning?: boolean; tools?: boolean } }[];
+  sourceDetails?: { channel: ProxyChannelId; id: string; rate: number | null; contextLength: number; maxOutputTokens: number; capabilities: { images?: boolean; reasoning?: boolean; tools?: boolean }; custom?: ModelCustomEntry | null }[];
   /** 管理态（proxy_models 返回时合并）：启用 / per-model 渠道覆盖 / 回退模型 / 自定义参数 */
   /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
   accountless?: boolean;

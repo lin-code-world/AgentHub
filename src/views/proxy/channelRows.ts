@@ -15,6 +15,8 @@ export interface ChannelRowModel {
   sources: string[];
 }
 
+import type { ModelCustomEntry } from "../../types";
+
 /**
  * 渠道页：把「反向映射注入的别名行」合并进当前渠道的原生行。
  *
@@ -51,8 +53,8 @@ export interface SourceDetailRow {
   rate: number | null;
   contextLength: number;
   maxOutputTokens: number;
-  capabilities?: Record<string, boolean>;
-  custom?: Record<string, unknown> | null;
+  capabilities?: { images?: boolean; reasoning?: boolean; tools?: boolean };
+  custom?: ModelCustomEntry | null;
 }
 
 /**

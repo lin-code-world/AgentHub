@@ -15,9 +15,9 @@ import { computed, onMounted, ref } from "vue";
 import * as api from "../../api/ipc";
 import type { ModelCustomEntry, ProxyChannelId, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, parseCtxInput } from "./format";
+import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, fmtRate, parseCtxInput } from "./format";
 import { hiddenByRate } from "./rateGate";
-import { mergeAliasRows } from "./channelRows";
+import { mergeAliasRows, sourceRows } from "./channelRows";
 
 const app = useAppStore();
 const models = ref<ProxyModel[]>([]);
@@ -63,6 +63,16 @@ function displayId(m: ProxyModel): string {
 
 /** 来源渠道明细的单项：该渠道自己的 id / 倍率 / 上下文 / 最大输出 / 能力 */
 type SourceDetail = NonNullable<ProxyModel["sourceDetails"]>[number];
+/** 来源渠道行的最小形状（sourceRows 的兜底项也满足） */
+type SourceDetailLike = {
+  channel: string;
+  id: string;
+  rate: number | null;
+  contextLength: number;
+  maxOutputTokens: number;
+  capabilities?: { images?: boolean; reasoning?: boolean; tools?: boolean };
+  custom?: ModelCustomEntry | null;
+};
 
 /** 渠道视图下取该渠道自己的目录元数据；全部视图（或该渠道没有目录明细）返回 null */
 function channelMetaOf(m: ProxyModel): SourceDetail | null {
@@ -189,6 +199,51 @@ async function updateModelCustom(m: ProxyModel, patch: Partial<ModelCustomEntry>
   app.config.proxy.modelCustom = mc;
   await persist(`模型 ${m.id} 自定义参数已生效`);
   await refresh();
+}
+
+// ===== 按渠道自定义参数（全部视图拆行 / 渠道页编辑共用） =====
+/** 该来源渠道的覆盖值：优先 sourceDetails.custom（后端按「实际模型 + 渠道」富化），无则空对象 */
+const channelCustom = (d: { custom?: ModelCustomEntry | null }): ModelCustomEntry => d.custom || {};
+/** 按渠道覆盖值 → 旧模型级值 → 该渠道目录值 */
+const ctxOfChannel = (m: ProxyModel, d: SourceDetailLike): number =>
+  Number(channelCustom(d).contextLength) || Number((app.config.proxy.modelCustom || {})[m.id]?.contextLength) || Number(d.contextLength) || 0;
+const effortOfChannel = (m: ProxyModel, d: SourceDetailLike): string =>
+  String(channelCustom(d).reasoningEffort || (app.config.proxy.modelCustom || {})[m.id]?.reasoningEffort || "");
+const ctxDraftKey = (m: ProxyModel, d: SourceDetailLike) => `${m.id}::${d.channel}`;
+
+/** 写「实际模型 + 渠道」一条配置；同一渠道同一实际模型的两种请求名因此共享同一份数据 */
+async function updateChannelCustom(m: ProxyModel, d: SourceDetailLike, patch: Partial<ModelCustomEntry>) {
+  const all = { ...(app.config.proxy.modelCustomByChannel || {}) };
+  const perModel = { ...(all[d.id] || {}) };
+  const cur = { ...(perModel[d.channel] || {}), ...patch };
+  if (!cur.contextLength || cur.contextLength <= 0) delete cur.contextLength;
+  if (!cur.maxOutputTokens || cur.maxOutputTokens <= 0) delete cur.maxOutputTokens;
+  if (!cur.reasoningEffort) delete cur.reasoningEffort;
+  if (Object.keys(cur).length) perModel[d.channel] = cur;
+  else delete perModel[d.channel];
+  if (Object.keys(perModel).length) all[d.id] = perModel;
+  else delete all[d.id];
+  app.config.proxy.modelCustomByChannel = all;
+  await persist(`模型 ${d.id}（${channelName(d.channel)}）参数已生效`);
+  await refresh();
+}
+
+/** 全部视图：该模型的来源渠道行（缺明细的渠道也占一行） */
+const rowsOf = (m: ProxyModel) => sourceRows(m);
+/** 能力子列只显示 图 / 思 / 工（上下文已有独立子列，避免重复） */
+function channelCapTags(d: SourceDetailLike): string[] {
+  const c = d.capabilities || {};
+  return [c.images ? "图" : "", c.reasoning ? "思" : "", c.tools ? "工" : ""].filter(Boolean);
+}
+/** 提交某个来源渠道行的上下文编辑 */
+async function commitChannelCtx(m: ProxyModel, d: SourceDetailLike) {
+  const key = ctxDraftKey(m, d);
+  const raw = ctxDraft.value[key];
+  if (raw === undefined) return;
+  delete ctxDraft.value[key];
+  const parsed = parseCtxInput(raw);
+  if ((parsed || 0) === ctxOfChannel(m, d)) return;
+  await updateChannelCustom(m, d, { contextLength: parsed });
 }
 
 // ===== 反向模型映射管理（统一请求名 -> 各渠道实际模型） =====
@@ -492,7 +547,19 @@ onMounted(refresh);
           <!-- 7 列合计 1052px：窄窗口横向滚动走全局 .table-scroll 的 overflow:auto，宽窗口一屏放下 -->
           <div class="table-scroll">
             <table class="table table-bare models-table" style="table-layout: fixed; width: 100%">
-              <colgroup>
+              <colgroup v-if="!activeTab">
+                <!-- 全部视图：模型 / 来源渠道六子列（渠道·实际模型·上下文·思考强度·能力·倍率）/ 覆盖 / 状态 -->
+                <col style="width: 240px" />
+                <col style="width: 100px" />
+                <col style="width: 200px" />
+                <col style="width: 108px" />
+                <col style="width: 136px" />
+                <col style="width: 92px" />
+                <col style="width: 64px" />
+                <col style="width: 156px" />
+                <col style="width: 72px" />
+              </colgroup>
+              <colgroup v-else>
                 <!-- 模型列：240px 容得下 deepseek-v4.1-flash 这类长 id，倍率灰字跟在 id 右侧 -->
                 <col style="width: 240px" />
                 <!-- 上下文列：输入框 62px + 自badge 21px + 左右 padding 24px = 107px 起步（显示 131K / 1M 缩写） -->
@@ -500,25 +567,156 @@ onMounted(refresh);
                 <!-- 思考强度列：select 90px + 自badge 21px + 左右 padding 24px = 135px 起步 -->
                 <col style="width: 136px" />
                 <col style="width: 120px" />
-                <col v-if="!activeTab" style="width: 220px" />
                 <!-- 渠道覆盖列：select 固定 100px + 单元格左右 padding 各 12px = 124px 起步 -->
                 <col style="width: 156px" />
                 <!-- 状态列：开关固定 40px + 单元格左右 padding 各 12px = 64px 起步。
                      48px 的内容区只有 24px，开关必然溢出被裁（4K@200% 报障的直接原因） -->
                 <col style="width: 72px" />
               </colgroup>
-              <thead>
+              <thead v-if="!activeTab">
+                <tr>
+                  <th rowspan="2">模型</th>
+                  <th colspan="6">来源渠道</th>
+                  <th rowspan="2">渠道覆盖</th>
+                  <th rowspan="2" style="text-align: center">状态</th>
+                </tr>
+                <tr>
+                  <th>渠道</th>
+                  <th>实际模型</th>
+                  <th>上下文</th>
+                  <th>思考强度</th>
+                  <th>能力</th>
+                  <th style="text-align: center">倍率</th>
+                </tr>
+              </thead>
+              <thead v-else>
                 <tr>
                   <th>模型</th>
                   <th>上下文</th>
                   <th>思考强度</th>
                   <th>能力</th>
-                  <th v-if="!activeTab">来源渠道</th>
                   <th>渠道覆盖</th>
                   <th style="text-align: center">状态</th>
                 </tr>
               </thead>
               <tbody>
+                <template v-if="!activeTab">
+                  <template v-for="(m, i) in rows" :key="m.id">
+                    <tr v-for="(d, di) in rowsOf(m)" :key="m.id + '|' + d.channel" :style="{ '--i': i }">
+                      <td v-if="di === 0" :rowspan="rowsOf(m).length" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                        <div class="model-id-line">
+                          <el-tooltip :content="displayId(m)" placement="top">
+                            <div class="mono model-id">{{ displayId(m) }}</div>
+                          </el-tooltip>
+                        </div>
+                        <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
+                          <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
+                        </el-tooltip>
+                        <el-tooltip v-if="m.accountless" content="单来源渠道未配置账号，模型已自动关闭" placement="top">
+                          <span class="tag tag-dim accountless-tag">无账号</span>
+                        </el-tooltip>
+                      </td>
+                      <td>{{ channelName(d.channel) }}</td>
+                      <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                        <el-tooltip :content="d.id" placement="top">
+                          <span class="mono model-actual">{{ d.id }}</span>
+                        </el-tooltip>
+                      </td>
+                      <td>
+                        <div class="custom-cell">
+                          <el-tooltip :content="`自定义上下文长度（Token）：${fmtInt(ctxOfChannel(m, d))}，可直接写 128K / 1M，留空恢复默认`" placement="top">
+                            <input
+                              type="text"
+                              class="f-input custom-input"
+                              style="width: 62px"
+                              :value="ctxDraft[ctxDraftKey(m, d)] ?? (ctxOfChannel(m, d) ? fmtCtx(ctxOfChannel(m, d)) : '')"
+                              placeholder="自动"
+                              @focus="ctxDraft[ctxDraftKey(m, d)] = String(ctxOfChannel(m, d) || '')"
+                              @input="ctxDraft[ctxDraftKey(m, d)] = ($event.target as HTMLInputElement).value"
+                              @change="commitChannelCtx(m, d)"
+                              @blur="commitChannelCtx(m, d)"
+                              @keydown.enter="($event.target as HTMLInputElement).blur()"
+                            />
+                          </el-tooltip>
+                          <el-tooltip v-if="channelCustom(d).contextLength" content="已自定义覆盖上下文" placement="top">
+                            <span class="custom-badge">自</span>
+                          </el-tooltip>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="custom-cell">
+                          <el-tooltip content="自定义思考强度，直接注入出站请求参数" placement="top">
+                            <span>
+                              <el-select
+                                class="f-el-select custom-el-select"
+                                popper-class="glass-popper"
+                                :persistent="false"
+                                :model-value="effortOfChannel(m, d)"
+                                style="width: 90px"
+                                placeholder="默认"
+                                @update:model-value="(v: string) => updateChannelCustom(m, d, { reasoningEffort: v })"
+                              >
+                                <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
+                              </el-select>
+                            </span>
+                          </el-tooltip>
+                          <el-tooltip v-if="channelCustom(d).reasoningEffort" content="已自定义覆盖思考强度" placement="top">
+                            <span class="custom-badge">自</span>
+                          </el-tooltip>
+                        </div>
+                      </td>
+                      <td>
+                        <el-tooltip placement="top" :show-after="120" :disabled="!channelCapTags(d).length" popper-class="glass-popper qa-tip">
+                          <template #content>
+                            <div class="tip-title">模型能力</div>
+                            <div v-for="n in capabilityNames({ capabilities: d.capabilities })" :key="n" class="tip-line">· {{ n }}</div>
+                          </template>
+                          <span class="tip-host" :class="{ 'can-tip': channelCapTags(d).length }">
+                            <span v-for="t in channelCapTags(d)" :key="t" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ t }}</span>
+                            <span v-if="!channelCapTags(d).length" style="color: var(--text-3)">—</span>
+                          </span>
+                        </el-tooltip>
+                      </td>
+                      <td style="text-align: center; color: var(--text-3)">{{ fmtRate(d.rate) }}</td>
+                      <td v-if="di === 0" :rowspan="rowsOf(m).length">
+                        <el-tooltip :content="m.sources.length === 1 ? '单源模型强制走所属渠道，无需覆盖' : ''" :disabled="m.sources.length !== 1" placement="top">
+                          <span>
+                            <el-select
+                              class="f-el-select"
+                              popper-class="glass-popper"
+                              :persistent="false"
+                              style="width: 100px"
+                              :model-value="m.override"
+                              :disabled="!m.enabled || m.sources.length === 1"
+                              @update:model-value="(v: string) => setOverride(m, v)"
+                            >
+                              <el-option
+                                v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
+                                :key="o.value"
+                                :value="o.value"
+                                :label="o.label"
+                              />
+                            </el-select>
+                          </span>
+                        </el-tooltip>
+                      </td>
+                      <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
+                        <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
+                          <div class="switch locked" role="switch" aria-checked="false" aria-disabled="true"></div>
+                        </el-tooltip>
+                        <div
+                          v-else
+                          class="switch"
+                          :class="{ on: m.enabled }"
+                          role="switch"
+                          :aria-checked="!!m.enabled"
+                          @click="toggleEnabled(m, !m.enabled)"
+                        ></div>
+                      </td>
+                    </tr>
+                  </template>
+                </template>
+                <template v-else>
                 <tr v-for="(m, i) in rows" :key="m.id" :style="{ '--i': i }">
                   <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                     <div class="model-id-line">
@@ -646,8 +844,9 @@ onMounted(refresh);
                     ></div>
                   </td>
                 </tr>
+                </template>
                 <tr v-if="!rows.length">
-                  <td :colspan="activeTab ? 6 : 7" style="text-align: center; color: var(--text-3); padding: 24px 0">
+                  <td :colspan="activeTab ? 6 : 9" style="text-align: center; color: var(--text-3); padding: 24px 0">
                     <template v-if="models.length && (statusFilter !== 'all' || filter.trim())">
                       当前筛选条件下无匹配模型 ——
                       <button class="link-btn" @click="resetFilters">清空筛选</button>
@@ -1141,6 +1340,14 @@ onMounted(refresh);
   font-size: 10px;
   padding: 1px 4px;
   margin-left: 6px;
+}
+/* 全部视图「实际模型」子列：该渠道真正发往上游的模型名 */
+.model-actual {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
 }
 /* 自定义单元格（上下文与思考强度） */
 .custom-cell {
