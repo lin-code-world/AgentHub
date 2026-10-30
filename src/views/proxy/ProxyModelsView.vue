@@ -156,9 +156,17 @@ const REASONING_EFFORT_OPTIONS = [
 // 不在草稿态做任何格式化，用户输入的每个字符都原样保留，光标不会跳。
 const ctxDraft = ref<Record<string, string>>({});
 
-/** 该模型当前生效的上下文长度（自定义优先，否则当前视图对应渠道的目录值） */
+/** 渠道页的编辑目标：该渠道视角的实际模型（无目录明细时回落条目 id）。
+ *  合并行（原生 id）与全部视图里别名条目的该渠道行落到同一个键，天然同步。 */
+function editDetail(m: ProxyModel): SourceDetailLike {
+  const meta = channelMetaOf(m);
+  if (meta) return meta;
+  return { channel: activeTab.value, id: m.id, rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} };
+}
+
+/** 该模型当前生效的上下文长度（渠道覆盖优先，其次旧模型级，最后该渠道目录值） */
 function ctxValue(m: ProxyModel): number {
-  return Number((app.config.proxy.modelCustom || {})[m.id]?.contextLength) || Number(metaOf(m).contextLength) || 0;
+  return ctxOfChannel(m, editDetail(m));
 }
 
 /** 非编辑态显示值：K/M 缩写 */
@@ -181,24 +189,7 @@ async function commitCtx(m: ProxyModel) {
   // 与「当前生效值」比较而不是与自定义值比较：只聚焦再失焦时草稿就是原始数字，
   // 若拿自定义值(0)比就会把目录自带值误写成一条自定义覆盖（凭空多出「自」标记）
   if ((parsed || 0) === ctxValue(m)) return;
-  await updateModelCustom(m, { contextLength: parsed });
-}
-
-async function updateModelCustom(m: ProxyModel, patch: Partial<ModelCustomEntry>) {
-  const mc = { ...(app.config.proxy.modelCustom || {}) };
-  const cur = { ...(mc[m.id] || {}) };
-  const next = { ...cur, ...patch };
-
-  if (!next.contextLength || next.contextLength <= 0) delete next.contextLength;
-  if (!next.maxOutputTokens || next.maxOutputTokens <= 0) delete next.maxOutputTokens;
-  if (!next.reasoningEffort) delete next.reasoningEffort;
-
-  if (Object.keys(next).length > 0) mc[m.id] = next;
-  else delete mc[m.id];
-
-  app.config.proxy.modelCustom = mc;
-  await persist(`模型 ${m.id} 自定义参数已生效`);
-  await refresh();
+  await updateChannelCustom(m, editDetail(m), { contextLength: parsed });
 }
 
 // ===== 按渠道自定义参数（全部视图拆行 / 渠道页编辑共用） =====
@@ -754,7 +745,7 @@ onMounted(refresh);
                           @keydown.enter="($event.target as HTMLInputElement).blur()"
                         />
                       </el-tooltip>
-                      <el-tooltip v-if="(app.config.proxy.modelCustom || {})[m.id]?.contextLength" content="已自定义覆盖上下文" placement="top">
+                      <el-tooltip v-if="channelCustom(editDetail(m)).contextLength" content="已自定义覆盖上下文" placement="top">
                         <span class="custom-badge">自</span>
                       </el-tooltip>
                     </div>
@@ -767,16 +758,16 @@ onMounted(refresh);
                             class="f-el-select custom-el-select"
                             popper-class="glass-popper"
                             :persistent="false"
-                            :model-value="(app.config.proxy.modelCustom || {})[m.id]?.reasoningEffort || ''"
+                            :model-value="effortOfChannel(m, editDetail(m))"
                             style="width: 90px"
                             placeholder="默认"
-                            @update:model-value="(v: string) => updateModelCustom(m, { reasoningEffort: v })"
+                            @update:model-value="(v: string) => updateChannelCustom(m, editDetail(m), { reasoningEffort: v })"
                           >
                             <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
                           </el-select>
                         </span>
                       </el-tooltip>
-                      <el-tooltip v-if="(app.config.proxy.modelCustom || {})[m.id]?.reasoningEffort" content="已自定义覆盖思考强度" placement="top">
+                      <el-tooltip v-if="channelCustom(editDetail(m)).reasoningEffort" content="已自定义覆盖思考强度" placement="top">
                         <span class="custom-badge">自</span>
                       </el-tooltip>
                     </div>
