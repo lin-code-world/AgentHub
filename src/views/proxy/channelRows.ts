@@ -24,11 +24,7 @@ import type { ModelCustomEntry } from "../../types";
  * 它本来就不会显示，再隐藏别名行等于让用户彻底看不到这个入口。
  * 大小写逐字比较：`deepseek-v4.1-flash` 与 `DeepSeek-V4.1-Flash` 是不同模型。
  */
-export function mergeAliasRows(
-  models: ChannelRowModel[],
-  activeTab: string,
-  reverseAliases: Record<string, Record<string, string>>
-): { visibleIds: string[]; aliasOf: Record<string, string> } {
+export function mergeAliasRows(models: ChannelRowModel[], activeTab: string, reverseAliases: Record<string, Record<string, string>>): { visibleIds: string[]; aliasOf: Record<string, string> } {
   if (!activeTab) return { visibleIds: models.map((m) => m.id), aliasOf: {} };
   const byId = new Map(models.map((m) => [m.id, m]));
   const hidden = new Set<string>();

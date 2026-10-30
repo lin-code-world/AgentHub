@@ -23,8 +23,19 @@ const adapters = require(path.join(ROOT, "electron/backend/proxy/adapters.cjs"))
 const { resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams } = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
 
 let fail = 0;
-const eq = (a, e, l) => { if (JSON.stringify(a) !== JSON.stringify(e)) { fail++; console.log(`FAIL ${l}\n 期望 ${JSON.stringify(e)}\n 实际 ${JSON.stringify(a)}`); } else console.log(`ok  ${l}`); };
-const check = (l, cond, extra) => { if (cond) console.log(`ok  ${l}`); else { fail++; console.log(`FAIL ${l}${extra ? " — " + extra : ""}`); } };
+const eq = (a, e, l) => {
+  if (JSON.stringify(a) !== JSON.stringify(e)) {
+    fail++;
+    console.log(`FAIL ${l}\n 期望 ${JSON.stringify(e)}\n 实际 ${JSON.stringify(a)}`);
+  } else console.log(`ok  ${l}`);
+};
+const check = (l, cond, extra) => {
+  if (cond) console.log(`ok  ${l}`);
+  else {
+    fail++;
+    console.log(`FAIL ${l}${extra ? " — " + extra : ""}`);
+  }
+};
 
 const orig = { ...adapters.ADAPTERS };
 try {
@@ -73,16 +84,19 @@ try {
   eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", s), { contextLength: 300000 }, "实际模型 + 渠道优先");
   eq(resolveCustomParams("deepseek-v4.1-flash", "deepseek-v4.1-flash", "workbuddy", s), { contextLength: 200000 }, "请求模型 + 渠道");
   eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "trae", s), { reasoningEffort: "medium" }, "回落旧模型级配置");
-  eq(
-    resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", { ...s, modelCustomByChannel: { "deepseek-v4.1-flash": { loomy: { contextLength: 1 } } } }),
-    { contextLength: 1 },
-    "大小写逐字：大写键不命中走小写键"
-  );
+  eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", { ...s, modelCustomByChannel: { "deepseek-v4.1-flash": { loomy: { contextLength: 1 } } } }), { contextLength: 1 }, "大小写逐字：大写键不命中走小写键");
 } finally {
   for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
   Object.assign(adapters.ADAPTERS, orig);
 }
-try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 句柄未释放交给系统清理 */ }
-if (fail) { console.log(`\n结果：${fail} 失败`); process.exit(1); }
+try {
+  fs.rmSync(tmp, { recursive: true, force: true });
+} catch {
+  /* 句柄未释放交给系统清理 */
+}
+if (fail) {
+  console.log(`\n结果：${fail} 失败`);
+  process.exit(1);
+}
 console.log("\n结果：全部通过");
 process.exit(0);
