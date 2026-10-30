@@ -107,7 +107,7 @@ async function resetAndCopyToken() {
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">局域网地址</div>
-          <div class="set-desc">局域网内其他设备用这个地址访问管理页（反代端口 + 1）</div>
+          <div class="set-desc">局域网内其他设备用这个地址访问管理页</div>
         </div>
         <div class="lan-ctl">
           <span class="mono lan-text">{{ info?.lanUrl || (info && info.available ? "（未检测到局域网地址）" : "（地址不可用）") }}</span>
