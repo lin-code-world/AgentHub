@@ -475,7 +475,7 @@ onMounted(refresh);
           </div>
           <!-- 7 列合计 1052px：窄窗口横向滚动走全局 .table-scroll 的 overflow:auto，宽窗口一屏放下 -->
           <div class="table-scroll">
-            <table class="table table-bare" style="table-layout: fixed; width: 100%">
+            <table class="table table-bare models-table" style="table-layout: fixed; width: 100%">
               <colgroup>
                 <!-- 模型列：240px 容得下 deepseek-v4.1-flash 这类长 id，倍率灰字跟在 id 右侧 -->
                 <col style="width: 240px" />
@@ -1082,6 +1082,16 @@ onMounted(refresh);
 }
 .err-text {
   color: var(--err, #e05555);
+}
+/* 模型目录表格：字段值（含表头）统一居中。text-align 管不到 display:flex 的容器，
+   模型名与来源渠道两个 flex 单元格单独归中 */
+.models-table th,
+.models-table td {
+  text-align: center;
+}
+.models-table .model-id-line,
+.models-table .src-list {
+  justify-content: center;
 }
 .model-name {
   font-size: 12px;
