@@ -48,6 +48,7 @@ function defaultConfig(): AppConfig {
       modelFallback: {},
       modelReverseAliases: {},
       modelCustom: {},
+      modelCustomByChannel: {},
       autoFallbackEnabled: true,
       fallbackModel: "glm-5.2",
       channelFailover: true,

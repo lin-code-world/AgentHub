@@ -54,6 +54,7 @@ const defaultConfig: AppConfig = {
     modelFallback: {},
     modelReverseAliases: {},
     modelCustom: {},
+    modelCustomByChannel: {},
     autoFallbackEnabled: true,
     checkinAutoRules: {},
     fallbackModel: "",

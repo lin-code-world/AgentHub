@@ -256,6 +256,10 @@ function main() {
   );
   eq(mergeAliasRows([aliasModels[0]], "loomy", revAlias), { visibleIds: ["deepseek-v4.1-flash"], aliasOf: {} }, "目标行不存在时不合并");
 
+  console.log("\n[10] 按渠道自定义参数配置");
+  const config = require("../electron/backend/config.cjs");
+  eq(config.defaultConfig().proxy.modelCustomByChannel, {}, "默认配置含空 modelCustomByChannel");
+
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
     for (const f of fails) console.log(`  - ${f}`);

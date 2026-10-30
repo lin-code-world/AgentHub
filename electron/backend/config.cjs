@@ -139,6 +139,7 @@ function defaultConfig() {
       modelFallback: {},        // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）
       modelReverseAliases: {},  // 反向模型映射：统一请求名 → { [channelId]: 渠道实际模型名 }
       modelCustom: {},          // 模型自定义参数覆盖：modelId → { contextLength?, maxOutputTokens?, reasoningEffort? }
+      modelCustomByChannel: {}, // 按渠道的模型自定义参数：modelId → { channelId → { contextLength?, maxOutputTokens?, reasoningEffort? } }
       autoFallbackEnabled: true, // 不可用时自动切换模型（统一设置，默认开）
       fallbackModel: "",        // 全局统一回退模型（模型未知/号池耗尽时自动切换）
       channelFailover: true,    // 跨渠道故障转移：渠道耗尽/降级时请求内自动跳其他渠道（默认开）；

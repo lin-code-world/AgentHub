@@ -83,6 +83,8 @@ export interface ProxyConfig {
   modelReverseAliases: Record<string, Record<string, string>>;
   /** 模型参数自定义覆盖：modelId → 自定义参数（上下文长度、最大输出、思考强度） */
   modelCustom: Record<string, ModelCustomEntry>;
+  /** 按渠道的模型参数覆盖：实际模型 id → { [渠道 id]: 自定义参数 }（优先于 modelCustom） */
+  modelCustomByChannel: Record<string, Record<string, ModelCustomEntry>>;
   /** 不可用时自动切换模型（统一设置，默认开）：模型未知或号池耗尽时切到 fallbackModel */
   autoFallbackEnabled: boolean;
   /** 全局统一回退模型（autoFallbackEnabled 开启且 per-model 未配置时生效） */
