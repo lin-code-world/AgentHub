@@ -23,7 +23,7 @@ import ConfigLanSection from "./ConfigLanSection.vue";
 const app = useAppStore();
 
 /** Web 托管形态（I3）：通用 / 刷新周期依赖整份配置读写，浏览器形态拿不到真值，整块不展示；
- *  只留「局域网访问」（只读展示管理地址，令牌修改仍被服务端 deny 并给出原因） */
+ *  只留「局域网访问」（只读展示管理地址，令牌复制仍被服务端 deny 并给出原因） */
 const tabs = computed(() => (isWebTransport() ? SETTINGS_TABS.filter((t) => t.key === "lan") : SETTINGS_TABS));
 
 /** 模块懒挂载：首次切到才挂载（配置拉取 / 状态探测不白跑），之后 v-show 保活 */

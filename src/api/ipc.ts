@@ -122,8 +122,8 @@ export const getIsPortable = () => call<boolean>("get_is_portable");
  *  端口非法（0 / 65535 之类）时 available=false、地址为空 */
 export type AdminAccessInfo = { available: boolean; message: string; url: string; loopbackUrl: string; lanUrl: string; token: string };
 export const adminAccessInfo = () => call<AdminAccessInfo>("admin_access_info");
-/** 修改管理令牌（非空且 ≥16 位）：成功后浏览器里的管理会话全部作废，需重新登录 */
-export const adminSetToken = (token: string) => call<{ ok: boolean; message?: string }>("admin_set_token", { token });
+/** 重置管理令牌（每次调用都生成新的随机令牌）：旧令牌立即失效，浏览器里的管理会话全部作废，需重新登录 */
+export const adminResetToken = () => call<{ ok: boolean; token: string; message?: string }>("admin_reset_token");
 
 /** 订阅主进程广播（网关状态 / 额度刷新 / 配置变更），返回退订函数。
  *  Web 托管形态走 SSE（信封同形）；纯静态预览（mock）没有事件源 */

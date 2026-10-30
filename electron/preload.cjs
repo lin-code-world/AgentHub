@@ -24,7 +24,7 @@ const ALLOWED_COMMANDS = new Set([
   "browse_dir",
   // ===== 局域网管理访问（令牌明文只回给本机界面） =====
   "admin_access_info",
-  "admin_set_token",
+  "admin_reset_token",
   // ===== 反代网关 =====
   "proxy_status",
   "proxy_start",

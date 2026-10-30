@@ -40,7 +40,7 @@ export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc
 
 export interface AppConfig {
   theme: Theme;
-  /** 局域网管理访问令牌（落盘密文）：明文只经 admin_access_info 下发给设置页，只经 admin_set_token 修改（不允许清空） */
+  /** 局域网管理访问令牌（落盘密文）：明文只经桌面 IPC 下发给设置页，只经 admin_reset_token 重置（每次换新令牌） */
   admin: { token: string };
   schedule: {
     /** 关窗行为：开=销毁界面进程（释放渲染进程），托盘与后台服务照常运行，唤回时重新加载；

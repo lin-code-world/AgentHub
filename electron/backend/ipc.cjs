@@ -121,8 +121,8 @@ function registerCommands(handle, deps) {
   // ===== 局域网管理访问（管理地址与令牌；管理 HTTP 服务另行提供） =====
   // 令牌明文只经这条桌面 IPC 交给设置页展示，不进日志
   handle("admin_access_info", wrap(() => config.adminAccessInfo()));
-  handle("admin_set_token", wrap(({ token }) => {
-    const r = config.setAdminToken(token);
+  handle("admin_reset_token", wrap(() => {
+    const r = config.resetAdminToken();
     // 令牌变更后刷新内存快照，load_config 返回的 admin.token 才不会是旧密文
     if (r && r.ok) setC(config.loadConfig());
     return r;

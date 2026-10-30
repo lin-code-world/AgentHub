@@ -81,7 +81,7 @@ ok('modeOf("save_config") === "deny"（网页端不允许整份配置读写）',
 ok('denyReason("proxy_start") 是面向用户的文案', typeof commandTable.denyReason("proxy_start") === "string" && commandTable.denyReason("proxy_start").length >= 8, String(commandTable.denyReason("proxy_start")));
 ok('denyReason("proxy_pool") 为空（非 deny 命令无原因）', commandTable.denyReason("proxy_pool") == null, String(commandTable.denyReason("proxy_pool")));
 
-ok("任务 3 的管理命令在命令表里（桌面形态）", commands.has("admin_access_info") && commands.has("admin_set_token"), `admin_access_info=${commands.has("admin_access_info")} admin_set_token=${commands.has("admin_set_token")}`);
+ok("任务 3 的管理命令在命令表里（桌面形态）", commands.has("admin_access_info") && commands.has("admin_reset_token"), `admin_access_info=${commands.has("admin_access_info")} admin_reset_token=${commands.has("admin_reset_token")}`);
 
 (async () => {
   // 取 electron 的命令抛错时必须走 wrap 的 fail 收口（返回 { ok:false }），不能裸抛 reject 到调用方：

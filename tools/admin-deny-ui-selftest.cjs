@@ -138,7 +138,7 @@ async function main() {
     ["src/components/config/ConfigGeneralSection.vue", ["open_data_dir"]],
     ["src/views/proxy/ProxyLogView.vue", ["proxy_oplog_export"]],
     ["src/views/proxy/ProxyAgentsView.vue", ["proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_account_import_file", "proxy_scan", "proxy_scan_import", "proxy_ide_switch", "proxy_zcode_solve_captcha", "proxy_zcode_claim_mode", "proxy_zcode_device_status", "proxy_zcode_device_repair", "proxy_zcode_restore_mid", "proxy_zcode_switch_rollback"]],
-    ["src/components/config/ConfigLanSection.vue", ["admin_set_token"]],
+    ["src/components/config/ConfigLanSection.vue", ["admin_reset_token"]],
   ];
   for (const [file, cmds] of WIRE) {
     const src = fs.readFileSync(path.join(ROOT, file), "utf8");

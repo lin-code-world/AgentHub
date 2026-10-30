@@ -104,7 +104,7 @@ async function reachable(p) {
 
   // ===== 网页端文案表只有一张：27 条文案逐字固定（合并命令表时最容易手滑改字，这里当快照） =====
   // 桌面专用命令（admin_access_info 会吐明文令牌，绝不能漏）：网页端最容易被当成可用的越权入口
-  const browserOnly = ["admin_access_info", "admin_set_token", "browse_dir", "open_data_dir", "get_data_dir", "get_app_version", "load_config", "save_config"];
+  const browserOnly = ["admin_access_info", "admin_reset_token", "browse_dir", "open_data_dir", "get_data_dir", "get_app_version", "load_config", "save_config"];
   ok("8 条桌面专用命令在网页端 deny", browserOnly.every((c) => commandTable.modeOf(c) === "deny"), JSON.stringify(browserOnly.map((c) => [c, commandTable.modeOf(c)])));
 
   const DENY_SNAPSHOT = {
@@ -128,7 +128,7 @@ async function reachable(p) {
     proxy_zcode_switch_rollback: "浏览器访问时不可用：ZCode 设备相关操作请在桌面窗口操作",
     proxy_zcode_solve_captcha: "浏览器访问时不可用：人机校验请在桌面号池页领取",
     admin_access_info: "浏览器访问时不可用：请在桌面窗口查看令牌",
-    admin_set_token: "浏览器访问时不可用：请在桌面窗口修改令牌",
+    admin_reset_token: "浏览器访问时不可用：请在桌面窗口操作令牌",
     browse_dir: "浏览器访问时不可用：选择目录请在桌面窗口操作",
     open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
     get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",

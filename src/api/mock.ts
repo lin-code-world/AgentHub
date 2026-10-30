@@ -16,6 +16,8 @@ import { MODULES } from "../types";
 import pkg from "../../package.json";
 
 const KEY = "agenthub-config";
+/** 预览态的管理令牌：admin_reset_token 每次换新（与后端语义一致，刷新页面即重置） */
+let mockAdminToken = "mock-admin-token-0123456789abcdef";
 const NOW = Date.now();
 const ago = (minutes: number) => new Date(NOW - minutes * 60000).toISOString();
 /** 本地时区的今天（YYYY-MM-DD）：与后端 store.dayStr 同口径，签到记录的跨天判定用 */
@@ -430,11 +432,12 @@ export const mock = {
           url: `http://192.168.1.24:${adminPort}`,
           loopbackUrl: `http://127.0.0.1:${adminPort}`,
           lanUrl: `http://192.168.1.24:${adminPort}`,
-          token: "mock-admin-token-0123456789abcdef",
+          token: mockAdminToken,
         };
       }
-      case "admin_set_token":
-        return String(args?.token || "").trim().length >= 16 ? { ok: true, message: "令牌已更新，浏览器需重新登录" } : { ok: false, message: "令牌至少 16 位" };
+      case "admin_reset_token":
+        mockAdminToken = Array.from({ length: 48 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+        return { ok: true, token: mockAdminToken, message: "令牌已重置，旧令牌立即失效，浏览器需重新登录" };
 
       // ===== 反代网关（预览数据，语义对齐 backend/proxy） =====
       case "proxy_config_get":

@@ -285,7 +285,7 @@ async function rpcHttp(session, cmd, args, opts = {}) {
   // 改令牌：清空所有会话（Ruling 8：config.onAdminTokenChanged → clearSessions）
   const sA10 = loginUnit(makeClient());
   ok("A10 前置：新建会话后会话数 > 0", sA10.ok === true && adminCrypto.sessionCount() > 0, String(adminCrypto.sessionCount()));
-  config.setAdminToken("rotated-token-0123456789ab");
+  config.resetAdminToken();
   kToken = kTokenOf(config.adminAccessInfo().token); // 令牌换了，登录签名密钥跟着换（后续用例仍要登录）
   ok("A10 改令牌后所有旧会话失效（sessionCount 归零）", adminCrypto.sessionCount() === 0, String(adminCrypto.sessionCount()));
   const tsA10 = nowMs();

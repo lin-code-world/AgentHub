@@ -28,7 +28,7 @@ const proxyIndex = require("./proxy/index.cjs");
 const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
 
 /** 网页端不可用命令：值面向用户（原因 + 替代路径），前端提示与服务端 403 共用同一份文案。
- *  含浏览器不可用命令与桌面专用命令：令牌查看 / 修改、目录选择与打开、整份配置读写都只在桌面窗口可用
+ *  含浏览器不可用命令与桌面专用命令：令牌查看 / 重置、目录选择与打开、整份配置读写都只在桌面窗口可用
  *  ——admin_access_info 会吐出明文令牌，绝不能漏。
  *  注意 proxy_scan 同时在 READ 集合里（界面分类为只读），网页端仍必须拒：它读回本机登录态候选。 */
 const DENY_BROWSER = {
@@ -59,7 +59,7 @@ const DENY_BROWSER = {
   proxy_zcode_solve_captcha: "浏览器访问时不可用：人机校验请在桌面号池页领取",
   // —— browser 独有（Ruling 16）：桌面专用的框架命令，浏览器拿到就是越权（令牌明文 / 本机目录 / 整份配置）——
   admin_access_info: "浏览器访问时不可用：请在桌面窗口查看令牌",
-  admin_set_token: "浏览器访问时不可用：请在桌面窗口修改令牌",
+  admin_reset_token: "浏览器访问时不可用：请在桌面窗口操作令牌",
   browse_dir: "浏览器访问时不可用：选择目录请在桌面窗口操作",
   open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
   get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",

@@ -384,7 +384,7 @@ function saveConfigFromUI(cfg) {
   try {
     const disk = loadConfig();
     mergeOutOfBandProxy(disk, next);
-    // admin 令牌只经 admin_set_token 修改（不允许清空，也不能被设置页整份提交的旧快照覆盖回去）：以磁盘为准
+    // admin 令牌只经 admin_reset_token 重置（不能被设置页整份提交的旧快照覆盖回去）：以磁盘为准
     if (disk && disk.admin) next.admin = disk.admin;
   } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
   // 保存即视为已升级配置（托盘常驻强制只对 configVersion < 2 的旧配置生效）
@@ -393,9 +393,9 @@ function saveConfigFromUI(cfg) {
 }
 
 // ===== 管理令牌（局域网浏览器登录管理页用） =====
-// 令牌是敏感凭据：落盘走 encryptSecret 密文，明文只经桌面 IPC 交给设置页展示，
+// 令牌是敏感凭据：落盘走 encryptSecret 密文，明文只经桌面 IPC 交给设置页复制，
 // 不写日志、不进崩溃日志。
-// 令牌来源只有一处：本文件的 config.admin.token（ensureAdminToken 自动生成 / setAdminToken 修改）。
+// 令牌来源只有一处：本文件的 config.admin.token（ensureAdminToken 首次自动生成 / resetAdminToken 重置）。
 
 /** 令牌生成（幂等）：已有可解出的令牌直接复用，缺失 / 解不开才生成 24 字节随机串并加密落盘 */
 function ensureAdminToken() {
@@ -440,7 +440,7 @@ function adminAccessInfo() {
 
 /** 令牌变更钩子：管理令牌变更后要作废所有浏览器会话。
  *  会话模块（管理 HTTP 服务侧的 adminCrypto）启动时注册 clearSessions 即可接上，
- *  setAdminToken 成功后会逐一调用；返回退订函数。钩子抛错不影响令牌写入结果 */
+ *  resetAdminToken 成功后会逐一调用；返回退订函数。钩子抛错不影响令牌写入结果 */
 const adminTokenListeners = [];
 function onAdminTokenChanged(fn) {
   if (typeof fn !== "function") return () => {};
@@ -451,18 +451,17 @@ function onAdminTokenChanged(fn) {
   };
 }
 
-/** 修改管理令牌：非空且 ≥16 位（不允许清空）；成功后触发令牌变更钩子（作废所有管理会话，浏览器需重新登录） */
-function setAdminToken(token) {
-  const t = String(token == null ? "" : token).trim();
-  if (!t) return { ok: false, message: "令牌不能为空" };
-  if (t.length < 16) return { ok: false, message: "令牌至少 16 位" };
+/** 重置管理令牌：每次重新生成 24 字节随机串（48 位 hex）并加密落盘；
+ *  成功后触发令牌变更钩子（作废所有管理会话，浏览器需重新登录），返回新令牌明文供桌面界面复制 */
+function resetAdminToken() {
+  const token = crypto.randomBytes(24).toString("hex");
   const cfg = loadConfig();
-  cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(t) };
+  cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(token) };
   saveConfig(cfg);
   for (const fn of [...adminTokenListeners]) {
     try { fn(); } catch { /* 钩子失败不拦令牌更新（会话没清干净由重新登录兜底） */ }
   }
-  return { ok: true, message: "令牌已更新，浏览器需重新登录" };
+  return { ok: true, token, message: "令牌已重置，旧令牌立即失效，浏览器需重新登录" };
 }
 
 // 开机自启即时生效；便携版注册的是临时解压路径，开发模式不必注册
@@ -479,5 +478,5 @@ module.exports = {
   isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
   normalizeHm, normalizeJitter, wasLastLoadLegacy,
   saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS, validateProxyPort,
-  ensureAdminToken, adminAccessInfo, setAdminToken, onAdminTokenChanged,
+  ensureAdminToken, adminAccessInfo, resetAdminToken, onAdminTokenChanged,
 };

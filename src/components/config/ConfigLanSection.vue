@@ -9,8 +9,8 @@
   ============================================================
 -->
 <!-- 设置 · 局域网访问：管理地址（反代端口 + 1，只展示局域网地址）与访问令牌
-     （不展示令牌内容，仅提供复制 / 修改）。修改令牌后浏览器里的管理会话作废，需要重新登录。
-     令牌只有一处来源：config.admin.token（本页展示 / 修改的就是它）。 -->
+     （不展示令牌内容，仅提供复制；复制即重置——每次点击都生成新令牌、旧令牌立即失效，
+     浏览器里的管理会话随之作废，需要重新登录）。令牌只有一处来源：config.admin.token。 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
@@ -19,15 +19,14 @@ import { denyState, isWebTransport } from "../../api/caps";
 import type { AdminAccessInfo } from "../../api/ipc";
 
 const app = useAppStore();
-/** 浏览器形态（I3）：本页只作只读展示——令牌查看 / 修改在服务端被 deny，
+/** 浏览器形态（I3）：本页只作只读展示——令牌查看 / 重置在服务端被 deny，
  *  顶部提示直接写明「请在桌面端操作」，不让用户对着置灰按钮猜原因 */
 const webForm = isWebTransport();
-/** 令牌查看 / 复制 / 修改的命令门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
-const tokenGate = denyState("admin_access_info", "admin_set_token");
+/** 令牌复制（= 重置令牌）的命令门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
+const tokenGate = denyState("admin_access_info", "admin_reset_token");
 
 const info = ref<AdminAccessInfo | null>(null);
-const editing = ref(false);
-const newToken = ref("");
+const resetting = ref(false);
 const saveState = ref("");
 let stateTimer = 0;
 
@@ -62,25 +61,30 @@ function copyText(text: string, what: string) {
     .catch(() => feedback("复制失败"));
 }
 
-function startEdit() {
-  newToken.value = "";
-  editing.value = true;
-}
-
-/** 修改令牌：非空且 ≥16 位（不允许清空），成功后管理会话全部作废 */
-async function saveToken() {
-  const t = newToken.value.trim();
-  if (t.length < 16) {
-    feedback("令牌至少 16 位");
+/** 复制令牌 = 重置令牌：每次点击都生成新的随机令牌（旧令牌立即失效、浏览器会话作废），
+ *  拿到新令牌后写剪贴板；写失败保留「请再点一次」提示（再点会再换一次令牌） */
+async function resetAndCopyToken() {
+  if (resetting.value) return;
+  resetting.value = true;
+  let token = "";
+  try {
+    const r = await api.adminResetToken();
+    if (!r || !r.token) throw new Error(r && r.message ? r.message : "未返回新令牌");
+    token = r.token;
+  } catch (e) {
+    resetting.value = false;
+    feedback(`令牌重置失败：${(e as Error).message || e}`);
     return;
   }
+  await refresh();
   try {
-    await api.adminSetToken(t);
-    editing.value = false;
-    await refresh();
-    feedback("令牌已更新，浏览器需重新登录");
-  } catch (e) {
-    feedback(`保存失败：${(e as Error).message || e}`);
+    if (!navigator.clipboard) throw new Error("clipboard unavailable");
+    await navigator.clipboard.writeText(token);
+    feedback("新令牌已复制，旧令牌立即失效，浏览器需重新登录");
+  } catch {
+    feedback("令牌已更新，但复制失败，请再点一次");
+  } finally {
+    resetting.value = false;
   }
 }
 </script>
@@ -88,7 +92,7 @@ async function saveToken() {
 <template>
   <div class="lan-sec">
     <div class="tg-head">
-      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的复制与修改请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
+      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的复制请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
       <span v-if="saveState" class="tg-state">{{ saveState }}</span>
     </div>
 
@@ -113,28 +117,13 @@ async function saveToken() {
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">访问令牌</div>
-          <div class="set-desc">登录管理页用；修改后浏览器需重新登录</div>
+          <div class="set-desc">登录管理页用；每次点击复制都会生成新令牌，旧令牌立即失效，浏览器需重新登录</div>
         </div>
         <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top">
           <div class="lan-ctl">
-            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled" @click="info && copyText(info.token, '令牌')">复制</button>
-            <button class="btn btn-ghost" :disabled="tokenGate.disabled" @click="startEdit">修改</button>
+            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled || resetting" @click="resetAndCopyToken">{{ resetting ? "生成中…" : "复制" }}</button>
           </div>
         </el-tooltip>
-      </div>
-    </div>
-
-    <div v-if="editing" class="card">
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">修改令牌</div>
-          <div class="set-desc">至少 16 位，不允许清空；保存后浏览器里的管理会话作废，需重新登录</div>
-        </div>
-        <div class="lan-ctl">
-          <input v-model="newToken" class="input mono" style="width: 240px" placeholder="输入新令牌（≥16 位）" @keyup.enter="saveToken" />
-          <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top"><span><button class="btn btn-primary" :disabled="tokenGate.disabled" @click="saveToken">保存</button></span></el-tooltip>
-          <button class="btn btn-ghost" @click="editing = false">取消</button>
-        </div>
       </div>
     </div>
   </div>

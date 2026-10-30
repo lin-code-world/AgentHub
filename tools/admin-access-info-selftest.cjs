@@ -11,7 +11,7 @@
 // 管理令牌与局域网访问信息自测：首次启动自动生成 24 字节随机令牌（加密落盘、不写日志）；
 // admin_access_info 的管理地址 = 反代端口 + 1（局域网 / 回环两个地址，端口非法时明确不可用），
 // 不依赖管理服务是否已启动；
-// admin_set_token 校验（非空、≥16 位）并在成功后触发令牌变更钩子（会话模块启动时注册 clearSessions）；
+// admin_reset_token 每次生成新的 24 字节随机令牌并触发令牌变更钩子（会话模块启动时注册 clearSessions）；
 // 三处同步守护：ipc.cjs 注册 == preload 白名单 == src/api/ipc.ts 封装。
 // 目录沙箱运行，绝不触碰真实配置。用法：node tools/admin-access-info-selftest.cjs
 "use strict";
@@ -85,29 +85,27 @@ try {
   cfg.proxy.port = 9600;
   config.saveConfig(cfg);
 
-  // ===== C. admin_set_token 校验 =====
-  console.log("=== C. 令牌修改校验 ===");
-  ok("C1 空串被拒绝", config.setAdminToken("").ok === false);
-  ok("C2 15 位被拒绝", config.setAdminToken("x".repeat(15)).ok === false);
-  ok("C3 被拒后令牌不变", config.adminAccessInfo().token === t1);
-  const r = config.setAdminToken("n3w-t0ken-0123456789abcdef");
-  ok("C4 16 位以上接受", r.ok === true, JSON.stringify(r));
-  ok("C5 修改后令牌更新", config.adminAccessInfo().token === "n3w-t0ken-0123456789abcdef");
-  ok("C6 新令牌同样加密落盘", !fs.readFileSync(cfgPath, "utf8").includes("n3w-t0ken"));
+  // ===== C. 令牌重置（每次复制都换新令牌） =====
+  console.log("=== C. 令牌重置 ===");
+  const r1 = config.resetAdminToken();
+  ok("C1 重置返回新令牌（24 字节随机 = 48 位 hex）", r1.ok === true && /^[0-9a-f]{48}$/.test(r1.token), JSON.stringify(r1));
+  ok("C2 新令牌与旧令牌不同（旧令牌立即失效）", r1.token !== t1);
+  ok("C3 adminAccessInfo 读回新令牌", config.adminAccessInfo().token === r1.token);
+  ok("C4 新令牌同样加密落盘（明文不进 config.json）", !fs.readFileSync(cfgPath, "utf8").includes(r1.token));
+  const r2 = config.resetAdminToken();
+  ok("C5 每次重置都换新令牌", r2.token !== r1.token && config.adminAccessInfo().token === r2.token, `${r2.token} / ${r1.token}`);
 
   // ===== D. 令牌变更钩子（会话模块 adminCrypto 启动时注册 clearSessions；这里验接线本身） =====
   console.log("=== D. 令牌变更钩子 ===");
   let hookCalls = 0;
   const offHook = config.onAdminTokenChanged(() => { hookCalls++; });
-  config.setAdminToken("hook-t0ken-0123456789abcdef");
-  ok("D1 修改令牌后钩子被调用一次", hookCalls === 1, String(hookCalls));
-  config.setAdminToken("again-t0ken-0123456789ab");
-  ok("D2 再次修改令牌钩子再被调用", hookCalls === 2, String(hookCalls));
-  config.setAdminToken("short");
-  ok("D3 校验被拒不触发钩子", hookCalls === 2, String(hookCalls));
+  config.resetAdminToken();
+  ok("D1 重置令牌后钩子被调用一次", hookCalls === 1, String(hookCalls));
+  config.resetAdminToken();
+  ok("D2 再次重置钩子再被调用", hookCalls === 2, String(hookCalls));
   offHook();
-  config.setAdminToken("after-off-0123456789abc");
-  ok("D4 退订后不再触发", hookCalls === 2, String(hookCalls));
+  config.resetAdminToken();
+  ok("D3 退订后不再触发", hookCalls === 2, String(hookCalls));
 
   // ===== E. 三处同步：ipc.cjs 注册 == preload 白名单 == src/api/ipc.ts 封装 =====
   console.log("=== E. IPC 三处同步 ===");
@@ -115,7 +113,7 @@ try {
   const ipcSrc = fs.readFileSync(path.join(ROOT, "electron", "backend", "ipc.cjs"), "utf8");
   const preloadSrc = fs.readFileSync(path.join(ROOT, "electron", "preload.cjs"), "utf8");
   const apiSrc = fs.readFileSync(path.join(ROOT, "src", "api", "ipc.ts"), "utf8");
-  for (const cmd of ["admin_access_info", "admin_set_token"]) {
+  for (const cmd of ["admin_access_info", "admin_reset_token"]) {
     ok(`E[${cmd}] ipc.cjs 已注册`, ipcSrc.includes(`"${cmd}"`));
     ok(`E[${cmd}] preload 白名单已放行`, preloadSrc.includes(`"${cmd}"`));
     ok(`E[${cmd}] src/api/ipc.ts 已封装`, apiSrc.includes(`"${cmd}"`));
