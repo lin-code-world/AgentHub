@@ -5040,11 +5040,19 @@ function modelOwners(model, cfg) {
   const c = cfg || proxyConfig();
   const rev = c.modelReverseAliases || {};
   const wanted = String(model || "");
+  // 映射目标被禁用的渠道不算归属（逐字比对 disabledModels）：否则请求名配了
+  // `→ 已关闭模型` 的反向映射后，智能路由仍会把请求打进该渠道、把已关闭的模型发给上游。
+  // 判据必须同时作用于下面两个分支：渠道目录里逐字存在请求名时，exact 分支会把它加回来。
+  const disabledSet = new Set((c.disabledModels || []).map((s) => String(s)));
+  const targetDisabled = (ch) => {
+    const t = resolveModelTarget(wanted, ch, c);
+    return !!t && disabledSet.has(t);
+  };
   const mapped = [];
   const entry = reverseAliasEntry(model, c);
   // channelOn 过滤（与目录循环 4114 同口径）：反向映射命中的已关闭渠道不算归属——
   // 否则统一请求名的唯一归属/固定策略可把请求强制打进已关闭渠道
-  if (entry) mapped.push(...Object.keys(entry).filter((ch) => ADAPTERS[ch] && channelOn(ch, c) && reverseAliasTarget(model, ch, c)));
+  if (entry) mapped.push(...Object.keys(entry).filter((ch) => ADAPTERS[ch] && channelOn(ch, c) && !targetDisabled(ch) && reverseAliasTarget(model, ch, c)));
   const out = [];
   const seen = new Set();
   for (const ch of mapped) {
@@ -5062,6 +5070,8 @@ function modelOwners(model, cfg) {
     // 关闭的渠道不算归属：单源模型也判「不可用」（resolveChannel 拿到空列表 → 400 给可用模型提示），
     // 多源模型自动收窄到启用渠道（故障转移备选同步收窄，路由打分与备选队列全走这里）
     if (!channelOn(channel, c)) continue;
+    // 目录里逐字有请求名、但该渠道上它被映射到已禁用模型时同样剔除
+    if (targetDisabled(channel)) continue;
     if (ad.models().some((m) => String(m) === wanted)) {
       seen.add(channel);
       exact.push(channel);

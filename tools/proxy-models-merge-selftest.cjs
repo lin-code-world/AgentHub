@@ -219,6 +219,27 @@ function main() {
     Object.assign(adapters.ADAPTERS, orig2);
   }
 
+  console.log("\n[8] 映射目标被禁用时剔除渠道");
+  const orig3 = { ...adapters.ADAPTERS };
+  try {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+    });
+    const revCfg = {
+      channelEnabled: {},
+      disabledModels: ["DeepSeek-V4.1-Flash"],
+      modelReverseAliases: { "deepseek-v4.1-flash": { loomy: "DeepSeek-V4.1-Flash" } },
+    };
+    const owners = adapters.modelOwners("deepseek-v4.1-flash", revCfg);
+    check("映射目标被禁用：loomy 不进归属", !owners.includes("loomy"), JSON.stringify(owners));
+    check("其他渠道仍保留", owners.includes("workbuddy"), JSON.stringify(owners));
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, orig3);
+  }
+
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
     for (const f of fails) console.log(`  - ${f}`);
