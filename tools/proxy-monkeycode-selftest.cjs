@@ -55,6 +55,9 @@ console.log("\n[1] 站点身份与端点常量");
   eq(endpoints.cliNameFor("anthropic"), "opencode", "anthropic 接口也用 opencode（不映射 claude）");
   eq(endpoints.cliNameFor("openai_responses"), "opencode", "openai_responses 接口也用 opencode（不映射 codex）");
   eq(endpoints.cliNameFor(""), "opencode", "缺接口类型也回落 opencode");
+  // 任务跑完仍占账号，用完即停（否则下一个请求撞 10811）
+  eq(endpoints.TASKS_STOP_PATH, "/api/v1/users/tasks/stop", "停止任务端点");
+  ok(typeof task.stopTask === "function", "adapter 依赖的 stopTask 已导出");
 }
 
 console.log("\n[2] 建任务：messages → prompt + 请求体");

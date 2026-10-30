@@ -165,18 +165,24 @@ function makeMonkeyCode(channel, deps) {
         imageId: snap.imageId,
       });
 
-      await stream.runTaskStream({
-        region,
-        section,
-        deps: bundle,
-        session: snap.session,
-        taskId,
-        prompt: prompt.prompt,
-        requestedModel,
-        includeUsage: !!(body.stream_options && body.stream_options.include_usage === true),
-        emit,
-        signal: (ctx && ctx.meta && ctx.meta.signal) || null,
-      });
+      try {
+        await stream.runTaskStream({
+          region,
+          section,
+          deps: bundle,
+          session: snap.session,
+          taskId,
+          prompt: prompt.prompt,
+          requestedModel,
+          includeUsage: !!(body.stream_options && body.stream_options.include_usage === true),
+          emit,
+          signal: (ctx && ctx.meta && ctx.meta.signal) || null,
+        });
+      } finally {
+        // 任务跑完一轮后仍是 processing、继续占账号：本渠道不复用任务（每次请求都新建），
+        // 用完必须主动停掉释放账号，否则下一个请求必然撞 10811「已有运行中的任务」。
+        task.stopTask({ region, section, deps: bundle, session: snap.session, taskId }).catch(() => {});
+      }
       return { status: 200, planLimit: false };
     },
 

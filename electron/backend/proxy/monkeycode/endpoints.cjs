@@ -31,6 +31,8 @@ const MODELS_PATH = "/api/v1/users/models";
 const TASKS_PATH = "/api/v1/users/tasks";
 const TASKS_DISCOVER_QUERY = "?page=1&size=5";
 const TASK_STREAM_PATH = "/api/v1/users/tasks/stream";
+/** 停止任务（PUT {id}）：任务跑完一轮后仍保持 processing、占用账号，同一个号再建任务会 10811，用完必须停 */
+const TASKS_STOP_PATH = "/api/v1/users/tasks/stop";
 /** 用户可用镜像列表：remark=="devbox" 的是公共开发镜像，建任务要它的 UUID */
 const IMAGES_PATH = "/api/v1/users/images";
 /** 钱包：积分 + 每日 token 额度（余额查询） */
@@ -115,6 +117,7 @@ module.exports = {
   TASKS_PATH,
   TASKS_DISCOVER_QUERY,
   TASK_STREAM_PATH,
+  TASKS_STOP_PATH,
   IMAGES_PATH,
   WALLET_PATH,
   CHECKIN_PATH,

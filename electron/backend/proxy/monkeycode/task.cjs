@@ -205,4 +205,32 @@ async function createTask({ region, section, deps, session, prompt, target, imag
   return taskId;
 }
 
-module.exports = { buildPrompt, buildBody, createTask, userInputData, statusError, businessError, taskIdOf, RESOURCE };
+/**
+ * 停止任务：任务跑完一轮后**仍保持 processing**（上游设计如此，等下一轮输入、直到 VM 到期），
+ * 占用账号会让同一个号再建任务收到 10811（已有运行中的任务）。本渠道不复用任务（每次请求都新建），
+ * 所以用完必须主动停掉，否则下一个请求必然撞上"账号忙"。
+ *
+ * 尽力而为：失败只记一条排障日志，不抛（清理动作出问题不能影响已经拿到的回答）。
+ */
+async function stopTask({ region, section, deps, session, taskId }) {
+  const id = String(taskId || "").trim();
+  if (!id) return false;
+  const base = regionStore.baseUrl(region, section);
+  const url = `${base}${endpoints.TASKS_STOP_PATH}`;
+  const headers = {
+    ...endpoints.jsonHeaders(region, section),
+    Cookie: endpoints.cookieHeader(session),
+    "Content-Type": "application/json",
+  };
+  try {
+    const r = await deps.httpJson(url, { method: "PUT", headers, body: JSON.stringify({ id }) });
+    const ok = !!(r && r.ok);
+    deps.verbose && deps.verbose(ok ? `任务已停止 task=${id}` : `任务停止返回 HTTP ${(r && r.status) || "?"} task=${id}`);
+    return ok;
+  } catch (e) {
+    deps.verbose && deps.verbose(`任务停止失败（忽略）task=${id}：${(e && e.message) || e}`);
+    return false;
+  }
+}
+
+module.exports = { buildPrompt, buildBody, createTask, stopTask, userInputData, statusError, businessError, taskIdOf, RESOURCE };
