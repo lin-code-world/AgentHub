@@ -279,7 +279,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
         <!-- 增量刷新失败但表里还有旧数据：旧行保留 + 顶部小条提示（刷新恢复即消失，不逐次弹窗） -->
         <div v-if="incError" class="inc-warn">日志增量刷新失败，已保留上次数据：{{ incError }} <button class="btn-link btn-sm" @click="incError = ''; load()">重试</button></div>
         <div class="table-scroll">
-          <table class="table">
+          <table class="table log-table">
             <thead><tr>
               <th>时间</th><th>等级</th><th>操作</th><th>渠道</th><th>对象</th><th>内容</th>
             </tr></thead>
@@ -381,10 +381,15 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
   background: color-mix(in srgb, var(--err) 14%, transparent);
 }
 
-/* 内容列吃剩余宽度，长文本省略号（悬停 tooltip 看全） */
+/* 非内容列（时间/等级/操作/渠道/对象）的值居中；表头本就全局居中（global.css） */
+.log-table td:not(.log-msg) {
+  text-align: center;
+}
+
+/* 内容列吃剩余宽度、宽度加大（其他列 nowrap 自然收缩到内容宽度），长文本省略号（悬停 tooltip 看全） */
 .log-msg {
-  max-width: 0;
-  min-width: 220px;
+  width: 100%;
+  min-width: 340px;
 }
 .log-msg span {
   display: block;

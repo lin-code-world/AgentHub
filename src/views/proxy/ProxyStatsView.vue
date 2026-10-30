@@ -501,7 +501,14 @@ onUnmounted(() => {
                     <span>{{ fmtTime(r.ts) }}</span>
                   </el-tooltip>
                 </td>
-                <td class="mono">{{ r.model || "-" }}</td>
+                <td class="mono">
+                  <template v-if="r.modelActual && r.modelActual !== r.model">
+                    <span>{{ r.model || "-" }}</span>
+                    <span class="model-arrow">→</span>
+                    <span class="model-actual">{{ r.modelActual }}</span>
+                  </template>
+                  <template v-else>{{ r.model || "-" }}</template>
+                </td>
                 <td>{{ channelName(r.channel) }}</td>
                 <td class="mono">{{ r.keyName || "-" }}</td>
                 <td>{{ r.accountName || "-" }}</td>
@@ -627,6 +634,15 @@ onUnmounted(() => {
   font-size: 11.5px;
   color: var(--text-3);
   font-family: var(--font-mono);
+}
+
+/* 明细模型列：请求名 → 实际转发名（仅映射 / 回退 / 适配器改写时出现箭头） */
+.model-arrow {
+  margin: 0 4px;
+  color: var(--text-3);
+}
+.model-actual {
+  color: var(--text-2);
 }
 
 /* 三个表（TOP / 各 Key / 明细）字段值居中；th 全局 .tbl 已居中，这里覆盖默认左对齐的 td */

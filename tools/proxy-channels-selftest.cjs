@@ -283,6 +283,18 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
         eq(err && err.status, 400, `Loomy chat「${bad}」抛 400`);
         eq(wrong.sent.length, 0, `Loomy chat「${bad}」不发上游请求`);
       }
+
+      // ④ 反向映射：ctx.model 才是要发给上游的真值，body.model（客户端请求名）不得覆盖它。
+      // 与 CatPaw 的 withUpstreamModel 同口径；漏掉就会把统一虚拟名发给上游（目录校验直接 400）
+      const mapped = mk();
+      await mapped.adapter.chat({
+        account: {},
+        secrets: { token: "test-session" },
+        model: "DeepSeek-V4.1-Flash",
+        body: { model: "deepseek-v4.1-flash", messages: [] },
+        emit: () => {},
+      });
+      eq(mapped.sent[0] && mapped.sent[0].model, "DeepSeek-V4.1-Flash", "Loomy chat 发上游的是 ctx.model（映射目标），不是 body.model（请求名）");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

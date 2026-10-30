@@ -663,7 +663,10 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // hosted_tool 退化为 auto 等），由路由层从 toInternal() 取到后传进来。
   // 只进操作日志的 detail，**不落 usage_requests**——加列要走 DB 迁移，而这条信息的用途是
   // 「这次请求丢了什么」的排查线索，日志页本来就能查（issue #126 作者给的三个选项里选 op_logs）
-  const usageRow = { ts: startedAt, reqId, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: String(body.model || ""), status: 0, convNotes: Array.isArray(convNotes) ? convNotes.join(" | ").slice(0, 300) : "" };
+  const usageRow = { ts: startedAt, reqId, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: String(body.model || ""), modelActual: "", status: 0, convNotes: Array.isArray(convNotes) ? convNotes.join(" | ").slice(0, 300) : "" };
+  // 真正发给上游的模型名（反向映射 / 模型回退 / 适配器改写后的真值），链内赋值、record 统一兜进流水。
+  // 必须链外声明：usedTargetModel 在 try 内、鉴权失败的早期 record 调用早于它声明，直接读会踩 TDZ。
+  let actualModelSent = "";
 
   // 尝试级明细：每次真实上游请求一条（渠道 / 账号 / 结果 / 耗时）。
   // 只进 op_logs 的 detail，**不落 usage_requests**（加列要走 DB 迁移，而这条信息的用途是
@@ -682,6 +685,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
   const record = (extra) => {
     usageRow.latencyMs = Date.now() - startedAt;
     Object.assign(usageRow, extra || {});
+    // 实际转发名：早期失败（鉴权 / 参数校验）没有上游请求，保持空串，明细只显示请求名
+    if (!usageRow.modelActual && actualModelSent) usageRow.modelActual = actualModelSent;
     store.insertUsage(usageRow);
     if (usageRow.accountId) store.bumpAccountUsage(usageRow.accountId, (usageRow.promptTokens || 0) + (usageRow.completionTokens || 0));
     // 操作日志：每条代理请求一条（成功 info / 4xx warn / 5xx+网络 error）；
@@ -1040,6 +1045,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
         // 非反向映射模型保留原有“指定渠道透传试错”语义（例如 fixed 路由下的未知模型）。
         const targetModel = mappedTarget || chainModel;
         usedTargetModel = targetModel; // 承接给链外 record()，见上面的声明注释
+        actualModelSent = targetModel; // 流水 model_actual：这一轮真正要发给上游的模型名
         const strategy = (store.listAgents().find((a) => a.id === chan) || {}).poolStrategy || "expire_first";
         const tried = new Set();
         const triedAccountNames = []; // 本渠道实际选中的账号名（最终错误文案用；去重保序）
@@ -1123,7 +1129,10 @@ async function handleChat(req, res, settings, surface, convNotes) {
             // 适配器可能改写实际转发的模型名（Cline 短名补池前缀）：记入 usedForwardModel 供链外
             // record() 以 rev→ 呈现「请求 X 实际发 Y」（否则只有适配器内部知道，属静默改写）。
             // ⚠ 不能写 usedTargetModel——它同时喂 pool.noteSuccess，键须与冷却同口径
-            if (r && r.model) usedForwardModel = r.model;
+            if (r && r.model) {
+              usedForwardModel = r.model;
+              actualModelSent = r.model; // 适配器改写了转发名：流水记最终发出去的那个
+            }
             if (r && r.planLimit) {
               pool.coolAccount(acc.id, "credit");
               lastErr = Object.assign(new Error("积分不足"), { status: 402 });

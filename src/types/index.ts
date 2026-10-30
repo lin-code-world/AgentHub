@@ -331,6 +331,8 @@ export interface ProxyUsageRow {
   accountId: string;
   accountName: string;
   model: string;
+  /** 实际发给上游的模型名（反向映射 / 模型回退 / 适配器改写后的真值）；空串 = 与 model 相同 */
+  modelActual?: string;
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens?: number;

@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS usage_requests (
   account_id TEXT NOT NULL DEFAULT '',
   account_name TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
+  model_actual TEXT NOT NULL DEFAULT '',
   prompt_tokens INTEGER NOT NULL DEFAULT 0,
   completion_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
@@ -294,6 +295,11 @@ function open() {
   } catch { /* 迁移失败不阻断启动，下次再试 */ }
   try {
     db.exec("ALTER TABLE usage_requests ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0");
+  } catch { /* 已存在 */ }
+  // 在线迁移：usage_requests 实际转发模型名（反向映射 / 模型回退 / 适配器改写后的真值）。
+  // 与 model 列（客户端请求名）分开存：明细要同时显示两者，且历史行空串表示「与请求名相同」。
+  try {
+    db.exec("ALTER TABLE usage_requests ADD COLUMN model_actual TEXT NOT NULL DEFAULT ''");
   } catch { /* 已存在 */ }
   // 在线迁移：keys.route_order（per-key 路由策略覆盖，''=跟随全局）/ agents.cost_tier（渠道成本档，''=未标注按 normal）
   try {
@@ -1257,8 +1263,8 @@ function listAllCreditPackages() {
 function insertUsage(row) {
   open();
   db.prepare(
-    `INSERT INTO usage_requests (ts, req_id, key_id, key_name, channel, account_id, account_name, model, prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, status, error)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO usage_requests (ts, req_id, key_id, key_name, channel, account_id, account_name, model, model_actual, prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, status, error)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     row.ts || Date.now(),
     row.reqId || "",
@@ -1268,6 +1274,7 @@ function insertUsage(row) {
     row.accountId || "",
     row.accountName || "",
     row.model || "",
+    row.modelActual || "",
     row.promptTokens || 0,
     row.completionTokens || 0,
     row.cacheReadTokens || 0,
@@ -1657,6 +1664,8 @@ function usageView(r, accNames, keyNames) {
     // 透出时以当前账号名优先（账号已删/未命名则回退快照），明细与最近请求口径一致
     accountName: (accNames && accNames.get(r.account_id)) || r.account_name,
     model: r.model,
+    // 历史行（加列之前）是空串：前端按「与请求名相同」处理，不显示箭头
+    modelActual: r.model_actual || "",
     promptTokens: r.prompt_tokens, completionTokens: r.completion_tokens,
     cacheReadTokens: r.cache_read_tokens || 0, cacheCreationTokens: r.cache_creation_tokens || 0,
     ttftMs: r.ttft_ms, latencyMs: r.latency_ms, status: r.status, error: r.error,

@@ -70,7 +70,10 @@ function makeLoomy(deps) {
       const session = sessionOf(secrets);
       if (!session) throw Object.assign(new Error("Loomy 账号缺少 session，无法转发（请重新登录）"), { status: 401 });
 
-      const rawModel = String((body && body.model) || model || "");
+      // ctx.model 才是要发给上游的真值（别名 / 反向映射 / 模型回退之后的模型名），body.model 仍是
+      // 客户端请求名（响应 model 字段按原值回显）。与 CatPaw 的 withUpstreamModel 同口径：
+      // 直接读 body.model 会把统一虚拟名发给上游，Loomy 按目录校验会直接 400。
+      const rawModel = String(model || (body && body.model) || "");
       // 目录校验：只认目录里的精确写法。目录为空（从未拉取）时无从判断，保持原样透传
       const catalogIds = models.list(rules.rulesDir(), channel);
       if (catalogIds.length && !models.resolveFrom(catalogIds, rawModel)) {
@@ -92,7 +95,7 @@ function makeLoomy(deps) {
       const c = cfg();
       const base = String(c.modelBase || endpoints.modelBaseUrl()).replace(/\/+$/, "");
       const url = `${base}/chat/completions`;
-      const bodyText = JSON.stringify({ ...payload, stream: true });
+      const bodyText = JSON.stringify({ ...payload, model: rawModel, stream: true });
       const firstByteMs = firstByteBudgetMs(bodyText);
 
       const { resp, cancelTimer } = await fetchStream(url, {

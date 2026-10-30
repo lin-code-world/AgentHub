@@ -12,13 +12,13 @@
 //
 // deepseek 系模型只认 <image_base64> 标记，标准 OpenAI 的 image_url 会被上游当文本读
 // （用户报的「图片被截断 / 不支持图片识别」）；其余模型保持 image_url。
-// 判断用客户端请求名（body.model 此刻还没被 wire 改写）：目录名与映射别名都含 deepseek，
-// 宽松匹配让两段链路都成立。
+// 判断用「实际要发给上游的模型名」（adapter 传入的 ctx.model，即映射后的真值）：目录名与
+// 映射别名都可能含 deepseek，宽松匹配让直连与反向映射两段链路都成立。
 "use strict";
 
-// 客户端请求名是否偏好 <image_base64> 标记形态
-function prefersTagFormat(requestedModel) {
-  return String(requestedModel || "").toLowerCase().includes("deepseek");
+// 上游模型名是否偏好 <image_base64> 标记形态
+function prefersTagFormat(model) {
+  return String(model || "").toLowerCase().includes("deepseek");
 }
 
 // 把一个 OpenAI 请求体里的图片块改写为 <image_base64> 文本标记。
