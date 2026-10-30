@@ -85,6 +85,14 @@ function normalizeZcodeSnapshot(raw) {
   return { channel: "zcode", ...record, expiresAt: 0, source: "json" };
 }
 
+/** 有些渠道的会话寿命只有客户端侧的固定值、上游既不回到期字段也没有续期接口，只能本地推算：
+ *  MonkeyCode 的 session 是 30 天硬上限，按「粘贴时刻 + 30 天」落到 expires_at，号池的到期列、
+ *  临期提示与 expire_first 排序才有真值可用。其余渠道没有可推算的会话寿命，留 0（=不过期）。 */
+function defaultExpiresAt(channel) {
+  if (channel === "monkeycode" || channel === "monkeycode_intl") return Date.now() + 30 * 86400000;
+  return 0;
+}
+
 // 一条记录归一化为 addAccount 入参；token 与 refreshToken 均为空返回 null（交由上层按无效计数）
 function normalizeAccountJson(raw, fallbackChannel) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -95,6 +103,10 @@ function normalizeAccountJson(raw, fallbackChannel) {
   let token = String(raw.token ?? raw.accessToken ?? raw.access_token ?? raw.jwt ?? raw.JWT ?? raw.zcodeJwtToken ?? raw.zcodejwttoken ?? "").trim();
   token = token.replace(/^Cloud-IDE-JWT\s+/i, "").replace(/^Bearer\s+/i, "");
   let refreshToken = String(raw.refreshToken ?? raw.refresh_token ?? raw.apiKey ?? raw.codingPlanKey ?? "").trim();
+  // MonkeyCode：session 常以 cookie 名或 session 字段出现（浏览器里复制到的就是这两种形态）
+  if ((channel === "monkeycode" || channel === "monkeycode_intl") && !token) {
+    token = String(raw.session ?? raw[require("./monkeycode/endpoints.cjs").SESSION_COOKIE_NAME] ?? "").trim();
+  }
   // 智能识别：如果是 zcode 渠道，且 token 看起来是 32 位 apiKey.secret（2段且非 JWT），将其归一化到 refreshToken
   if (channel === "zcode") {
     if (token && !refreshToken && /^[a-f0-9]{32}\.[a-zA-Z0-9_-]+$/i.test(token)) {
@@ -116,13 +128,18 @@ function normalizeAccountJson(raw, fallbackChannel) {
   if (!uid && refreshToken) {
     uid = crypto.createHash("sha256").update(refreshToken).digest("hex").slice(0, 16);
   }
+  // MonkeyCode 的凭据本身就是身份（session），既不是 JWT 也没有 uid 字段可解。取一段哈希当 uid：
+  // 号池 JSON 导入按 (渠道, uid) 去重，uid 留空会让同一个号被反复导入成多条，额度排序与辨认都会失真。
+  if (!uid && (channel === "monkeycode" || channel === "monkeycode_intl")) {
+    uid = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+  }
   const out = {
     channel,
     uid,
     name: String(raw.name ?? raw.remark ?? "").trim(),
     token,
     refreshToken,
-    expiresAt: Number(raw.expiresAt ?? raw.expires_at ?? 0) || 0,
+    expiresAt: Number(raw.expiresAt ?? raw.expires_at ?? 0) || defaultExpiresAt(channel),
     source: "json",
   };
   // zcode 专属画像字段（provider/email 透传 meta，切号快照缺失时这些是仅有的渠道身份）

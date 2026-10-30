@@ -174,7 +174,7 @@ let smsTimer: ReturnType<typeof setTimeout> | undefined;
 // 保留该数组作为"渠道感知可用性"的机制位：将来某渠道若确实无 OAuth，把 id 加进来即可。
 // CatPaw（美团）：上游没有开放授权页流程，凭据是**桌面端会话 Cookie 值**——
 // 只能「从本机客户端导入登录态」或「粘贴 JSON」，故屏蔽 OAuth 页签。
-const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw"];
+const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw", "monkeycode", "monkeycode_intl"];
 // 仅手机验证码登录的渠道：AutoClaw 国内版与 Loomy —— 两家上游都没有网页授权码那套，
 // 官方客户端唯一的自助入口就是手机号 + 验证码，故把 OAuth 页签换成「手机验证码」
 const SMS_ONLY_CHANNELS: ProxyChannelId[] = ["autoclaw", "loomy"];
@@ -224,6 +224,9 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // ModelScope（魔搭）凭据形态特殊：不是 JSON 快照，而是 ms- 访问令牌。
   // 故它的「粘贴」页签改为专用令牌输入（见 tokenPane），并隐藏不适用的两种 JSON 方式。
   if (channel === "modelscope" && (key === "file" || key === "local")) return false;
+  // MonkeyCode：本机没有「扫描导入」这一路——它是纯网页产品、没有可扫描的桌面登录态，scanner 也不认这个渠道。
+  // 留着页签只会让用户点了得到「未发现可导入的登录态」，故隐藏；「粘贴 JSON / 文件」两条是真能用的。
+  if ((channel === "monkeycode" || channel === "monkeycode_intl") && key === "local") return false;
   return true;
 }
 

@@ -492,6 +492,14 @@ const DEFAULTS = {
       integrationBase: "https://loomyad.xunfei.cn",
       modelBase: "https://loomyad.xunfei.cn/api/v1",
     },
+    // ===== MonkeyCode 双站（国内版 / 国际版）=====
+    // 站点身份（域名、Cookie 名、ACP 事件词表）不属于可配置项，唯一事实源在 monkeycode/region.cjs
+    // 与 monkeycode/endpoints.cjs。这里给的是**部署相关**覆盖入口：
+    //   baseUrl      自建 / 私有云站点改这里（Origin/Referer 仍按站点真身发，那是上游的来源判定）
+    //   hostId       公共宿主固定 public_host；自建站点的宿主名不同
+    //   streamIdleMs 任务流空闲判定（下限 30 秒）
+    monkeycode: {},
+    monkeycode_intl: {},
   },
 };
 

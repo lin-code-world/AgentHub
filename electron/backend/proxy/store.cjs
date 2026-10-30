@@ -214,6 +214,11 @@ const CHANNELS = [
   // Loomy（讯飞）：无状态 OpenAI 兼容，HMAC-SHA1 签名（账号域），手机验证码登录，每日签到
   // 刷赠送积分。无地区分叉。
   { id: "loomy", display: "Loomy（讯飞）", domain: "loomyad.xunfei.cn", costTier: "low" },
+  // MonkeyCode（长亭科技）双站：同套协议、两个站点，因此是两个渠道而不是一个渠道的开关项——
+  // 账号池与模型清单都按站点分份，合成一格会让两站同名模型互相覆盖（与 Qoder / AutoClaw 双区同口径）。
+  // 凭据只有「粘贴 session」一路：session 30 天硬上限、上游无续期接口，过期只能重新粘贴。
+  { id: "monkeycode", display: "MonkeyCode 国内版", domain: "monkeycode-ai.com" },
+  { id: "monkeycode_intl", display: "MonkeyCode 国际版", domain: "monkeycode-ai.net" },
 ];
 
 // 内置渠道 id 的只读名单：凡是「这一行是不是提供商」的判定都走它，而不是看 kind 列——
