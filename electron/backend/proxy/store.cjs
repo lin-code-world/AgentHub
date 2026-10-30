@@ -1645,6 +1645,22 @@ function cleanupUsage(days, all) {
   return { deleted: r.changes, cutoff };
 }
 
+/** 手动清理操作日志：all=true 清空整表；否则删保留线之前的记录。
+ *  保留期默认 30 天、与 gc() 同口径（op_logs 没有可配保留期，写死的 30 天就是它现在的自动回收线）。
+ *  返回 { deleted, cutoff } 与 cleanupUsage 同形，前端按同一套文案展示。 */
+function cleanupOpLogs(days, all) {
+  open();
+  if (all) {
+    const r = db.prepare("DELETE FROM op_logs").run();
+    return { deleted: r.changes, cutoff: 0 };
+  }
+  const raw = Number(days);
+  const n = Math.min(3650, Math.max(1, Math.round(Number.isFinite(raw) && raw > 0 ? raw : 30)));
+  const cutoff = Date.now() - n * 86400000;
+  const r = db.prepare("DELETE FROM op_logs WHERE ts < ?").run(cutoff);
+  return { deleted: r.changes, cutoff };
+}
+
 function recentRequests(limit) {
   open();
   const rows = db.prepare("SELECT * FROM usage_requests ORDER BY ts DESC LIMIT ?").all(Math.min(50, limit || 10));
@@ -1746,5 +1762,5 @@ module.exports = {
   insertUsage, statsToday, statsTrend, statsTop, statsDetail, recentRequests,
   normRange, pickGranularity, statsOverview, statsSummary, statsSeries, statsTopRich,
   statsKeys, statsStatus, statsTokenMix,
-  cleanupUsage, setUsageRetention,
+  cleanupUsage, setUsageRetention, cleanupOpLogs,
 };

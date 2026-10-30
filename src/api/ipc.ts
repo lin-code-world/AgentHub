@@ -386,6 +386,9 @@ export const proxyOpLogOps = () => call<string[]>("proxy_oplog_ops");
 /** 导出 Excel（.xlsx 落 downloads，文件名含毫秒时间戳）；导出当前筛选全集（无分页） */
 export const proxyOpLogExport = (filter: Omit<ProxyOpLogFilter, "limit" | "offset">) =>
   call<{ ok: boolean; path?: string; count?: number; message?: string }>("proxy_oplog_export", filter as Record<string, unknown>);
+/** 清理操作日志：all=true 清空整表；否则按保留期（缺省 30 天，与启动 GC 同口径）删旧 */
+export const proxyOpLogCleanup = (days?: number, all?: boolean) =>
+  call<{ deleted: number; cutoff: number }>("proxy_oplog_cleanup", { days, all });
 export const proxyRulesList = () => call<ProxyRuleFile[]>("proxy_rules_list");
 
 export const proxyOpenRulesDir = () => call<{ ok: boolean }>("proxy_open_rules_dir");

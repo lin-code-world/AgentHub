@@ -98,6 +98,7 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_oplog_list",
   "proxy_oplog_ops",
   "proxy_oplog_export",
+  "proxy_oplog_cleanup",
   "proxy_rules_list",
   "proxy_open_rules_dir",
   "proxy_open_data_dir",

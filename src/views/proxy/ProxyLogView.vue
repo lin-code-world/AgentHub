@@ -19,6 +19,8 @@ import { coalesceAsync } from "../../utils/timing";
 import { applyIncrement, isSnapshotCurrent, planIncrement, snapshotKey } from "../../utils/oplogIncrement";
 import type { IncrementSnapshot } from "../../utils/oplogIncrement";
 import { loadPhaseOf } from "./loadState";
+import { fmtInt } from "./format";
+import { toast as ElMessage } from "../../utils/toast";
 import type { ProxyOpLogRow } from "../../types";
 
 const app = useAppStore();
@@ -213,6 +215,32 @@ async function doExport() {
   exportMsgTimer = window.setTimeout(() => { exportMsg.value = null; }, 6000);
 }
 
+// ===== 清理操作日志：交互与总览页的清理一致（仅超期 / 全部），清的就是本页展示的数据（op_logs 表）。
+// 保留期固定 30 天（与启动 GC 同口径，op_logs 没有可配的保留期），不可恢复所以先问一道。
+const cleanOpen = ref(false);
+const cleanScope = ref<"expired" | "all">("expired");
+const cleaning = ref(false);
+function openClean() {
+  cleanScope.value = "expired"; // 每次打开回默认档，防上次选的「全部」被顺手确认
+  cleanOpen.value = true;
+}
+async function doCleanup() {
+  cleaning.value = true;
+  try {
+    const all = cleanScope.value === "all";
+    const r = await api.proxyOpLogCleanup(undefined, all);
+    ElMessage.success(all ? `已清空全部日志 ${fmtInt(r.deleted)} 条` : `已清理 30 天之前的日志 ${fmtInt(r.deleted)} 条`);
+    cleanOpen.value = false;
+    page.value = 0; // 与总览一致：清理后回到第一页，避免当前页已超范围
+    load();
+    loadOps();
+  } catch (e) {
+    ElMessage.error(`清理失败：${e instanceof Error ? e.message : "未知错误"}`);
+  } finally {
+    cleaning.value = false;
+  }
+}
+
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
 </script>
 
@@ -225,6 +253,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
       </div>
       <div class="page-actions">
         <button class="btn btn-primary" @click="load(); loadOps()">刷新</button>
+        <button class="btn" @click="openClean"><i class="ph ph-broom"></i> 清理</button>
       </div>
     </div>
     <div class="page-body">
@@ -313,6 +342,27 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
         </div>
       </div>
     </div>
+
+    <!-- 清理确认弹窗：与总览页同一套版式与文案（删的是不可恢复的请求流水） -->
+    <Teleport to="body">
+      <div v-if="cleanOpen" class="p-mask" @click.self="cleanOpen = false">
+        <div class="p-dlg glass">
+          <div class="p-title">清理操作日志</div>
+          <div class="chips" style="margin-bottom: 8px">
+            <button class="chip" :class="{ active: cleanScope === 'expired' }" @click="cleanScope = 'expired'">仅超期日志</button>
+            <button class="chip" :class="{ active: cleanScope === 'all' }" @click="cleanScope = 'all'">全部日志</button>
+          </div>
+          <div class="set-desc">
+            <template v-if="cleanScope === 'expired'"> 将删除 30 天之前的全部操作日志（与启动时自动回收的保留期一致），此操作不可恢复。 </template>
+            <template v-else> 将清空<b>整张操作日志表</b>（含当前筛选范围之外的全部记录），此操作不可恢复。 </template>
+          </div>
+          <div class="p-actions">
+            <button class="btn" @click="cleanOpen = false">取消</button>
+            <button class="btn btn-primary danger-solid" :disabled="cleaning" @click="doCleanup">{{ cleaning ? "清理中…" : cleanScope === "all" ? "全部清空" : "确认清理" }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>
 

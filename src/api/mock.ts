@@ -738,6 +738,11 @@ export const mock = {
         else for (let i = PROXY_USAGE.length - 1; i >= 0; i--) if (PROXY_USAGE[i].ts < cutoff) PROXY_USAGE.splice(i, 1);
         return { deleted: before - PROXY_USAGE.length, cutoff: args?.all ? 0 : cutoff };
       }
+      case "proxy_oplog_cleanup": {
+        // 预览数据是每次调用临时构造的，删不掉；按后端口径返回条数即可
+        const days = Math.min(3650, Math.max(1, Math.round(Number(args?.days) || 30)));
+        return { deleted: 0, cutoff: args?.all ? 0 : Date.now() - days * 86400000 };
+      }
       case "proxy_recent":
         return JSON.parse(JSON.stringify(PROXY_USAGE));
       case "proxy_oplog_list": {

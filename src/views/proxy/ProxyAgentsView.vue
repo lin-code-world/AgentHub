@@ -1691,7 +1691,7 @@ onUnmounted(() => {
           </div>
         </div>
         <!-- 添加账号：与渠道胶囊同一行右侧常驻；胶囊全空时右侧只有它，弹框内下拉框再选渠道 -->
-        <button class="btn btn-sm ch-add" :disabled="!pool.length" @click="openAddFromToolbar">添加账号</button>
+        <button class="btn btn-primary ch-add" :disabled="!pool.length" @click="openAddFromToolbar">添加账号</button>
       </div>
       <!-- 整页级空态（I6）：pool 为空时下面 v-for 里的失败态根本不渲染，
            失败原因与「重试」必须在这里给，否则断网 / 500 时用户只看到永久「加载中…」 -->

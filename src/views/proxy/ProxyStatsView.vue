@@ -97,13 +97,14 @@ function pickCustomRange(v: [string, string] | null) {
 
 // ===== 维度 / 指标 / 排序 =====
 const DIMS = [
+  { value: "key", label: "Key" },
   { value: "channel", label: "渠道" },
   { value: "model", label: "模型" },
-  { value: "key", label: "Key" },
   { value: "account", label: "账号" },
 ] as const;
-const dim = ref<ProxyStatsDim>("channel");
-const topBy = ref<"req" | "tokens">("req");
+// 初次进入的默认视角：Key × Token（最常用的「谁在用、用了多少」）
+const dim = ref<ProxyStatsDim>("key");
+const topBy = ref<"req" | "tokens">("tokens");
 const metric = ref<"req" | "tokens" | "success" | "latency">("req");
 const dimLabel = computed(() => DIMS.find((d) => d.value === dim.value)?.label || "维度");
 
@@ -378,8 +379,8 @@ onUnmounted(() => {
             <button v-for="d in DIMS" :key="d.value" class="chip" :class="{ active: dim === d.value }" @click="dim = d.value">{{ d.label }}</button>
           </div>
           <div class="chips" style="margin-left: 12px">
-            <button class="chip" :class="{ active: topBy === 'req' }" @click="topBy = 'req'">按请求</button>
-            <button class="chip" :class="{ active: topBy === 'tokens' }" @click="topBy = 'tokens'">按 Token</button>
+            <button class="chip" :class="{ active: topBy === 'tokens' }" @click="topBy = 'tokens'">Token</button>
+            <button class="chip" :class="{ active: topBy === 'req' }" @click="topBy = 'req'">请求数</button>
           </div>
         </div>
         <div class="tbl-wrap">
@@ -387,11 +388,11 @@ onUnmounted(() => {
             <tbody>
               <tr>
                 <th>{{ dimLabel }}</th>
-                <th style="width: 32%">占比（{{ topBy === "tokens" ? "Token" : "请求" }}）</th>
-                <th>请求</th>
+                <th style="width: 32%">占比（{{ topBy === "tokens" ? "Token" : "请求数" }}）</th>
                 <th>总 Token</th>
                 <th>请求 Token</th>
                 <th>响应 Token</th>
+                <th>请求数</th>
                 <th>成功率</th>
                 <th>平均 TTFT</th>
               </tr>
@@ -403,10 +404,10 @@ onUnmounted(() => {
                     <span class="num">{{ r.pct }}%</span>
                   </div>
                 </td>
-                <td class="mono">{{ fmtInt(r.req) }}</td>
                 <td class="mono">{{ fmtK(r.tokens) }}</td>
                 <td class="mono">{{ fmtK(r.promptTokens) }}</td>
                 <td class="mono">{{ fmtK(r.completionTokens) }}</td>
+                <td class="mono">{{ fmtInt(r.req) }}</td>
                 <td class="mono" :class="rateCls(r.successRate)">{{ r.successRate.toFixed(1) }}%</td>
                 <td class="mono">{{ fmtMs(r.ttftAvg) }}</td>
               </tr>
@@ -428,10 +429,10 @@ onUnmounted(() => {
             <tbody>
               <tr>
                 <th>Key</th>
-                <th>请求</th>
                 <th>总 Token</th>
                 <th>请求 Token</th>
                 <th>响应 Token</th>
+                <th>请求数</th>
                 <th>成功率</th>
                 <th>平均 TTFT</th>
                 <th>最近使用</th>
@@ -439,10 +440,10 @@ onUnmounted(() => {
               </tr>
               <tr v-for="k in keyRows" :key="k.keyId">
                 <td>{{ k.name || "（未命名）" }}</td>
-                <td class="mono">{{ fmtInt(k.req) }}</td>
                 <td class="mono">{{ fmtK(k.tokens) }}</td>
                 <td class="mono">{{ fmtK(k.promptTokens) }}</td>
                 <td class="mono">{{ fmtK(k.completionTokens) }}</td>
+                <td class="mono">{{ fmtInt(k.req) }}</td>
                 <td class="mono" :class="rateCls(k.successRate)">{{ k.successRate.toFixed(1) }}%</td>
                 <td class="mono">{{ fmtMs(k.ttftAvg) }}</td>
                 <td class="mono">{{ fmtAgo(k.lastTs) }}</td>
@@ -485,13 +486,14 @@ onUnmounted(() => {
               <tr>
                 <th>时间</th>
                 <th>模型</th>
-                <th>渠道</th>
+                <th>实际模型</th>
                 <th>KEY</th>
+                <th>渠道</th>
                 <th>账号</th>
                 <th>状态</th>
-                <th>请求 Tok</th>
+                <th>请求 Token</th>
+                <th>响应 Token</th>
                 <th>缓存命中</th>
-                <th>响应 Tok</th>
                 <th>TTFT</th>
                 <th>耗时</th>
               </tr>
@@ -501,16 +503,10 @@ onUnmounted(() => {
                     <span>{{ fmtTime(r.ts) }}</span>
                   </el-tooltip>
                 </td>
-                <td class="mono">
-                  <template v-if="r.modelActual && r.modelActual !== r.model">
-                    <span>{{ r.model || "-" }}</span>
-                    <span class="model-arrow">→</span>
-                    <span class="model-actual">{{ r.modelActual }}</span>
-                  </template>
-                  <template v-else>{{ r.model || "-" }}</template>
-                </td>
-                <td>{{ channelName(r.channel) }}</td>
+                <td class="mono">{{ r.model || "-" }}</td>
+                <td class="mono">{{ r.modelActual || "-" }}</td>
                 <td class="mono">{{ r.keyName || "-" }}</td>
+                <td>{{ channelName(r.channel) }}</td>
                 <td>{{ r.accountName || "-" }}</td>
                 <td>
                   <el-tooltip :content="r.error" :disabled="!r.error" placement="top">
@@ -518,18 +514,18 @@ onUnmounted(() => {
                   </el-tooltip>
                 </td>
                 <td class="mono">{{ fmtInt(r.promptTokens) }}</td>
+                <td class="mono">{{ fmtInt(r.completionTokens) }}</td>
                 <td class="mono">
                   <el-tooltip v-if="r.cacheReadTokens" :content="`缓存读 ${fmtInt(r.cacheReadTokens)} / 输入 ${fmtInt(r.promptTokens)}${r.cacheCreationTokens ? ` / 缓存写 ${fmtInt(r.cacheCreationTokens)}` : ''}`" placement="top">
                     <span>{{ r.promptTokens ? Math.round((r.cacheReadTokens / r.promptTokens) * 100) + "%" : "-" }}</span>
                   </el-tooltip>
                   <span v-else>-</span>
                 </td>
-                <td class="mono">{{ fmtInt(r.completionTokens) }}</td>
                 <td class="mono">{{ fmtMs(r.ttftMs) }}</td>
                 <td class="mono">{{ fmtMs(r.latencyMs) }}</td>
               </tr>
               <tr v-if="!(detail?.rows || []).length">
-                <td colspan="11" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前筛选条件下没有请求明细（改一下筛选或点「重置」）</template></td>
+                <td colspan="12" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前筛选条件下没有请求明细（改一下筛选或点「重置」）</template></td>
               </tr>
             </tbody>
           </table>
@@ -634,15 +630,6 @@ onUnmounted(() => {
   font-size: 11.5px;
   color: var(--text-3);
   font-family: var(--font-mono);
-}
-
-/* 明细模型列：请求名 → 实际转发名（仅映射 / 回退 / 适配器改写时出现箭头） */
-.model-arrow {
-  margin: 0 4px;
-  color: var(--text-3);
-}
-.model-actual {
-  color: var(--text-2);
 }
 
 /* 三个表（TOP / 各 Key / 明细）字段值居中；th 全局 .tbl 已居中，这里覆盖默认左对齐的 td */
