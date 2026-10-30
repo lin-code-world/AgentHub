@@ -43,3 +43,28 @@ export function mergeAliasRows(
   }
   return { visibleIds: models.map((m) => m.id).filter((id) => !hidden.has(id)), aliasOf };
 }
+
+/** 全部视图来源渠道行的最小形状（与后端 sourceDetails 对齐） */
+export interface SourceDetailRow {
+  channel: string;
+  id: string;
+  rate: number | null;
+  contextLength: number;
+  maxOutputTokens: number;
+  capabilities?: Record<string, boolean>;
+  custom?: Record<string, unknown> | null;
+}
+
+/**
+ * 全部视图：按来源渠道展开行。
+ *
+ * 以 `sources` 为基准而不是只读 `sourceDetails`：后端只在「该渠道 catalog 有条目」时
+ * 才产生明细，只按明细展开会让没有目录元数据的渠道整行消失（该来源入口就看不见了）。
+ */
+export function sourceRows(m: ChannelRowModel & { sourceDetails?: SourceDetailRow[] }): SourceDetailRow[] {
+  const details = Array.isArray(m.sourceDetails) ? m.sourceDetails : [];
+  return (m.sources || []).map((channel) => {
+    const d = details.find((x) => x.channel === channel);
+    return d || { channel, id: m.id, rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} };
+  });
+}

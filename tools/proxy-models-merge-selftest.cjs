@@ -38,7 +38,7 @@ function installTsLoader() {
 
 installTsLoader();
 const { hiddenByRate } = require(path.join(ROOT, "src", "views", "proxy", "rateGate.ts"));
-const { mergeAliasRows } = require(path.join(ROOT, "src", "views", "proxy", "channelRows.ts"));
+const { mergeAliasRows, sourceRows } = require(path.join(ROOT, "src", "views", "proxy", "channelRows.ts"));
 
 /** 沙箱目录用完即删：sqlite / watcher 句柄可能仍占用目录，删不掉不影响退出码 */
 function cleanup() {
@@ -269,6 +269,16 @@ function main() {
   console.log("\n[10] 按渠道自定义参数配置");
   const config = require("../electron/backend/config.cjs");
   eq(config.defaultConfig().proxy.modelCustomByChannel, {}, "默认配置含空 modelCustomByChannel");
+
+  console.log("\n[11] 全部视图来源渠道行展开");
+  const withDetail = {
+    id: "x",
+    sources: ["trae", "loomy"],
+    sourceDetails: [{ channel: "trae", id: "x", rate: 1, contextLength: 10, maxOutputTokens: 2 }],
+  };
+  eq(sourceRows(withDetail).map((d) => d.channel), ["trae", "loomy"], "缺失明细的渠道也占一行");
+  eq(sourceRows(withDetail)[1], { channel: "loomy", id: "x", rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} }, "兜底项形状");
+  eq(sourceRows({ id: "x", sources: ["trae"] }), [{ channel: "trae", id: "x", rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} }], "无 sourceDetails 时按 sources 展开");
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
