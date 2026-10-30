@@ -17,7 +17,7 @@ import type { ModelCustomEntry, ProxyChannelId, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, fmtRate, parseCtxInput } from "./format";
 import { hiddenByRate } from "./rateGate";
-import { mergeAliasRows, sourceRows } from "./channelRows";
+import { mergeAliasRows, sourceRows, channelCustomOf } from "./channelRows";
 
 const app = useAppStore();
 const models = ref<ProxyModel[]>([]);
@@ -86,11 +86,6 @@ const metaOf = (m: ProxyModel): SourceDetail | ProxyModel => channelMetaOf(m) ||
 
 /** 渠道视图下的倍率：只显示该渠道自己的值（全部视图在「来源渠道」列里逐个渠道显示） */
 const activeTabRate = (m: ProxyModel): number | null => channelMetaOf(m)?.rate ?? null;
-
-/** 「来源渠道」列的标签：每个来源渠道各自带上自己的倍率（该渠道无目录明细时倍率未知，只显示渠道名） */
-function sourceTags(m: ProxyModel): { channel: string; rate: number | null }[] {
-  return m.sources.map((s) => ({ channel: s, rate: (m.sourceDetails || []).find((d) => d.channel === s)?.rate ?? null }));
-}
 
 // 三重筛选的交集：渠道 tab → 启停状态 → 关键词（id 与显示名模糊匹配）。
 // 这个列表既是表格数据源，也是「一键开启/关闭/反选」的作用范围——所见即所改
@@ -189,12 +184,12 @@ async function commitCtx(m: ProxyModel) {
   // 与「当前生效值」比较而不是与自定义值比较：只聚焦再失焦时草稿就是原始数字，
   // 若拿自定义值(0)比就会把目录自带值误写成一条自定义覆盖（凭空多出「自」标记）
   if ((parsed || 0) === ctxValue(m)) return;
-  await updateChannelCustom(m, editDetail(m), { contextLength: parsed });
+  await updateChannelCustom(editDetail(m), { contextLength: parsed });
 }
 
 // ===== 按渠道自定义参数（全部视图拆行 / 渠道页编辑共用） =====
-/** 该来源渠道的覆盖值：优先 sourceDetails.custom（后端按「实际模型 + 渠道」富化），无则空对象 */
-const channelCustom = (d: { custom?: ModelCustomEntry | null }): ModelCustomEntry => d.custom || {};
+/** 该来源渠道的覆盖值：本地配置优先，后端富化值兜底（无 catalog 明细的渠道也能改、也能清） */
+const channelCustom = (d: SourceDetailLike): ModelCustomEntry => channelCustomOf(app.config.proxy.modelCustomByChannel || {}, d);
 /** 按渠道覆盖值 → 旧模型级值 → 该渠道目录值 */
 const ctxOfChannel = (m: ProxyModel, d: SourceDetailLike): number =>
   Number(channelCustom(d).contextLength) || Number((app.config.proxy.modelCustom || {})[m.id]?.contextLength) || Number(d.contextLength) || 0;
@@ -203,7 +198,7 @@ const effortOfChannel = (m: ProxyModel, d: SourceDetailLike): string =>
 const ctxDraftKey = (m: ProxyModel, d: SourceDetailLike) => `${m.id}::${d.channel}`;
 
 /** 写「实际模型 + 渠道」一条配置；同一渠道同一实际模型的两种请求名因此共享同一份数据 */
-async function updateChannelCustom(m: ProxyModel, d: SourceDetailLike, patch: Partial<ModelCustomEntry>) {
+async function updateChannelCustom(d: SourceDetailLike, patch: Partial<ModelCustomEntry>) {
   const all = { ...(app.config.proxy.modelCustomByChannel || {}) };
   const perModel = { ...(all[d.id] || {}) };
   const cur = { ...(perModel[d.channel] || {}), ...patch };
@@ -234,7 +229,7 @@ async function commitChannelCtx(m: ProxyModel, d: SourceDetailLike) {
   delete ctxDraft.value[key];
   const parsed = parseCtxInput(raw);
   if ((parsed || 0) === ctxOfChannel(m, d)) return;
-  await updateChannelCustom(m, d, { contextLength: parsed });
+  await updateChannelCustom(d, { contextLength: parsed });
 }
 
 // ===== 反向模型映射管理（统一请求名 -> 各渠道实际模型） =====
@@ -535,7 +530,7 @@ onMounted(refresh);
               </el-tooltip>
             </div>
           </div>
-          <!-- 7 列合计 1052px：窄窗口横向滚动走全局 .table-scroll 的 overflow:auto，宽窗口一屏放下 -->
+          <!-- 渠道视图 6 列合计约 832px、全部视图 9 列约 1168px：窄窗口横向滚动走全局 .table-scroll 的 overflow:auto，宽窗口一屏放下 -->
           <div class="table-scroll">
             <table class="table table-bare models-table" style="table-layout: fixed; width: 100%">
               <colgroup v-if="!activeTab">
@@ -645,7 +640,7 @@ onMounted(refresh);
                                 :model-value="effortOfChannel(m, d)"
                                 style="width: 90px"
                                 placeholder="默认"
-                                @update:model-value="(v: string) => updateChannelCustom(m, d, { reasoningEffort: v })"
+                                @update:model-value="(v: string) => updateChannelCustom(d, { reasoningEffort: v })"
                               >
                                 <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
                               </el-select>
@@ -761,7 +756,7 @@ onMounted(refresh);
                             :model-value="effortOfChannel(m, editDetail(m))"
                             style="width: 90px"
                             placeholder="默认"
-                            @update:model-value="(v: string) => updateChannelCustom(m, editDetail(m), { reasoningEffort: v })"
+                            @update:model-value="(v: string) => updateChannelCustom(editDetail(m), { reasoningEffort: v })"
                           >
                             <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
                           </el-select>
@@ -783,19 +778,6 @@ onMounted(refresh);
                       <span class="tip-host" :class="{ 'can-tip': capabilityTags(metaOf(m)).length }">
                         <span v-for="t in capabilityTags(metaOf(m))" :key="t" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ t }}</span>
                         <span v-if="!capabilityTags(metaOf(m)).length" style="color: var(--text-3)">—</span>
-                      </span>
-                    </el-tooltip>
-                  </td>
-                  <td v-if="!activeTab">
-                    <el-tooltip placement="top" :show-after="120" :disabled="m.sources.length <= 1" popper-class="glass-popper qa-tip">
-                      <template #content>
-                        <div class="tip-title">来源渠道（{{ m.sources.length }}）</div>
-                        <div v-for="s in m.sources" :key="s" class="tip-line">· {{ channelName(s) }}</div>
-                      </template>
-                      <span class="tip-host src-list" :class="{ 'can-tip': m.sources.length > 1 }">
-                        <span v-for="d in sourceTags(m)" :key="d.channel" class="tag tag-dim src-tag">
-                          {{ channelName(d.channel) }}<template v-if="d.rate != null"> ×{{ d.rate }}</template>
-                        </span>
                       </span>
                     </el-tooltip>
                   </td>
@@ -1299,8 +1281,7 @@ onMounted(refresh);
 .models-table td {
   text-align: center;
 }
-.models-table .model-id-line,
-.models-table .src-list {
+.models-table .model-id-line {
   justify-content: center;
 }
 .model-name {
@@ -1388,20 +1369,6 @@ onMounted(refresh);
 /* 有可展开内容时才给 help 光标，暗示可悬停（浮窗禁用时不误导） */
 .tip-host.can-tip {
   cursor: help;
-}
-/* 来源渠道：一个渠道一个标签，放不下自动换行——横排单行会把这一列顶到很远 */
-.src-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  align-items: center;
-  white-space: normal;
-  overflow: visible;
-}
-.src-tag {
-  font-size: 10px;
-  padding: 1px 4px;
-  white-space: nowrap;
 }
 .tip-title {
   font-weight: 600;

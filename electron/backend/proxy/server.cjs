@@ -870,14 +870,17 @@ async function handleChat(req, res, settings, surface, convNotes) {
       "model_not_in_channel"
     );
   }
-  if (!resolvedMain.channel && !fallback) {
-    // 先把「映射目标已关闭」单独报出来：否则会落到下面的「渠道被关闭或号池不可用」文案，
-    // 把用户引去查上游启闭（实际是模型被禁用），且可用模型列表里还含请求名自身。
+  // 映射目标被禁用是确定性原因：即使配置了模型回退也不吞进回退链，直接按禁用报错。
+  // 放在 fallback 条件之外——否则设了 fallbackModel 时会跳过本判定，最终落到下面的
+  // 「渠道被关闭或号池不可用」文案，把用户引去查上游启闭（实际是模型被禁用）。
+  if (!resolvedMain.channel) {
     const mappedReply = mappedTargetDisabledReply(actualModel, settings);
     if (mappedReply) {
       record({ status: mappedReply.status, error: "mapped target disabled" });
       return sink.endErr(mappedReply.status, mappedReply.message, "invalid_request_error", mappedReply.code);
     }
+  }
+  if (!resolvedMain.channel && !fallback) {
     const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
     const catalog = adapters.mergedModels(settings);
     // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：

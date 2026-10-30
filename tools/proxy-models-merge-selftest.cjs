@@ -38,7 +38,7 @@ function installTsLoader() {
 
 installTsLoader();
 const { hiddenByRate } = require(path.join(ROOT, "src", "views", "proxy", "rateGate.ts"));
-const { mergeAliasRows, sourceRows } = require(path.join(ROOT, "src", "views", "proxy", "channelRows.ts"));
+const { mergeAliasRows, sourceRows, channelCustomOf } = require(path.join(ROOT, "src", "views", "proxy", "channelRows.ts"));
 
 /** 沙箱目录用完即删：sqlite / watcher 句柄可能仍占用目录，删不掉不影响退出码 */
 function cleanup() {
@@ -236,7 +236,9 @@ function main() {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, {
       workbuddy: { models: () => ["deepseek-v4.1-flash"] },
-      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+      // 关键：渠道目录里**逐字存在**小写请求名，同时配了指向已禁用大写模型的映射。
+      // 只测「目录里没有小写名」会让第二个分支（目录逐字命中）的剔除逻辑失去覆盖。
+      loomy: { models: () => ["deepseek-v4.1-flash", "DeepSeek-V4.1-Flash"] },
     });
     const revCfg = {
       channelEnabled: {},
@@ -279,6 +281,12 @@ function main() {
   eq(sourceRows(withDetail).map((d) => d.channel), ["trae", "loomy"], "缺失明细的渠道也占一行");
   eq(sourceRows(withDetail)[1], { channel: "loomy", id: "x", rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} }, "兜底项形状");
   eq(sourceRows({ id: "x", sources: ["trae"] }), [{ channel: "trae", id: "x", rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} }], "无 sourceDetails 时按 sources 展开");
+
+  console.log("\n[12] 按渠道自定义参数读取");
+  const localCustom = { "DeepSeek-V4.1-Flash": { loomy: { contextLength: 123 } } };
+  eq(channelCustomOf(localCustom, { id: "DeepSeek-V4.1-Flash", channel: "loomy", custom: { contextLength: 9 } }), { contextLength: 123 }, "本地配置优先于 sourceDetails 富化值");
+  eq(channelCustomOf({}, { id: "DeepSeek-V4.1-Flash", channel: "loomy", custom: { contextLength: 9 } }), { contextLength: 9 }, "无本地配置时用富化值");
+  eq(channelCustomOf({}, { id: "x", channel: "loomy" }), {}, "都没有时为空对象");
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {

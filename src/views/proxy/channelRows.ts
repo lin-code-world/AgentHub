@@ -9,13 +9,13 @@
  * ============================================================
  */
 
+import type { ModelCustomEntry } from "../../types";
+
 /** 渠道页的模型行输入：合并只需 id 与来源渠道 */
 export interface ChannelRowModel {
   id: string;
   sources: string[];
 }
-
-import type { ModelCustomEntry } from "../../types";
 
 /**
  * 渠道页：把「反向映射注入的别名行」合并进当前渠道的原生行。
@@ -65,4 +65,14 @@ export function sourceRows(m: ChannelRowModel & { sourceDetails?: SourceDetailRo
     const d = details.find((x) => x.channel === channel);
     return d || { channel, id: m.id, rate: null, contextLength: 0, maxOutputTokens: 0, capabilities: {} };
   });
+}
+
+/**
+ * 该来源渠道的按渠道自定义参数。
+ *
+ * 本地配置优先、后端富化值兜底：没有 catalog 明细的来源渠道不会出现在 `sourceDetails` 里，
+ * 只读富化值会让「改了但看不到、也清不掉」——本地配置在 persist 后立即是最新快照。
+ */
+export function channelCustomOf(local: Record<string, Record<string, ModelCustomEntry>>, d: { id: string; channel: string; custom?: ModelCustomEntry | null }): ModelCustomEntry {
+  return (local || {})[d.id]?.[d.channel] || d.custom || {};
 }
