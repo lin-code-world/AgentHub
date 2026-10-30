@@ -64,6 +64,14 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - 建任务带 `task_type: "develop"`（官方三处都传）。
 - `resource` 用 `core:2 / memory:8GiB / life:3h`（与官方默认值一致）。`life` 上限 3 小时是上游硬限制；我们的任务流总时长
   `TASK_TOTAL_MS` 必须与它同口径，改一处要一起改。
+- 任务流帧的 `data` 一律 `base64(JSON)`（上游 `TaskStream.Data` 是 Go `[]byte`，JSON 里就表现成 base64 字符串）：
+  上行 user-input / reply-question 要 **base64 编码**，下行 acp_event / task-error 等要 **base64 解码**。发/收明文 JSON 都会被
+  服务端静默丢弃——尤其 `new` 模式**靠第一条 user-input 才启动实时流订阅**，丢了它就会「任务在云端跑完了、这边一条帧都收不到」。
+  编解码用 `stream.cjs` 的 `encodeData` / `decodeData`。
+- ACP 事件结构是 `{ sessionId, update: { sessionUpdate, content: { type, text }, used, size, toolCallId… } }`：
+  事件类型看 `update.sessionUpdate`，正文/思考看 `update.content.text`（顶层 `type/kind/timestamp` 是外层信封，别拿来当事件类型）。
+- 任务跑完一轮后上游**仍是 `processing`**、继续占用账号；本渠道每次请求都新建任务、不复用，所以 `chat()` 结束时要调
+  `PUT /api/v1/users/tasks/stop` 释放（`task.stopTask`），否则下一次请求必撞 10811「已有运行中的任务」并把账号打入冷却。
 
 ## 渠道路由特殊判断走插件
 
