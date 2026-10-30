@@ -12,9 +12,15 @@
 /** 千分位 */
 export const fmtInt = (n: number) => Math.round(n || 0).toLocaleString("en-US");
 
-/** 明细数值（积分等）：千分位保留小数（最多 3 位，去尾零），整数不受影响。
- *  MonkeyCode 的积分以「厘」计价（balance/1000），整数化会丢掉真实的 .246 这类尾数。 */
-export const fmtDetailNum = (n: number): string => (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 3 });
+/** 明细数值（积分 / 每日额度等）：大数走 M / 亿 缩写，其余千分位保留小数（最多 3 位）。
+ *  MonkeyCode 的积分以「厘」计价（balance / 1000），整数化会丢掉真实的 .246 这类尾数；
+ *  每日额度是千万级 token，用 M 缩写才读得出来（1000 万 → 10.00M）。 */
+export const fmtDetailNum = (n: number): string => {
+  const v = Number(n) || 0;
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + " 亿";
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+  return v.toLocaleString("en-US", { maximumFractionDigits: 3 });
+};
 
 /** 大数缩写：1,234 → 1.2K */
 export function fmtK(n: number): string {
