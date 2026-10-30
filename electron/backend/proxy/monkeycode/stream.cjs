@@ -51,13 +51,6 @@ async function frameText(data) {
   return "";
 }
 
-/** 文本预览：只记长度与截断片段，不落正文（隐私口径与号池其它渠道一致） */
-function preview(text, limit) {
-  const s = String(text || "");
-  const max = limit || 120;
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}
-
 /**
  * ACP → OpenAI delta 的翻译状态机（纯函数集，不碰网络）。
  * 产出的是 delta 对象与需要回给上游的帧，由驱动层分别走 emit / ws.send。
@@ -81,11 +74,11 @@ class Translator {
     return `call_${index}_${base}`;
   }
 
-  /** agent_message_chunk / agent_thought_chunk：text 优先、content 兜底 */
-  chunkText(acp) {
-    const first = typeof acp.text === "string" ? acp.text : "";
-    if (first) return first;
-    return typeof acp.content === "string" ? acp.content : "";
+  /** 正文/思考增量都在 update.content.text（content.type 为 "text"） */
+  static contentText(update) {
+    const c = update && update.content;
+    if (!c || typeof c !== "object") return "";
+    return typeof c.text === "string" ? c.text : "";
   }
 
   /** tool_input 是对象时按 JSON 串下发（上游给过对象形态，客户端要的是字符串参数） */
@@ -99,47 +92,30 @@ class Translator {
     }
   }
 
-  pushToolCall(acp) {
-    const name = (String(acp.tool_name || "").trim() || "unknown");
-    const args = Translator.fieldText(acp.tool_input);
+  pushToolCall(update) {
     const index = this.tools.length;
-    this.tools.push({ index, id: this.toolId(index), name, arguments: args });
+    const id = String(update.toolCallId || "").trim() || this.toolId(index);
+    const name = String(update.kind || update.title || "tool").trim() || "tool";
+    const args = Translator.fieldText(update.rawInput);
+    this.tools.push({ index, id, name, arguments: args });
     this.lastToolIndex = index;
-    return { tool_calls: [{ index, id: this.tools[index].id, type: "function", function: { name, arguments: args } }] };
+    return { tool_calls: [{ index, id, type: "function", function: { name, arguments: args } }] };
   }
 
-  appendToolArguments(acp) {
-    const delta = Translator.fieldText(acp.tool_input) || Translator.fieldText(acp.delta);
-    if (!delta) return null;
-    const name = String(acp.tool_name || "").trim();
-    let target = null;
-    if (!name) target = this.lastToolIndex;
-    else {
-      for (let i = this.tools.length - 1; i >= 0; i -= 1) {
-        if (this.tools[i].name === name) {
-          target = i;
-          break;
-        }
-      }
-    }
-    if (target === null || target === undefined || !this.tools[target]) return null;
-    this.tools[target].arguments += delta;
-    this.lastToolIndex = target;
-    return { tool_calls: [{ index: target, function: { arguments: delta } }] };
+  /** tool_call_update 的 rawInput/rawOutput 是**全量替换**（不是增量）：整份重发会和客户端已收到的参数重复，
+   *  故只更新本地快照、不再下发（对纯对话客户端，工具调用属 agent 内部过程，正文才是它要的）。 */
+  appendToolArguments(update) {
+    if (this.lastToolIndex == null || !this.tools[this.lastToolIndex]) return null;
+    const cur = this.tools[this.lastToolIndex];
+    if (update && update.kind) cur.name = String(update.kind);
+    cur.arguments = Translator.fieldText(update && (update.rawInput || update.rawOutput)) || cur.arguments;
+    return null;
   }
 
-  /** usage_update 是**累计值**不是增量：非零才覆盖，0 视为「这一项上游没说话」 */
-  mergeUsage(acp) {
-    const read = (key) => {
-      const v = acp[key];
-      return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : 0;
-    };
-    const input = read("input_tokens");
-    const output = read("output_tokens");
-    const total = read("total_tokens");
-    if (input) this.usage.prompt_tokens = input;
-    if (output) this.usage.completion_tokens = output;
-    if (total) this.usage.total_tokens = total;
+  /** usage_update 是**累计值**：used = 已用 token、size = 上下文窗口。这里把 used 报成 total_tokens */
+  mergeUsage(update) {
+    const used = Number(update && update.used);
+    if (Number.isFinite(used) && used > 0) this.usage.total_tokens = Math.trunc(used);
   }
 
   usageSeen() {
@@ -150,40 +126,48 @@ class Translator {
     return `正文 ${this.content.length} 字、思考 ${this.reasoning.length} 字、工具 ${this.tools.length} 个`;
   }
 
-  /** 一条已解析的 ACP 事件 → { deltas: [], reply: null|object, note: '' } */
+  /**
+   * 一条已解析的 ACP 事件 → { deltas: [] }。
+   *
+   * 实际结构是 `{ sessionId, update: { sessionUpdate, content: {type,text}, used, size, toolCallId… } }`：
+   * 事件类型在 `update.sessionUpdate`（不是顶层的 `type`），正文在 `update.content.text`——顶层的
+   * `type/kind/timestamp` 是外层信封（task-running 等），别拿它当事件类型。
+   */
   handleAcp(acp) {
-    const type = String((acp && acp.type) || "");
-    const out = { deltas: [], reply: null };
-    if (type === "agent_message_chunk") {
-      const text = this.chunkText(acp);
+    const out = { deltas: [] };
+    const update = acp && acp.update;
+    if (!update || typeof update !== "object") return out;
+    const kind = String(update.sessionUpdate || "");
+    if (kind === "agent_message_chunk") {
+      const text = Translator.contentText(update);
       if (text) {
         this.content += text;
         out.deltas.push({ content: text });
       }
       return out;
     }
-    if (type === "agent_thought_chunk") {
-      const text = this.chunkText(acp);
+    if (kind === "agent_thought_chunk") {
+      const text = Translator.contentText(update);
       if (text) {
         this.reasoning += text;
         out.deltas.push({ reasoning_content: text });
       }
       return out;
     }
-    if (type === "tool_call") {
-      out.deltas.push(this.pushToolCall(acp));
+    if (kind === "tool_call") {
+      out.deltas.push(this.pushToolCall(update));
       return out;
     }
-    if (type === "tool_call_update") {
-      const delta = this.appendToolArguments(acp);
+    if (kind === "tool_call_update") {
+      const delta = this.appendToolArguments(update);
       if (delta) out.deltas.push(delta);
       return out;
     }
-    if (type === "usage_update") {
-      this.mergeUsage(acp);
+    if (kind === "usage_update") {
+      this.mergeUsage(update);
       return out;
     }
-    // plan / available_commands_update / 未知事件：只记录，不造帧
+    // plan / available_commands_update / llm_call_retry / 未知事件：只记录，不造帧
     return out;
   }
 
@@ -193,21 +177,31 @@ class Translator {
   }
 }
 
-/** 提问 data 的三种形态：JSON 串 / base64(JSON) / 已是对象 */
-function parseQuestion(data) {
+/** 下行 data 的解码：上游 `TaskStream.Data` 是 Go 的 `[]byte`，JSON 里表现为 base64 字符串。
+ *  少数形态可能直接给对象/明文，一并兜底；解不出返回 null。 */
+function decodeData(data) {
   if (data && typeof data === "object") return data;
-  const raw = String(data || "").trim();
+  const raw = String(data == null ? "" : data);
   if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    /* 再试 base64 */
-  }
   try {
     return JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
   } catch {
-    return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
+}
+
+/** 上行 data 的编码：与 decodeData 对称，base64(JSON)。服务端按 []byte 反序列化，发明文会被丢弃 */
+function encodeData(obj) {
+  return Buffer.from(JSON.stringify(obj), "utf8").toString("base64");
+}
+
+/** 提问 data 解码（保留旧名，调用点不变） */
+function parseQuestion(data) {
+  return decodeData(data);
 }
 
 function questionReply(data) {
@@ -216,7 +210,7 @@ function questionReply(data) {
   const requestId = String(parsed.request_id || parsed.id || "");
   return {
     type: "reply-question",
-    data: JSON.stringify({ request_id: requestId, answers_json: "", cancelled: false }),
+    data: encodeData({ request_id: requestId, answers_json: "", cancelled: false }),
   };
 }
 
@@ -371,12 +365,12 @@ function runTaskStream(opts) {
             return;
           }
           if (type === "task-ended") {
-            translator.mergeFinalUsage(payload.data);
+            translator.mergeFinalUsage(decodeData(payload.data));
             succeed();
             return;
           }
           if (type === "task-error") {
-            fail(errorDetail(payload.data), 502, "task_error");
+            fail(errorDetail(decodeData(payload.data)), 502, "task_error");
             return;
           }
           if (type !== "task-running") {
@@ -397,19 +391,10 @@ function runTaskStream(opts) {
             deps.verbose && deps.verbose(`忽略 task-running kind=${kind || "(空)"}`);
             return;
           }
-          // acp_event 的 data 是**字符串化的 JSON**（双层编码），不是对象
-          let acp = null;
-          if (typeof payload.data === "string") {
-            try {
-              acp = JSON.parse(payload.data);
-            } catch {
-              deps.verbose && deps.verbose("acp_event 的 data 不是 JSON");
-              return;
-            }
-          } else if (payload.data && typeof payload.data === "object") {
-            acp = payload.data;
-          } else {
-            deps.verbose && deps.verbose("acp_event 缺少 data 字符串");
+          // acp_event 的 data 是 base64(JSON)（上游 Data 是 []byte，JSON 里就是 base64 字符串）
+          const acp = decodeData(payload.data);
+          if (!acp) {
+            deps.verbose && deps.verbose("acp_event 的 data 解不出（非 base64/JSON）");
             return;
           }
           const handled = translator.handleAcp(acp);
@@ -417,11 +402,14 @@ function runTaskStream(opts) {
             sentAny = true;
             emit({ type: "delta", delta });
           }
-          const acpType = String((acp && acp.type) || "");
-          if (acpType === "tool_call") deps.verbose && deps.verbose(`工具调用 ${acp.tool_name || "unknown"}（${preview(translator.tools[translator.tools.length - 1] && translator.tools[translator.tools.length - 1].arguments)}）`);
-          else if (acpType === "plan" || acpType === "available_commands_update") deps.verbose && deps.verbose(`收到 ${acpType} 事件（仅记录）`);
-          else if (acpType && !["agent_message_chunk", "agent_thought_chunk", "tool_call_update", "usage_update"].includes(acpType)) {
-            deps.verbose && deps.verbose(`忽略 ACP 事件：${acpType}`);
+          const acpKind = String((acp.update && acp.update.sessionUpdate) || "");
+          if (acpKind === "tool_call") deps.verbose && deps.verbose(`工具调用 ${(acp.update && (acp.update.kind || acp.update.title)) || "unknown"}`);
+          else if (acpKind === "available_commands_update") deps.verbose && deps.verbose("收到 available_commands_update 事件（仅记录）");
+          else if (acpKind === "llm_call_retry") {
+            const msg = (acp.update && (acp.update.message || acp.update.status)) || "";
+            deps.verbose && deps.verbose(`上游重试中：${msg}`);
+          } else if (acpKind && !["agent_message_chunk", "agent_thought_chunk", "tool_call_update", "usage_update", "plan"].includes(acpKind)) {
+            deps.verbose && deps.verbose(`忽略 ACP 事件：${acpKind}`);
           }
         })
         .catch((e) => fail(`任务流消息处理中断：${e.message}`, 502));
@@ -440,4 +428,4 @@ function runTaskStream(opts) {
   });
 }
 
-module.exports = { runTaskStream, Translator, parseQuestion, questionReply, errorDetail, TASK_TOTAL_MS, IDLE_MIN_MS };
+module.exports = { runTaskStream, Translator, decodeData, encodeData, parseQuestion, questionReply, errorDetail, TASK_TOTAL_MS, IDLE_MIN_MS };

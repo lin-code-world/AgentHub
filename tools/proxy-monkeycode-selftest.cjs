@@ -90,9 +90,11 @@ console.log("\n[2] 建任务：messages → prompt + 请求体");
   eq(body.task_type, "develop", "task_type 固定 develop（与官方客户端一致）");
   ok(body.repo && body.repo.branch === "master", "repo 为必填占位");
 
-  const ui = JSON.parse(task.userInputData("你好"));
+  const ui = JSON.parse(Buffer.from(task.userInputData("你好"), "base64").toString("utf8"));
   eq(Buffer.from(ui.content, "base64").toString("utf8"), "你好", "user-input 的 content 走 base64");
   eq(ui.attachments, [], "user-input 带空 attachments");
+  // data 外层也必须 base64：服务端 TaskStream.Data 是 []byte，发 JSON 会被反序列化丢弃
+  ok(!task.userInputData("你好").trim().startsWith("{"), "user-input 的 data 外层是 base64（不是明文 JSON）");
 }
 
 console.log("\n[3] 上游错误 → 网关状态");
@@ -109,26 +111,28 @@ console.log("\n[3] 上游错误 → 网关状态");
 console.log("\n[4] 任务流 ACP → OpenAI delta");
 {
   const t = new stream.Translator("abc123", "monkeycode-basic/glm-5.3-flash", true);
-  let r = t.handleAcp({ type: "agent_message_chunk", text: "你" });
+  // 真实结构（实测）：事件类型在 update.sessionUpdate，正文在 update.content.text
+  let r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "你" } } });
   eq(r.deltas, [{ content: "你" }], "正文 chunk → content delta");
-  r = t.handleAcp({ type: "agent_thought_chunk", text: "想" });
+  r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "想" } } });
   eq(r.deltas, [{ reasoning_content: "想" }], "思考 chunk → reasoning_content");
-  r = t.handleAcp({ type: "tool_call", tool_name: "read", tool_input: { path: "/a" } });
+  r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "tool_call", toolCallId: "tc-1", kind: "read", rawInput: { path: "/a" } } });
   const tc = r.deltas[0].tool_calls[0];
-  eq(tc.id, "call_0_abc123", "工具调用 id 按 call_<序号>_<任务 id> 合成");
-  eq(tc.function.name, "read", "工具名原样");
+  eq(tc.id, "tc-1", "工具调用 id 用上游 toolCallId");
+  eq(tc.function.name, "read", "工具名取 kind");
   ok(tc.function.arguments.includes("path"), "对象参数转 JSON 串", tc.function.arguments);
-  r = t.handleAcp({ type: "tool_call_update", tool_name: "read", delta: "更多" });
-  eq(r.deltas[0].tool_calls[0].index, 0, "tool_call_update 增量路由到同名工具");
-  ok(r.deltas[0].tool_calls[0].function.arguments === "更多", "增量按 delta 下发");
-  t.handleAcp({ type: "usage_update", input_tokens: 10 });
-  t.handleAcp({ type: "usage_update", output_tokens: 5 });
-  eq(t.usage, { prompt_tokens: 10, completion_tokens: 5, total_tokens: 0 }, "usage 是累计值、0 视为未说话");
+  r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "usage_update", used: 34807, size: 200000 } });
+  eq(t.usage.total_tokens, 34807, "usage_update 的 used 记为 total_tokens");
   eq(t.model, "monkeycode-basic/glm-5.3-flash", "下发给客户端的 model 用请求名");
+  // 已确认不需要的事件：plan / 命令列表 / 重试 都只记录、不造帧
+  r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "available_commands_update", availableCommands: [] } });
+  eq(r.deltas, [], "命令列表事件不造帧");
 
-  eq(stream.questionReply(JSON.stringify({ request_id: "q1" })).data, JSON.stringify({ request_id: "q1", answers_json: "", cancelled: false }), "提问自动回复");
-  const b64 = Buffer.from(JSON.stringify({ id: "q2" })).toString("base64");
-  eq(stream.parseQuestion(b64).id, "q2", "提问 data 兼容 base64");
+  // 收发 data 都是 base64(JSON)：服务端 TaskStream.Data 是 []byte，JSON 里表现为 base64 字符串
+  const enc = stream.encodeData({ request_id: "q1" });
+  eq(stream.decodeData(enc), { request_id: "q1" }, "上行编码 / 下行解码成对");
+  eq(stream.parseQuestion(enc).request_id, "q1", "提问 data 走 base64 解码");
+  eq(stream.decodeData(stream.questionReply(enc).data), { request_id: "q1", answers_json: "", cancelled: false }, "提问自动回复（data 亦 base64）");
   eq(stream.errorDetail({ error: "炸了" }), "炸了", "task-error 人话原因");
 }
 

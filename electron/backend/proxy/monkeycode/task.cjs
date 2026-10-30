@@ -77,12 +77,18 @@ function buildPrompt(messages) {
   return { prompt, systemPrompt: systemPrompt === null ? "" : systemPrompt };
 }
 
-/** 起始 user-input 的 data 段：JSON 串里 content 走标准 base64（上游按「存储格式 → 新格式 → 纯文本」三级解析） */
+/** 上行 user-input 的 data：`base64(JSON({content: base64(文本), attachments}))`。
+ *
+ *  为什么是双层 base64：服务端 `TaskStream.Data` 是 Go 的 `[]byte`，JSON 反序列化时**字符串会被按
+ *  base64 解码**——发明文 JSON 会让服务端 unmarshal 失败、整条消息被丢弃，new 模式下本来要靠这条
+ *  user-input 才启动实时流订阅，丢了它就会「任务在云端跑完了、这边一条推送都收不到」。
+ *  官方前端同款：`b64encode(JSON.stringify({...payload, content: b64encode(content)}))`。 */
 function userInputData(prompt) {
-  return JSON.stringify({
+  const payload = JSON.stringify({
     content: Buffer.from(String(prompt || ""), "utf8").toString("base64"),
     attachments: [],
   });
+  return Buffer.from(payload, "utf8").toString("base64");
 }
 
 function buildBody({ region, section, deps, prompt, target, imageId }) {
