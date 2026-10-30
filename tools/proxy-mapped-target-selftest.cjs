@@ -20,7 +20,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-mapped-target-"));
 process.env.AGENTHUB_DATA_DIR = tmp;
 
 const adapters = require(path.join(ROOT, "electron/backend/proxy/adapters.cjs"));
-const { resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply } = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
+const { resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams } = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
 
 let fail = 0;
 const eq = (a, e, l) => { if (JSON.stringify(a) !== JSON.stringify(e)) { fail++; console.log(`FAIL ${l}\n 期望 ${JSON.stringify(e)}\n 实际 ${JSON.stringify(a)}`); } else console.log(`ok  ${l}`); };
@@ -61,6 +61,23 @@ try {
   eq(reply && reply.status, 400, "无候选时返回 400");
   eq(reply && reply.code, "mapped_target_disabled", "业务码 mapped_target_disabled");
   check("回复文案点明映射目标", !!(reply && reply.message.includes("DeepSeek-V4.1-Flash")), reply && reply.message);
+
+  console.log("[5] 自定义参数按实际模型 + 渠道取值");
+  const s = {
+    modelCustomByChannel: {
+      "DeepSeek-V4.1-Flash": { loomy: { contextLength: 300000 } },
+      "deepseek-v4.1-flash": { workbuddy: { contextLength: 200000 } },
+    },
+    modelCustom: { "deepseek-v4.1-flash": { reasoningEffort: "medium" } },
+  };
+  eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", s), { contextLength: 300000 }, "实际模型 + 渠道优先");
+  eq(resolveCustomParams("deepseek-v4.1-flash", "deepseek-v4.1-flash", "workbuddy", s), { contextLength: 200000 }, "请求模型 + 渠道");
+  eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "trae", s), { reasoningEffort: "medium" }, "回落旧模型级配置");
+  eq(
+    resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", { ...s, modelCustomByChannel: { "deepseek-v4.1-flash": { loomy: { contextLength: 1 } } } }),
+    { contextLength: 1 },
+    "大小写逐字：大写键不命中走小写键"
+  );
 } finally {
   for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
   Object.assign(adapters.ADAPTERS, orig);

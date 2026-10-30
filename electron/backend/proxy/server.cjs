@@ -102,6 +102,16 @@ function mappedTargetDisabledReply(model, settings) {
   return { status: 400, code: "mapped_target_disabled", message: msg };
 }
 
+/** 自定义参数的取值顺序：实际转发模型 + 命中渠道 → 请求模型 + 命中渠道 → 旧模型级。
+ *  逐字、不折叠大小写：`deepseek-v4.1-flash` 与 `DeepSeek-V4.1-Flash` 各自一份。
+ *  故障转移到备选渠道时调用方传入的 channel 已变，自动取备选渠道自己的配置。 */
+function resolveCustomParams(chainModel, targetModel, channel, settings) {
+  const perChan = settings.modelCustomByChannel || {};
+  const modelLevel = settings.modelCustom || {};
+  const byChannel = (id) => (perChan[id] && perChan[id][channel]) || null;
+  return byChannel(targetModel) || byChannel(chainModel) || modelLevel[targetModel] || modelLevel[chainModel] || null;
+}
+
 /** 渠道选择：提供商前缀直达 → Key 绑定渠道（严格校验归属）→ 单源强制 → per-model 覆盖 →
  *  打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：modelOwners 已过滤
  *  （单源 → 空 → 400），key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
@@ -1175,8 +1185,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
             }
             let r = null;
             resetAttemptState(); // 上一次尝试的输出不得带进本轮（详见函数注释）
-            // 自定义模型参数覆盖（modelCustom：上下文长度 / 最大输出 Token / 思考强度）
-            const custom = (settings.modelCustom || {})[chainModel] || (settings.modelCustom || {})[targetModel] || null;
+            // 自定义模型参数覆盖（上下文长度 / 最大输出 Token / 思考强度）：按实际模型 + 命中渠道取值
+            const custom = resolveCustomParams(chainModel, targetModel, chan, settings);
             let effectiveBody = body;
             if (custom && typeof custom === "object") {
               effectiveBody = { ...body };
@@ -1721,7 +1731,7 @@ function status() {
 
 module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSnapshot, classifyUpstream,
   // 渠道解析与映射目标禁用判定（tools/proxy-mapped-target-selftest.cjs 行为断言用）
-  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply,
+  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams,
   // 成本感知路由纯函数（tools/proxy-cost-route-selftest.cjs / proxy-empty-pool-route-selftest.cjs 行为断言用）
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）
