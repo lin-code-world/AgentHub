@@ -747,6 +747,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
 
   // ===== Dispatch：Key → 渠道（模型禁用 → 回退链） =====
   const requestedModel = String(body.model);
+  // 请求名即实际模型名：自定义模型映射（别名）已随模块移除，二名恒等。
+  // 仍分两个变量只为不牵动下游逐处引用（响应 model 字段与记账都取 requestedModel）
   const actualModel = requestedModel;
   // 禁用判定与 /v1/models 出口同口径：**逐字**（大小写敏感）。目录里 shared-model 与
   // SHARED-MODEL 是两条不同模型，折叠大小写会把「目录页根本没有关闭开关的那一行」也拒掉，
@@ -767,7 +769,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // 回退模型自身被禁用时不入链（切过去也是 400，白费一跳），口径同上（逐字）。
   // Key 绑定渠道不使用自动回退模型：绑定渠道是显式物理边界，「请求模型被拒就是拒绝」，
   // 模型链只保留请求模型本身（否则执行失败时还会拿回退模型去试，报错也会变成回退模型的 403）
-  if (key.route === "auto" && fallback && fallback !== actualModel && fallback !== requestedModel && !disabledSet.has(fallback)) {
+  if (key.route === "auto" && fallback && fallback !== actualModel && !disabledSet.has(fallback)) {
     modelChain.push(fallback);
   }
 

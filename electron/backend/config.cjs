@@ -298,6 +298,9 @@ function loadConfig() {
   // remoteTargets / remoteActiveId 与上面同理，旧配置残留字段一律剔除，不再读写
   delete merged.remoteTargets;
   delete merged.remoteActiveId;
+  // 自定义模型映射（别名）已随模块移除：proxy.modelAliases 同上，旧值一律剔除，
+  // 否则它会一直留在 config.json 里，被整份配置的读写原样带进带出
+  if (merged.proxy) delete merged.proxy.modelAliases;
   // 升级强制托盘常驻（仅旧配置 / 首份配置；用户显式关闭过的配置带 configVersion: 2 不再强制）
   if (legacyConfig) merged.schedule.minimizeToTray = true;
   merged.configVersion = 2;
