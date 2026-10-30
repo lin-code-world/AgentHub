@@ -17,6 +17,9 @@
 // 两站各占一格缓存：模型清单是两份独立数据，合成一格会互相覆盖。
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+const rules = require("../rules.cjs");
 const regionStore = require("./region.cjs");
 const endpoints = require("./endpoints.cjs");
 
@@ -84,9 +87,42 @@ function extractRows(payload) {
   return [];
 }
 
+/** 从 rules/catalog.json 读该站点的目录条目（mtime 缓存）。
+ *
+ *  为什么必须读盘：目录是「拉取模型」时由 index.cjs 写进 catalog.json 的，进程内 Map 只活到
+ *  本次运行结束。不读盘的话重启后 models() 恒空 —— 页面看不到模型、发请求报「模型目录为空」。
+ *  缓存判据只看 mtime（与 cline/qoder 同款）：文件被改写后自动失效，不必等 TTL。 */
+const fileCache = new Map(); // channel → { at, models }
+function fromCatalog(channel) {
+  let file = "";
+  let mtime = 0;
+  try {
+    file = path.join(rules.rulesDir(), "catalog.json");
+    mtime = fs.statSync(file).mtimeMs;
+  } catch {
+    return [];
+  }
+  const hit = fileCache.get(channel);
+  if (hit && hit.at === mtime) return hit.models;
+  let all = null;
+  try {
+    all = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    // 文件损坏/读失败时回退内存态（rules.get 自带内置默认兜底），别让目录凭空变空
+    all = rules.get("catalog.json") || {};
+  }
+  const sec = (all && all[channel]) || {};
+  const models = (Array.isArray(sec.models) ? sec.models : []).filter((m) => m && m.id);
+  fileCache.set(channel, { at: mtime, models });
+  return models;
+}
+
+/** 当前模型清单：内存（本次运行刚拉的）优先，否则读盘（上次运行拉取后留下的） */
 function list(channel) {
-  const slot = slots.get(String(channel || ""));
-  return slot && slot.models.length ? slot.models : [];
+  const id = String(channel || "");
+  const slot = slots.get(id);
+  if (slot && slot.models.length) return slot.models;
+  return fromCatalog(id);
 }
 
 function ids(channel) {

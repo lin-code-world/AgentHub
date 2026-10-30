@@ -172,5 +172,42 @@ console.log("\n[7] 签到验证码随机数发生器");
   ok(Number.isInteger(n) && n >= 0, "子挑战可解出 nonce", n);
 }
 
+console.log("\n[8] 目录持久化：只有磁盘文件（模拟重启）时仍能读到模型");
+{
+  // 回归守卫：清单曾经只存在进程内 Map 里，重启后归零 —— 页面看不到模型、发请求报「目录为空」。
+  // 这里造一份临时 catalog.json，确认 list() 在内存为空时能从盘上读回。
+  const os = require("node:os");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const tmp = path.join(os.tmpdir(), "ah-mc-selftest-" + Date.now());
+  fs.mkdirSync(path.join(tmp, "proxy", "rules"), { recursive: true });
+  const sample = {
+    monkeycode: {
+      syncedAt: 1,
+      models: [{ id: "glm-5", name: "", model: "glm-5", upstreamId: "uuid-glm5", interfaceType: "anthropic", cliName: "claude", contextLength: 200000 }],
+    },
+  };
+  fs.writeFileSync(path.join(tmp, "proxy", "rules", "catalog.json"), JSON.stringify(sample), "utf8");
+  const old = process.env.AGENTHUB_DATA_DIR;
+  process.env.AGENTHUB_DATA_DIR = tmp;
+  // 换数据目录后 rules 模块的路径才会变：清缓存重新 require
+  delete require.cache[require.resolve("../electron/backend/proxy/rules.cjs")];
+  delete require.cache[require.resolve(`${P}/models.cjs`)];
+  const rules2 = require("../electron/backend/proxy/rules.cjs");
+  rules2.init();
+  const models2 = require(`${P}/models.cjs`);
+  eq(models2.list("monkeycode").length, 1, "磁盘有目录 → list() 读回 1 条");
+  eq(models2.ids("monkeycode"), ["glm-5"], "ids() 从盘上读回模型名");
+  const target = models2.resolveTarget("monkeycode", "glm-5");
+  ok(target && target.modelId === "uuid-glm5", "建任务能从盘上目录解析出 UUID", target);
+  eq(models2.list("monkeycode_intl").length, 0, "另一站独立一格，不串数据");
+  // 复位：还原环境与模块，避免影响后续断言
+  if (old === undefined) delete process.env.AGENTHUB_DATA_DIR;
+  else process.env.AGENTHUB_DATA_DIR = old;
+  delete require.cache[require.resolve("../electron/backend/proxy/rules.cjs")];
+  delete require.cache[require.resolve(`${P}/models.cjs`)];
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 占用中就算了 */ }
+}
+
 console.log(`\nMonkeyCode 自测：${pass} 通过 / ${failed} 失败`);
 process.exit(failed ? 1 : 0);
