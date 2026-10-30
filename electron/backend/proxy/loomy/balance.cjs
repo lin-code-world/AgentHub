@@ -54,14 +54,19 @@ async function queryBalance(env, fetchImpl) {
   // 摘要可能在 data 或 data.data 两层（V2 接口在不同版本出现过两种形态）
   const outer = (payload && payload.data) || {};
   const data = outer && typeof outer.data === "object" && outer.data ? outer.data : outer;
-  const permanent = pickNumber(data, "balance") ?? 0;
-  const daily = pickNumber(data, "dailyBalance") ?? 0;
+  // 字段缺失（或类型非法）与「上游明确返回 0」必须区分开：漏字段时按 0 处理会让路由插件
+  // 误判「每日赠送已用完」并把整个渠道让位（见 routePolicy.cjs 的 known 口径）。
+  // 展示与账号级合计仍用 0 兜底（保持既有观感），known 只给路由判断用。
+  const permanentRaw = pickNumber(data, "balance");
+  const dailyRaw = pickNumber(data, "dailyBalance");
+  const permanent = permanentRaw ?? 0;
+  const daily = dailyRaw ?? 0;
   const dailyRemaining = pickNumber(data, "dailyRemainingPoints");
   const dailyLimit = pickNumber(data, "dailyLimitPoints");
 
   const wallets = [
-    { type: "permanent_points", displayName: "永久积分", balance: permanent },
-    { type: "daily_points", displayName: "每日赠送积分", balance: daily },
+    { type: "permanent_points", displayName: "永久积分", balance: permanent, known: permanentRaw != null },
+    { type: "daily_points", displayName: "每日赠送积分", balance: daily, known: dailyRaw != null },
   ];
   // 赠送额度的「剩余 / 上限」是独立展示口径（客户端团队卡片用），有就带上，没有不编造
   if (dailyRemaining != null && dailyLimit != null) {

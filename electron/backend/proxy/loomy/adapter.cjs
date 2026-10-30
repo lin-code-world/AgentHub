@@ -173,7 +173,10 @@ function makeLoomy(deps) {
       const session = sessionOf(secrets);
       if (!session) return { authError: true, message: "Loomy 账号缺少 session" };
       try {
-        return await balance.queryBalance({ session });
+        const bal = await balance.queryBalance({ session });
+        // 讯飞积分没有到期时间：显式回 0（长期有效）。否则 credits.cjs 会沿用短信登录写入的
+        // 14 天有效期当「积分到期」，登录态一过就在 pickAccount 里把整号标 exhausted（永久积分也用不了）。
+        return { ...bal, expiresAt: 0 };
       } catch (e) {
         if (e && e.authError) return { authError: true, message: e.message };
         return { error: String((e && e.message) || e) };

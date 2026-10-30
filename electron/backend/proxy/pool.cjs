@@ -12,6 +12,7 @@
 // 状态机五态：online / cooling / exhausted / relogin / disabled；调度只挑 online
 "use strict";
 const store = require("./store.cjs");
+const routePolicies = require("./routePolicies.cjs");
 
 /** 「即将到期」窗口（天）：设置页可调，index.cjs 出号池视图前按 settings().expiringSoonDays 灌入。
  *  放本模块的模块级变量（仿 store.usageRetentionDays），避免让热路由模块依赖 config。
@@ -101,6 +102,29 @@ function zeroBalanceUsable(channel) {
   } catch { return false; }
 }
 
+/** 账号排序档位（渠道私有规则由 routePolicies 插件提供；无插件 → 恒 0，排序与改动前一致） */
+function accountRank(channel, acc) {
+  return routePolicies.accountRankOf(channel, acc);
+}
+
+/** 渠道是否该在跨渠道候选队列里让到队尾：该渠道登记了插件，且所有「真正可用」的账号都被判「靠后」。
+ *  没有任何可用账号、或存在一个正常账号 → 不让位（宁可不切，也不误切）。
+ *  可用性判据与 pickAccount / routeUsable 同口径：余额已耗尽、余额已到期的号不算「正常账号」——
+ *  否则一个 0 余额的号会把整渠道挡在让位之外（它本来就会被 pickAccount 标耗尽）。 */
+function channelDeferred(channel) {
+  if (!routePolicies.hasPolicy(channel)) return false;
+  const now = Date.now();
+  const usable = poolAccounts(channel).filter(
+    (a) =>
+      a.status === "online" &&
+      a.hasToken &&
+      !(a.creditsAt > 0 && a.credits === 0 && !zeroBalanceUsable(channel)) &&
+      !(a.expiresAt > 0 && a.expiresAt <= now)
+  );
+  if (!usable.length) return false;
+  return usable.every((a) => accountRank(channel, a) > 0);
+}
+
 /**
  * 池内选号：expire_first（默认，积分先到期先用）/ credit_first / round_robin
  * 两种自动切换（不发请求、调度期前置生效）：
@@ -151,23 +175,23 @@ function pickAccount(channel, strategy, excludeIds, maxInFlight) {
       }
     }
   }
-  switch (strategy) {
-    case "credit_first":
-      pool2.sort((a, b) => b.credits - a.credits);
-      break;
-    case "round_robin":
-      pool2.sort((a, b) => a.lastUsed - b.lastUsed);
-      break;
-    case "expire_first":
-    default:
-      // 先到期的先用；没查过到期时间的排最后（不失效优先消耗快过期的）
-      pool2.sort((a, b) => (a.expiresAt || Number.MAX_SAFE_INTEGER) - (b.expiresAt || Number.MAX_SAFE_INTEGER));
-      break;
-  }
+  // 渠道路由插件：账号档位作为第一排序键（0 = 正常，越大越靠后），档位内仍走原策略。
+  // 无插件渠道的档位恒 0，排序结果与改动前逐字一致（黄金闸口径不变）。
+  const rankById = new Map(pool2.map((a) => [a.id, accountRank(channel, a)]));
+  const baseCmp =
+    strategy === "credit_first"
+      ? (a, b) => b.credits - a.credits
+      : strategy === "round_robin"
+        ? (a, b) => a.lastUsed - b.lastUsed
+        // 先到期的先用；没查过到期时间的排最后（不失效优先消耗快过期的）
+        : (a, b) => (a.expiresAt || Number.MAX_SAFE_INTEGER) - (b.expiresAt || Number.MAX_SAFE_INTEGER);
+  pool2.sort((a, b) => rankById.get(a.id) - rankById.get(b.id) || baseCmp(a, b));
   let picked = pool2[0];
-  // 防惊群：100ms 内刚选中过同一账号且还有其他候选 → 让位重选（并发突发不再集中打一个号）
+  // 防惊群：100ms 内刚选中过同一账号且还有其他候选 → 让位重选（并发突发不再集中打一个号）。
+  // 只在同档位内换号：跨到「靠后」档等于绕开插件降权（每日赠送耗尽时又去花永久积分）。
   if (pool2.length > 1 && now - (lastPickAt.get(picked.id) || 0) < 100) {
-    const alt = pool2.find((a) => now - (lastPickAt.get(a.id) || 0) >= 100);
+    const pickedRank = rankById.get(picked.id);
+    const alt = pool2.find((a) => rankById.get(a.id) === pickedRank && now - (lastPickAt.get(a.id) || 0) >= 100);
     if (alt) picked = alt;
   }
   lastPickAt.set(picked.id, now);
@@ -400,4 +424,6 @@ module.exports = {
   coolAccountModel, isModelCooled, accountModelCool, poolSummary, nextDay4AM,
   acquireAccount, releaseAccount, inFlightCount, softBackoffMs, noteSessionDead, noteServerError, noteSuccess,
   releaseCool, zeroBalanceUsable,
+  // 渠道路由插件（tools/proxy-channel-defer-selftest.cjs 断言用）
+  accountRank, channelDeferred,
 };

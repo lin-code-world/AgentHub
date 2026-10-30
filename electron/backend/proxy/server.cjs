@@ -323,6 +323,30 @@ function pickByOrder(order, candidates, groups) {
   return [...candidates].sort(cmpByOrder(order, groups))[0];
 }
 
+/** 是否为「用户显式指定渠道」：绑定渠道 / 固定策略命中 / 单模型指定命中。
+ *  显式边界不做路由插件让位（否则「绑定」失真，也失去强制走某渠道的逃生口）；
+ *  fixed/override 指向的渠道不含该模型时它们并未生效，仍按智能路由让位。 */
+function isExplicitRoute(key, settings, model, resolvedChannel) {
+  if (!key || key.route !== "auto") return true;
+  if (settings && settings.routeStrategy === "fixed" && resolvedChannel === settings.fixedChannel) return true;
+  const ov = (settings && settings.modelOverrides) || {};
+  return ov[model] === resolvedChannel;
+}
+
+/** 候选渠道队列重排 + 截断（纯函数，tools/proxy-channel-defer-selftest.cjs 断言用）。
+ *  deferHead = 实际首选渠道被路由插件判为「整渠道靠后」→ 挪到队尾。截断时必须保留它，
+ *  否则「其他渠道全失败」就回不到这个渠道了；limit = 1 表示关闭跨渠道故障转移，不让位。 */
+function orderCandidateQueue(queue, limit, deferHead) {
+  const list = (queue || []).filter(Boolean);
+  if (!list.length) return { queue: [], deferred: false };
+  const max = Math.max(1, Math.floor(Number(limit) || 1));
+  const deferred = !!deferHead && max > 1 && list.length > 1;
+  const out = deferred ? [...list.slice(1), list[0]] : [...list];
+  if (out.length <= max) return { queue: out, deferred };
+  // 让位渠道必须留在末位：挤掉原本的最后一位，而不是把让位渠道截掉
+  return { queue: deferred ? [...out.slice(0, max - 1), out[out.length - 1]] : out.slice(0, max), deferred };
+}
+
 /** 单账号尝试：401 就地刷新凭证、同渠道重试一次（WB 实证，Trae 同理）。
  *  刷新走 single-flight（并发 401 共享同一次刷新，防 refreshToken 轮换互相践踏）；
  *  刷新失败不立即判废——连续 3 次才 relogin（同语义），中间短冷却重试 */
@@ -998,10 +1022,14 @@ async function handleChat(req, res, settings, surface, convNotes) {
           continue; // 尝试回退模型（白名单可能放行别的模型）
         }
       }
-      queue.length = Math.min(
-        queue.length,
-        settings.channelFailover === false ? 1 : normalizeChannelFailoverMax(settings.channelFailoverMax)
-      );
+      // 渠道路由插件：实际首选渠道的所有在线账号都被判「靠后」（如讯飞每日赠送耗尽、只剩永久积分）时
+      // 让位给其他能跑同一模型的渠道。显式边界一律不干预——静默改道会让「绑定」失真，
+      // 也让人失去「强制走某渠道」的逃生口（见 isExplicitRoute）。
+      queue = orderCandidateQueue(
+        queue,
+        settings.channelFailover === false ? 1 : normalizeChannelFailoverMax(settings.channelFailoverMax),
+        !isExplicitRoute(key, settings, chainModel, resolved.channel) && pool.channelDeferred(queue[0])
+      ).queue;
       for (const c of queue) candidateChannels.add(c);
       const primaryChannel = queue[0];
       for (const chan of queue) {
@@ -1651,6 +1679,8 @@ module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSn
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）
   normalizeChannelFailoverMax, perModelUpstreamBudget,
+  // 候选渠道队列重排（tools/proxy-channel-defer-selftest.cjs 断言用）
+  orderCandidateQueue, isExplicitRoute,
   // 候选队列耗尽文案（scripts/test-concurrency-message.cjs 行为断言用）
   concurrencyBlockedMessage,
   // 模型名形近提示（scripts/test-model-hint.cjs 行为断言用）

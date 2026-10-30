@@ -38,6 +38,15 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - `electron/backend/proxy/` 是唯一的网关核心实现，桌面窗口与局域网网页控制台共用同一份调度、选号、冷却与计费。
 - 只有一种运行形态，凭据以 safeStorage 加密落盘；跨机传号走凭据 JSON 导出 / 导入（号池 WebDAV/S3 同步已移除）。
 
+## 渠道路由特殊判断走插件
+
+- 任何「只针对某个渠道」的路由偏好（如某渠道余额构成、某渠道临时让位等）**不得**在 `pool.cjs` / `server.cjs` 主干里写 `if (channel === "xxx")`，一律做成独立插件，便于添加与移除。
+- 注册表 `electron/backend/proxy/routePolicies.cjs`：集中 `require` 各插件，按渠道匹配、取最大档位；插件抛错按 0 兜底，不能让插件异常影响请求。
+- 插件位置 `electron/backend/proxy/<渠道>/routePolicy.cjs`，导出 `{ id, channel, accountRank(acc) }`（注册表只读 `channel` 与 `accountRank`，`id` 仅作标识）。`accountRank` 只回答「该账号是否该排后面」（0 = 正常，>0 = 靠后），必须是纯函数：不查库、不发请求、无副作用；判断不了（字段缺失等）一律返回 0。
+- 主干只实现两个通用能力：① `pickAccount` 按档位分层（档位内仍用原到期优先 / 余额优先 / 轮询策略）；② 渠道让位——实际首选渠道的所有**可用**账号（在线、有凭据、余额未耗尽、未到期）档位均 >0 时，把它挪到候选队尾并保留末位（其他渠道全失败仍可回落到它）。显式边界不参与让位：API Key 绑定渠道、固定渠道策略命中、单模型指定命中（见 `server.cjs` 的 `isExplicitRoute`）。
+- 添加渠道特殊路由：新建插件文件 + 注册表加一行；移除：删文件 + 删注册表一行。主干零改动，行为自动回到默认。
+- 职责边界：余额解析、到期时间修正等**数据层**知识留在渠道适配器 / 余额模块，不进路由插件；插件只表达排序偏好。
+
 ## 新增 IPC 命令要改三处
 
 `electron/backend/ipc.cjs`（注册）→ `electron/preload.cjs`（白名单）→ `src/api/ipc.ts`（封装），三者一一对应，漏一处命令不通。渲染层调用统一走
@@ -65,6 +74,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-smoke.cjs`（全链路含假上游）。
 - 管理服务 / 浏览器控制台相关自测：`node tools/admin-server-selftest.cjs`（管理服务骨架与轻量状态）、`node tools/admin-crypto-selftest.cjs` 与 `node tools/admin-crypto-browser-selftest.cjs`（ECDH 两端协议与连接状态机）、`node tools/admin-deny-ui-selftest.cjs`（浏览器门控与置灰）、`node tools/web-ui-state-selftest.cjs`（网页端事件接线与空态）、`node tools/command-table-selftest.cjs`（命令表与 deny 真源）；删除守卫：`node scripts/test-poolsync-removed.cjs`、`node scripts/test-remote-removed.cjs`；其余自测见 `tools/` 与 `scripts/`（配置读写、导入、事件节流、日志增量、端口校验等）。
 - 网关核心依赖闭包自检：`node tools/gateway-closure-check.cjs`（下限 109，防引用指向已删文件）。
+- 渠道路由插件自测：`ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-channel-defer-selftest.cjs`（队列让位 / 截断、显式边界门控、账号分档与渠道让位）；余额 `known` 口径与插件判据另见 `tools/proxy-channels-selftest.cjs`。
 - 沙箱约定：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
 
 ## 环境与发布

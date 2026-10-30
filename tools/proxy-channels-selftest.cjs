@@ -201,6 +201,34 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
     [5000, 5000],
     "Loomy 双钱包明细保留"
   );
+  eq(bal.wallets.map((w) => w.known), [true, true], "Loomy 双钱包 known 标记（上游明确返回才为 true）");
+
+  // 上游漏字段：known=false，不能把「没读到」当成 0（否则路由插件会误判每日赠送已用完）
+  const missingFetch = async () =>
+    new Response(JSON.stringify({ code: "000000", data: { balance: 30000 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const partial = await loomyBalance.queryBalance({ session: "test-session" }, missingFetch);
+  eq(partial.wallets.map((w) => w.known), [true, false], "Loomy 缺 dailyBalance 时 known=false");
+  eq(partial.wallets[1].balance, 0, "Loomy 缺 dailyBalance 时展示值仍为 0（既有口径）");
+
+  // 路由插件：每日赠送 0 + 永久还有 → 排后面；其余一律 0（含字段缺失）
+  const loomyPolicy = require("../electron/backend/proxy/loomy/routePolicy.cjs");
+  const routePolicies = require("../electron/backend/proxy/routePolicies.cjs");
+  const accWith = (wallets) => ({ creditsDetail: wallets });
+  const W = (d, p, known = true) => [
+    { type: "permanent_points", balance: p, known },
+    { type: "daily_points", balance: d, known },
+  ];
+  eq(loomyPolicy.accountRank(accWith(W(0, 30000))), 1, "每日赠送 0 + 永久还有 → 靠后");
+  eq(loomyPolicy.accountRank(accWith(W(10, 30000))), 0, "每日赠送还有 → 正常");
+  eq(loomyPolicy.accountRank(accWith(W(0, 0))), 0, "两个钱包都 0 → 交给耗尽判据，不当让位");
+  eq(loomyPolicy.accountRank(accWith(W(0, 30000, false))), 0, "明细未明确读到 → 不判断");
+  eq(loomyPolicy.accountRank({ creditsDetail: null }), 0, "没有明细 → 不判断");
+  eq(routePolicies.hasPolicy("loomy"), true, "loomy 登记了路由插件");
+  eq(routePolicies.hasPolicy("workbuddy"), false, "其他渠道没有插件");
+  eq(routePolicies.accountRankOf("workbuddy", accWith(W(0, 30000))), 0, "插件只对自己的渠道生效");
 
   const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
   const ids = ["DeepSeek-V4.1-Flash", "MiniMax-M3", "Kimi-k2.6", "GLM-5.3-Flash", "spark-x"];
