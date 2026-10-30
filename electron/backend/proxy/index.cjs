@@ -1366,7 +1366,12 @@ function register(ipcMain) {
     const needAuth = adapter.modelsNeedAuth !== false;
     const acc = needAuth ? pool.poolAccounts(ch).find((a) => a.status === "online" && a.hasToken) : null;
     if (needAuth && !acc) return fail(`${store.channelDisplay(ch)}号池无可用账号，无法拉取模型目录`);
-    const secrets = acc ? store.accountSecrets(store.getAccount(acc.id)) : null;
+    let secrets = acc ? store.accountSecrets(store.getAccount(acc.id)) : null;
+    // 凭证保鲜：手上 token 已过期/临期时先刷一次（与余额 / 签到 / 对话链路同一口径）。
+    // 缺这一步时，noPersist 渠道（AutoClaw 的新凭证只进适配器进程缓存、不落库）在进程
+    // 重启后会拿着库内旧 token 直接吃 401 —— 表现为「签到、余额、对话都正常，
+    // 只有拉模型目录报登录态已失效」。
+    if (acc && secrets) secrets = await credits.ensureFreshSecrets(acc, secrets);
     const r = await adapter.fetchModels(acc, secrets, { force: true });
     if (!r || !r.ok || !Array.isArray(r.models) || !r.models.length) {
       oplog.log("error", "模型目录", `${store.channelDisplay(ch)} 模型目录拉取失败：${(r && r.message) || "返回为空"}`, { channel: ch });

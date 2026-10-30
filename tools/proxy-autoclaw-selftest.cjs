@@ -257,6 +257,18 @@ function fakeUpstream() {
         return;
       }
       if (req.url.includes("autoclaw-model-config")) {
+        // 目录端点对过期 token 返 401（模拟上游真实行为）：库里 token 过期时，
+        // 拉目录链路必须先刷新凭证，否则报「登录态已失效」——见回归用例 5b
+        const auth = String(req.headers.authorization || "");
+        const tok = auth.replace(/^Bearer\s+/i, "").trim();
+        let expired = false;
+        try {
+          const payload = JSON.parse(Buffer.from(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+          expired = Number(payload.exp || 0) * 1000 <= Date.now();
+        } catch {
+          /* 非 JWT：按不过期处理 */
+        }
+        if (expired) return reply(401, { code: 401, msg: "unauthorized" });
         return reply(200, { models: [
           { id: "zai_glm-5.3-flash", name: "GLM-5.3-Flash", input: ["image"], reasoning: true, contextWindow: 1048576, maxTokens: 131072 },
         ] });
@@ -408,6 +420,43 @@ async function e2e() {
     const chat2 = fu.seen.find((s) => s.url.endsWith("/chat/completions"));
     assert(chat2.headers["x-authorization"] === "Bearer tok-new", "刷新后对话走进程缓存新 token");
     assert(chat2.headers["x-request-model"] === "zai_glm-5.3-flash", "刷新后路由 ID 来自拉取目录");
+
+    // —— 5b. 回归：库里 token 已过期时，拉模型目录链路必须先刷新凭证（issue：目录报「登录态已失效」）
+    // 场景复刻线上故障：AutoClaw 新凭证只进进程缓存不落库，进程重启后库里 token 已过期，
+    // 余额 / 签到 / 对话都会先刷新凭证（ensureFreshSecrets），唯独拉目录漏了这一步 →
+    // 直接拿过期 token 打目录端点 → 上游 401 → 「登录态已失效，请重新登录或刷新凭证」。
+    // 走真实命令处理器（proxy_models_sync），否则本用例只能测 ensureFreshSecrets 本身，
+    // 抓不到「拉目录链路漏了保鲜」这个真正的回归。
+    {
+      const proxyIndex = require("../electron/backend/proxy/index.cjs");
+      const handlers = new Map();
+      proxyIndex.register({ handle: (cmd, fn) => handlers.set(cmd, fn) });
+      assert(handlers.has("proxy_models_sync"), "proxy_models_sync 已注册");
+      // 假上游的 agent-refresh 返 "tok-new"（非 JWT）：刷新判定靠**库里** token 的 exp，
+      // 刷出后新 token 非 JWT 也能正常带去请求
+      fu.reset();
+      // 拉目录只挑「号池里第一个在线有 token 的账号」，所以把其它账号先置为不可用，
+      // 让过期账号成为被挑中的那个（复刻线上：全部账号的库里 token 都已过期）
+      for (const a of storeMod.listAccounts("autoclaw")) storeMod.updateAccount(a.id, { status: "cooling", coolUntil: Date.now() + 3600000 });
+      const expiredId = storeMod.addAccount({
+        channel: "autoclaw",
+        uid: "u-exp",
+        name: "过期token号",
+        token: jwtOf("u-exp", Math.floor(Date.now() / 1000) - 3600),
+        refreshToken: "rt-exp",
+        source: "paste",
+      });
+      assert(!!expiredId, "过期 token 账号已建");
+      // handle 包装器签名同 Electron：(_event, args)
+      const syncRes = await handlers.get("proxy_models_sync")({}, { channel: "autoclaw" });
+      assert(syncRes && syncRes.ok !== false, `过期 token 拉目录前先刷新凭证即成功（${(syncRes && syncRes.message) || ""}）`);
+      const refreshHit = fu.seen.find((s) => s.url.includes("/agent-refresh") || s.url.endsWith("/userapi/v1/refresh"));
+      assert(!!refreshHit, "过期 token 拉目录前确实打了刷新端点");
+      const catHit = fu.seen.find((s) => s.url.includes("autoclaw-model-config"));
+      assert(catHit && String(catHit.headers.authorization || "").includes("tok-new"), "目录请求带的是刷新后的新 token");
+      // 复原：把前面的账号改回在线，免得影响后续用例
+      for (const a of storeMod.listAccounts("autoclaw")) if (a.id !== expiredId) storeMod.updateAccount(a.id, { status: "online" });
+    }
 
     // —— 6. 登录链路（协议函数直调假上游）——
     const login = require("../electron/backend/proxy/autoclaw/login.cjs");
