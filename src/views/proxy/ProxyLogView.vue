@@ -433,6 +433,9 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
 .log-filters :deep(.f-date),
 .log-filters :deep(.f-el-select) {
   width: 150px;
+  /* 根高度与 wrapper 的 min-height 锁成同一值：el-date-editor 根默认按 30px 布局而 wrapper 34px
+     溢出在外，fgroup 因此矮 4px，center 对齐下日期框比下拉框低 2px（实测 getBoundingClientRect） */
+  height: 34px;
 }
 .log-filters :deep(.f-date .el-input__wrapper),
 .log-filters :deep(.f-el-select .el-select__wrapper) {
