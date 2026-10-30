@@ -81,6 +81,27 @@ function maskAccountName(name) {
   return s.length <= 4 ? s : s.slice(0, 4) + "…";
 }
 
+/** 反向映射目标被禁用时的文案；请求名没配映射、或映射目标都可用时返回 ""。
+ *  逐字比对 disabledModels：与参数/路由的模型 id 口径一致，不折叠大小写。 */
+function mappedTargetDisabledMessage(model, settings) {
+  const entry = adapters.reverseAliasEntry(model, settings) || {};
+  const disabledSet = new Set((settings.disabledModels || []).map((s) => String(s)));
+  const hit = Object.keys(entry)
+    .map((ch) => ({ ch, target: adapters.resolveModelTarget(model, ch, settings) }))
+    .find((x) => x.target && disabledSet.has(x.target));
+  if (!hit) return "";
+  return `模型 "${model}" 在渠道「${store.channelDisplay(hit.ch)}」上映射到的 "${hit.target}" 已关闭（模型目录页可恢复）`;
+}
+
+/** auto 模式没有任何候选、且请求名配了指向已禁用模型的反向映射时的专用回复；
+ *  有候选渠道时返回 null（映射目标禁用只让该渠道退出队列，其余渠道照常路由）。 */
+function mappedTargetDisabledReply(model, settings) {
+  const msg = mappedTargetDisabledMessage(model, settings);
+  if (!msg) return null;
+  if (adapters.modelOwners(model, settings).length) return null;
+  return { status: 400, code: "mapped_target_disabled", message: msg };
+}
+
 /** 渠道选择：提供商前缀直达 → Key 绑定渠道（严格校验归属）→ 单源强制 → per-model 覆盖 →
  *  打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：modelOwners 已过滤
  *  （单源 → 空 → 400），key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
@@ -95,7 +116,14 @@ function resolveChannel(key, model, settings) {
   // 单源强制只留给智能路由。
   if (key.route !== "auto") {
     if (!adapters.channelOn(key.route, settings)) return { channel: null, disabledBoundChannel: key.route };
-    if (adapters.resolveModelTarget(model, key.route, settings)) return { channel: key.route };
+    const boundTarget = adapters.resolveModelTarget(model, key.route, settings);
+    if (boundTarget) {
+      // 映射到已关闭的模型 = 该渠道上这个请求不可用：绑定渠道不静默改道，明确拒绝
+      if ((settings.disabledModels || []).map((s) => String(s)).includes(boundTarget)) {
+        return { channel: null, disabledMappedTarget: { model, channel: key.route, target: boundTarget } };
+      }
+      return { channel: key.route };
+    }
     if (owners.includes(key.route)) return { channel: key.route };
     return { channel: null, notInChannel: { model, channel: key.route } };
   }
@@ -809,6 +837,16 @@ async function handleChat(req, res, settings, surface, convNotes) {
     record({ status: 403, error: `bound channel ${c} disabled` });
     return sink.endErr(403, `没有权限，渠道「${store.channelDisplay(c)}」上游未启用，请在「上游启闭」中开启后再试`, "permission_error", "channel_disabled");
   }
+  if (resolvedMain.disabledMappedTarget) {
+    const d = resolvedMain.disabledMappedTarget;
+    record({ status: 403, error: "mapped target disabled" });
+    return sink.endErr(
+      403,
+      `模型 "${d.model}" 在渠道「${store.channelDisplay(d.channel)}」上映射到的 "${d.target}" 已关闭（模型目录页可恢复）`,
+      "permission_error",
+      "model_disabled"
+    );
+  }
   if (resolvedMain.notInChannel) {
     const f = resolvedMain.notInChannel;
     record({ status: 403, error: `model "${f.model}" not in bound channel ${f.channel}` });
@@ -823,6 +861,13 @@ async function handleChat(req, res, settings, surface, convNotes) {
     );
   }
   if (!resolvedMain.channel && !fallback) {
+    // 先把「映射目标已关闭」单独报出来：否则会落到下面的「渠道被关闭或号池不可用」文案，
+    // 把用户引去查上游启闭（实际是模型被禁用），且可用模型列表里还含请求名自身。
+    const mappedReply = mappedTargetDisabledReply(actualModel, settings);
+    if (mappedReply) {
+      record({ status: mappedReply.status, error: "mapped target disabled" });
+      return sink.endErr(mappedReply.status, mappedReply.message, "invalid_request_error", mappedReply.code);
+    }
     const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
     const catalog = adapters.mergedModels(settings);
     // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
@@ -1675,6 +1720,8 @@ function status() {
 }
 
 module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSnapshot, classifyUpstream,
+  // 渠道解析与映射目标禁用判定（tools/proxy-mapped-target-selftest.cjs 行为断言用）
+  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply,
   // 成本感知路由纯函数（tools/proxy-cost-route-selftest.cjs / proxy-empty-pool-route-selftest.cjs 行为断言用）
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）
