@@ -761,7 +761,8 @@ export const mock = {
           (Number(f.from) > 0 ? r.ts >= Number(f.from) : true) &&
           (Number(f.to) > 0 ? r.ts <= Number(f.to) : true) &&
           (f.level ? r.level === f.level : true) &&
-          (f.op ? r.op === f.op : true)
+          (f.op ? r.op === f.op : true) &&
+          (f.channel === "__none__" ? r.channel === "" : f.channel ? r.channel === f.channel : true)
         );
         const limit = Math.max(1, Math.min(200, Number(f.limit) || 50));
         const offset = Math.max(0, Number(f.offset) || 0);

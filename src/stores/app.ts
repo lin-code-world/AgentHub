@@ -114,6 +114,8 @@ export const useAppStore = defineStore("app", {
     })(),
     /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
     pageBeforeConfig: "",
+    /** 号池页 → 日志页的跨页传参：待生效的渠道筛选（日志页切回时消费并清空） */
+    pendingLogChannel: "",
   }),
   getters: {
     isDark: (s) => s.config.theme === "dark",

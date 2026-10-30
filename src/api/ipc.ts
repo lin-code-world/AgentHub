@@ -376,6 +376,8 @@ export interface ProxyOpLogFilter {
   to?: number | null;
   level?: string;
   op?: string;
+  /** 渠道筛选：""/缺省 = 全部；"__none__" = 无渠道日志（后端 opLogWhere 哨兵同口径）；其他 = 渠道 id 精确匹配 */
+  channel?: string;
   limit?: number;
   offset?: number;
   /** 增量拉取：只返回 id > sinceId 的新日志（按 id 升序），忽略 offset；total 仍是筛选总数（见 store.listOpLogs） */

@@ -32,6 +32,7 @@ const filter = reactive({
   to: "",
   level: "", // info / warn / error，空为全部
   op: "", // 操作分类，空为全部
+  channel: "", // 渠道 id；"__none__" = 无渠道档（网关启停/配置类日志）；空 = 全部
 });
 
 const rows = ref<ProxyOpLogRow[]>([]);
@@ -45,7 +46,7 @@ let fetchSeq = 0;
 
 function snapshotNow(): IncrementSnapshot {
   const { from, to } = rangeToMs();
-  return { seq: fetchSeq, key: snapshotKey({ from, to, level: filter.level, op: filter.op, page: page.value }) };
+  return { seq: fetchSeq, key: snapshotKey({ from, to, level: filter.level, op: filter.op, channel: filter.channel, page: page.value }) };
 }
 
 function beginFetch(): IncrementSnapshot {
@@ -96,7 +97,7 @@ async function load() {
   busy.value = true;
   const { from, to } = rangeToMs();
   try {
-    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, limit: pageSize, offset: page.value * pageSize });
+    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, channel: filter.channel || undefined, limit: pageSize, offset: page.value * pageSize });
     if (!isSnapshotCurrent(issued, snapshotNow())) return; // 过期响应丢弃：期间已发起新请求 / 筛选或翻页已变
     rows.value = r?.rows || [];
     total.value = r?.total || 0;
@@ -125,6 +126,17 @@ async function loadOps() {
   }
 }
 
+/** 渠道下拉选项：「上游启闭」里已开启的渠道（proxy_channel_list，enabled !== false）；失败保留旧选项不阻断列表 */
+const channelOptions = ref<{ id: string; display: string }[]>([]);
+async function loadChannels() {
+  try {
+    const list = await api.proxyChannelList();
+    channelOptions.value = list.filter((c) => c.enabled !== false).map((c) => ({ id: c.id, display: c.display }));
+  } catch {
+    /* 渠道选项加载失败不阻断列表使用 */
+  }
+}
+
 /** 增量拉取：入口先走 planIncrement（Ruling 35）——全量在飞让路、基底不匹配回退全量；可增量才拉 sinceId 交给 applyIncrement 去重拼表头 */
 async function loadIncremental() {
   const plan = planIncrement({ fullLoading, rowsKey, currentKey: snapshotNow().key, lastId: lastId.value, page: page.value });
@@ -133,7 +145,7 @@ async function loadIncremental() {
   const issued = beginFetch();
   const { from, to } = rangeToMs();
   try {
-    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, sinceId: lastId.value, limit: INC_LIMIT });
+    const r = await api.proxyOpLogList({ from, to, level: filter.level || undefined, op: filter.op || undefined, channel: filter.channel || undefined, sinceId: lastId.value, limit: INC_LIMIT });
     // 过期增量（筛选切换 / 翻页 / 期间有新请求）整份丢弃；可应用才改行与基线（去重、lastId 单调见纯函数）
     const res = applyIncrement({ issued, current: snapshotNow(), rows: rows.value, added: r?.rows || [], lastId: lastId.value, pageSize, limit: INC_LIMIT });
     if (!res.applied) return;
@@ -162,6 +174,7 @@ let offEvent: (() => void) | undefined;
 onMounted(() => {
   load();
   loadOps();
+  loadChannels();
   // 新日志落库（后端 300ms 节流为 {type:"oplog"}，事件体不带内容）→ 拉增量，页面不可见不处理；
   // resync = SSE 断线重连后的补偿信号（断线期间可能漏了事件，也可能被清理过），走一次全量
   offEvent = api.onUpdateEvent((e) => {
@@ -192,21 +205,33 @@ watch(
   () => app.activePage,
   (p) => {
     if (p === "proxylog") {
+      // 号池页「日志」按钮跳转：筛选全部重置为默认后按传入渠道查询（页码归 0；消费在前，load 才会用新筛选发请求）
+      if (app.pendingLogChannel) {
+        filter.from = "";
+        filter.to = "";
+        filter.level = "";
+        filter.op = "";
+        filter.channel = app.pendingLogChannel;
+        app.pendingLogChannel = "";
+        page.value = 0;
+      }
       load();
       loadOps();
+      loadChannels();
     }
   }
 );
 
 function pickLevel(v: string) { filter.level = v || ""; page.value = 0; load(); }
 function pickOp(v: string) { filter.op = v || ""; page.value = 0; load(); }
+function pickChannel(v: string) { filter.channel = v || ""; page.value = 0; load(); }
 function pickFrom(v: string) { filter.from = v || ""; page.value = 0; load(); }
 function pickTo(v: string) { filter.to = v || ""; page.value = 0; load(); }
 
 async function doExport() {
   try {
     const { from, to } = rangeToMs();
-    const r = await api.proxyOpLogExport({ from, to, level: filter.level || undefined, op: filter.op || undefined });
+    const r = await api.proxyOpLogExport({ from, to, level: filter.level || undefined, op: filter.op || undefined, channel: filter.channel || undefined });
     exportMsg.value = { ok: !!r?.ok, text: r?.message || (r?.ok ? "导出成功" : "导出失败") };
   } catch (e) {
     exportMsg.value = { ok: false, text: `导出失败：${e instanceof Error ? e.message : "未知错误"}` };
@@ -292,6 +317,13 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
           <el-select :model-value="filter.op" placeholder="全部操作" popper-class="glass-popper" class="f-el-select" @update:model-value="pickOp">
             <el-option value="" label="全部操作" />
             <el-option v-for="o in opOptions" :key="o" :value="o" :label="o" />
+          </el-select>
+        </div>
+        <div class="log-fgroup"><label>渠道</label>
+          <el-select :model-value="filter.channel" placeholder="全部渠道" popper-class="glass-popper" class="f-el-select" @update:model-value="pickChannel">
+            <el-option value="" label="全部渠道" />
+            <el-option v-for="c in channelOptions" :key="c.id" :value="c.id" :label="c.display" />
+            <el-option value="__none__" label="其他" />
           </el-select>
         </div>
         <div style="flex: 1"></div>

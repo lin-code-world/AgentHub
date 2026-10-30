@@ -137,6 +137,19 @@ async function step(name, fn) {
     ok("sinceId 模式 total 仍是筛选总数（分页标题用）", inc.total === 3, `total=${inc.total}`);
   });
 
+  // ===== ⑥b channel 筛选：非哨兵精确匹配；__none__ 哨兵 = 空渠道精确匹配；缺省不过滤 =====
+  await step("channel 筛选", async () => {
+    oplog.log("info", "自测渠道", "A", { channel: "zcode" });
+    oplog.log("info", "自测渠道", "B", { channel: "raccoon" });
+    oplog.log("info", "自测渠道", "C");
+    const onlyZ = store.listOpLogs({ op: "自测渠道", channel: "zcode", limit: 50 });
+    ok("channel 非空值精确匹配", onlyZ.rows.length === 1 && onlyZ.rows[0].channel === "zcode" && onlyZ.total === 1, `rows=${JSON.stringify(onlyZ.rows.map((r) => r.channel))}`);
+    const none = store.listOpLogs({ op: "自测渠道", channel: "__none__", limit: 50 });
+    ok("__none__ 哨兵命中空渠道", none.rows.length === 1 && none.rows[0].channel === "" && none.total === 1, `rows=${JSON.stringify(none.rows.map((r) => r.channel))}`);
+    const all = store.listOpLogs({ op: "自测渠道", limit: 50 });
+    ok("channel 缺省不过滤", all.total === 3, `total=${all.total}`);
+  });
+
   // ===== ⑦ 号池结构事件（I5）：账号增删改 / 导入 / 渠道启闭广播 {type:"pool"} =====
   await step("pool 结构事件", async () => {
     const commandTable = require(path.join(ROOT, "electron", "backend", "commandTable.cjs"));

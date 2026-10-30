@@ -522,6 +522,12 @@ async function refreshCurrentChannel() {
   }
 }
 
+/** 跳日志页并按当前渠道筛选：渠道经 store 中转，日志页切回时消费（筛选重置为默认后查询） */
+function gotoLog() {
+  app.pendingLogChannel = activeChannel.value;
+  app.setPage("proxylog");
+}
+
 // ===== 每日签到（各渠道形态不同：Trae ug 签到 / WB 中国区 daily-checkin /
 //        国际版走「trial 加油包 + 每日活跃保活三件事」—— 上游没有签到体系，
 //        每日奖励的判定挂在活跃上报/免费模型对话/网页会话上，见 server 侧 dailyActivity） =====
@@ -1799,6 +1805,9 @@ onUnmounted(() => {
                   @click="zcodeRollback"
                 >切号回滚</button>
               </span>
+            </el-tooltip>
+            <el-tooltip content="查看当前渠道的操作日志（跳转后按本渠道筛选）" placement="top">
+              <button class="btn btn-sm" @click="gotoLog"><i class="ph ph-scroll"></i>日志</button>
             </el-tooltip>
             <button class="btn btn-sm btn-primary" :disabled="refreshingChannel || !switchableChannels.length" @click="refreshCurrentChannel">
               {{ refreshingChannel ? "刷新中…" : "刷新" }}

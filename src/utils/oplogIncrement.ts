@@ -16,7 +16,7 @@
  * 这里把「该不该应用 / 怎么合并 / 基线怎么走」收敛成纯函数，由 tools/oplog-increment-selftest.cjs 逐条守。
  *
  * 口径：
- *   · 快照 = 请求发起时刻的序号 + 筛选/分页指纹（from/to/level/op/page）；
+ *   · 快照 = 请求发起时刻的序号 + 筛选/分页指纹（from/to/level/op/channel/page）；
  *     响应回来与「此刻」比对，任何不一致（期间有更新请求、筛选或分页已变）→ 整份丢弃。
  *   · 合并按 id 去重（增量是 id 升序旧→新，倒排后拼表头），截断到一页。
  *   · lastId 只增不减：倒退会让后续增量重复拉旧行。
@@ -35,12 +35,14 @@ export interface IncrementFilterKey {
   to: number | null;
   level: string;
   op: string;
+  /** 渠道筛选；"" = 全部，"__none__" = 无渠道档（与后端 opLogWhere 哨兵同口径） */
+  channel: string;
   page: number;
 }
 
 /** 筛选/分页指纹：字段全等才算同一份视图 */
 export function snapshotKey(f: IncrementFilterKey): string {
-  return [f.from ?? "", f.to ?? "", f.level, f.op, f.page].join("|");
+  return [f.from ?? "", f.to ?? "", f.level, f.op, f.channel, f.page].join("|");
 }
 
 /** 响应是否仍可应用：序号最新（期间没发起过更新的请求）且筛选/分页未变 */

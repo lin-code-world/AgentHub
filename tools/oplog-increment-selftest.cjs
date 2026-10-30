@@ -38,9 +38,10 @@ function ok(name, cond, extra) {
 }
 
 const rows = (...ids) => ids.map((id) => ({ id, message: "m" + id }));
-const KEY_A = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 0 });
-const KEY_B = inc.snapshotKey({ from: 1, to: 2, level: "warn", op: "", page: 0 });
-const KEY_P2 = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 2 });
+const KEY_A = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", channel: "", page: 0 });
+const KEY_B = inc.snapshotKey({ from: 1, to: 2, level: "warn", op: "", channel: "", page: 0 });
+const KEY_P2 = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", channel: "", page: 2 });
+const KEY_CH = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", channel: "zcode", page: 0 });
 
 // ===== ① 重复增量去重（mock 忽略 sinceId 时 15s 轮询重复拼接的病灶） =====
 {
@@ -93,7 +94,8 @@ const KEY_P2 = inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 2 });
   const base = rows(3, 2, 1);
   const r = inc.applyIncrement({ issued: { seq: 1, key: KEY_A }, current: { seq: 1, key: KEY_A }, rows: base, added: rows(0, 1), lastId: 3, pageSize: 20, limit: 200 });
   ok("乱序/回退 id 不拉低 lastId", r.lastId === 3, `lastId=${r.lastId}`);
-  ok("snapshotKey 按筛选/分页区分", KEY_A !== KEY_B && KEY_A !== KEY_P2 && KEY_A === inc.snapshotKey({ from: 1, to: 2, level: "", op: "", page: 0 }));
+  ok("snapshotKey 按筛选/分页区分", KEY_A !== KEY_B && KEY_A !== KEY_P2 && KEY_A === inc.snapshotKey({ from: 1, to: 2, level: "", op: "", channel: "", page: 0 }));
+  ok("snapshotKey 含渠道指纹（切渠道后增量必须回退全量）", KEY_CH !== KEY_A && inc.snapshotKey({ from: 1, to: 2, level: "", op: "", channel: "__none__", page: 0 }) !== KEY_A);
 }
 
 // ===== ⑦ Ruling 35：全量在飞时增量让路 + rowsKey 不匹配回退全量（评审新破坏的回归） =====
