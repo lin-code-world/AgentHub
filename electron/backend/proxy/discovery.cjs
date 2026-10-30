@@ -38,6 +38,8 @@ const util = require("./util.cjs");
 const adapters = require("./adapters.cjs");
 const raccoonAuth = require("./raccoonAuth.cjs");
 const zcodeLocal = require("./zcodeLocal.cjs");
+const mcRegion = require("./monkeycode/region.cjs");
+const mcCredentials = require("./monkeycode/credentials.cjs");
 const wbCrypto = require("./wbCrypto.cjs");
 const qoderAuth = require("./qoderAuth.cjs");
 const clineCredentials = require("./cline/credentials.cjs");
@@ -3241,6 +3243,96 @@ async function beginAutoClawOauth(channel, onDone, opts) {
   return { ok: true, url: started.oauthUrl, mode: "loopback", port };
 }
 
+// ===== MonkeyCode（长亭）双站：应用内窗口登录 → 采集 Web 会话 Cookie =====
+//
+// 为什么不像别家走设备码 / 回环回调：MonkeyCode 的登录是网页授权（跳百智云）+ HttpOnly 会话
+// Cookie，上游没有公开的设备授权接口，也不会往本机回环回调回吐令牌。因此采用与 ModelScope
+// 同款手法——独立 partition 的窗口打开官网，用户在窗内正常登录（验证码 / 滑块 / 短信都在窗内过），
+// 登录成功后从该窗的 cookie jar 里读走 `monkeycode_ai_session` 入池，全程无需手动复制粘贴。
+
+/** MonkeyCode 账号落库（登录路径用）：token 存 session 值，按 30 天推算到期，同 uid 复用已有行 */
+function saveMonkeyCodeAccount(ex) {
+  const channel = String((ex && ex.channel) || "monkeycode");
+  const session = mcCredentials.normalizeSession(ex && ex.cookie);
+  if (!session) return { ok: false, message: "未取到有效的登录会话，已拒绝入池" };
+  const uid = String((ex && ex.uid) || "").trim();
+  if (!uid) return { ok: false, message: "未能解析账号身份（uid），已拒绝入池" };
+  const name = String((ex && ex.name) || "").trim() || `MonkeyCode ${String(uid).slice(0, 8)}`;
+  const expiresAt = Number((ex && ex.expiresAt) || 0) || Date.now() + 30 * 86400000;
+  const existing = store.listAccounts(channel).find((a) => a.uid === uid);
+  if (existing) {
+    store.updateAccount(existing.id, { token: session, name, status: "online", coolUntil: 0, coolReason: "", expiresAt });
+    return { ok: true, id: existing.id, uid, updated: true };
+  }
+  const id = store.addAccount({ channel, uid, name, token: session, refreshToken: "", source: (ex && ex.source) || "oauth", expiresAt });
+  return { ok: true, id, uid, updated: false };
+}
+
+/** 打开官网登录窗并轮询会话：出现有效的 `monkeycode_ai_session` 即落库收尾 */
+async function beginMonkeyCodeOAuth(channel, onDone, helpers) {
+  const openWindow = helpers && helpers.openAuthWindow;
+  if (typeof openWindow !== "function") {
+    return { ok: false, message: "当前环境没有内嵌登录窗口，请改用「粘贴 session」添加账号" };
+  }
+  const region = mcRegion.byChannel(channel) || mcRegion.byChannel("monkeycode");
+  const site = region.siteOrigin;
+  const host = new URL(site).host;
+  let polling = null;
+  let settled = false;
+
+  const settle = (result) => {
+    if (settled) return;
+    settled = true;
+    if (polling) clearInterval(polling);
+    finishOAuth(result);
+  };
+
+  const opened = openWindow({
+    title: "MonkeyCode · 登录（登录成功后本窗口会自动关闭）",
+    url: site + "/",
+    onCaptured: () => {},
+    onClosed: () => settle({ ok: false, message: "已关闭登录窗口，登录未完成" }),
+  });
+  if (!opened || opened.ok === false) return { ok: false, message: (opened && opened.message) || "登录窗口打开失败" };
+
+  oauthSession = {
+    mode: "monkeycode",
+    channel,
+    onDone,
+    attachCancel: () => {
+      if (polling) clearInterval(polling);
+      try { opened.close && opened.close(); } catch { /* 已关 */ }
+    },
+    timer: setTimeout(() => settle({ ok: false, message: "登录超时（5 分钟），请重试" }), 5 * 60 * 1000),
+  };
+
+  const tick = async () => {
+    if (settled || !oauthSession || oauthSession.channel !== channel) return;
+    let cookie = "";
+    try { cookie = await opened.collectCookie([host]); } catch { cookie = ""; }
+    if (!cookie || !/monkeycode_ai_session=/.test(cookie)) return;
+    let r;
+    try {
+      r = await adapters.httpJson(`${site}/api/v1/users/status`, {
+        method: "GET",
+        headers: { Cookie: cookie, Accept: "application/json", "User-Agent": "monkeycode-local-proxy", Origin: site, Referer: site + "/" },
+      });
+    } catch { return; }
+    if (!r || !r.ok) return;
+    const data = (r.data && r.data.data) || r.data || {};
+    const user = data.user || data || {};
+    const uid = String(user.id || user.uid || user.user_id || "").trim();
+    if (!uid) return;
+    const saved = saveMonkeyCodeAccount({ channel, cookie, uid, name: user.name || user.nickname, source: "oauth" });
+    if (!saved.ok) { settle({ ok: false, message: saved.message }); return; }
+    settle({ ok: true, id: saved.id, uid: saved.uid });
+  };
+
+  polling = setInterval(() => { tick().catch(() => {}); }, 1500);
+  tick().catch(() => {});
+  return { ok: true, mode: "monkeycode" };
+}
+
 /**
  * 开始 OAuth：按渠道选流程
  * @returns {Promise<{ok:boolean,url?:string,message?:string,mode?:string}>} url 由主进程 shell.openExternal 打开
@@ -3251,6 +3343,8 @@ async function beginOAuth(channel, onDone, helpers, opts) {
   if (!adapters.get(ch)) throw new Error(`未知渠道 ${ch}`);
   if (ch === "raccoon") return beginRaccoonOAuth(ch, onDone, helpers);
   if (ch === "modelscope") return beginModelScopeOAuth(ch, onDone, helpers);
+  // MonkeyCode 双站：网页授权 + HttpOnly 会话 Cookie，走应用内窗口登录（见 beginMonkeyCodeOAuth）
+  if (ch === "monkeycode" || ch === "monkeycode_intl") return beginMonkeyCodeOAuth(ch, onDone, helpers);
   if (ch === "lobster") return beginLobsterOAuth(ch, onDone);
   if (ch === "trae") return beginTraeOAuth(ch, onDone);
   if (ch === "zcode") return beginZcodeOAuth(ch, onDone);
@@ -3688,6 +3782,9 @@ module.exports = {
   saveAutoclawAccount,
   // ModelScope（魔搭）：OAuth 主路径 + 粘贴令牌兜底 + 续期
   beginModelScopeOAuth,
+  // MonkeyCode（长亭）双站：应用内窗口登录 + 会话落库
+  beginMonkeyCodeOAuth,
+  saveMonkeyCodeAccount,
   registerModelScopeApp,
   exchangeModelScopeCode,
   refreshModelScopeToken,

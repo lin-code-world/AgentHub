@@ -174,7 +174,7 @@ let smsTimer: ReturnType<typeof setTimeout> | undefined;
 // 保留该数组作为"渠道感知可用性"的机制位：将来某渠道若确实无 OAuth，把 id 加进来即可。
 // CatPaw（美团）：上游没有开放授权页流程，凭据是**桌面端会话 Cookie 值**——
 // 只能「从本机客户端导入登录态」或「粘贴 JSON」，故屏蔽 OAuth 页签。
-const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw", "monkeycode", "monkeycode_intl"];
+const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw"];
 // 仅手机验证码登录的渠道：AutoClaw 国内版与 Loomy —— 两家上游都没有网页授权码那套，
 // 官方客户端唯一的自助入口就是手机号 + 验证码，故把 OAuth 页签换成「手机验证码」
 const SMS_ONLY_CHANNELS: ProxyChannelId[] = ["autoclaw", "loomy"];

@@ -94,7 +94,7 @@ AgentApiGateway 是本地运行的反代网关（Electron + Vue 3 + TypeScript�
 | **AutoClaw 国际版** | AutoGLM 国际站 | OAuth 授权登录（含风控验证）/ 从本机导入 | 每日签到领积分 |
 | **Cline Free** | Cline 免费额度池 | WorkOS 设备授权（浏览器确认，**无需安装客户端**）/ 从本机 Cline 客户端导入 / 粘贴凭据 | 无签到活动 |
 | **Cline Pass** | ClinePass 订阅池 | 同上（同一份 Cline 登录态可在两个渠道各导入一次） | 无签到活动 |
-| **MonkeyCode 国内版** | 长亭 MonkeyCode 国内站 | 粘贴 session cookie（30 天有效、**上游无续期接口**、**无需安装客户端**） | 每日签到领积分 |
+| **MonkeyCode 国内版** | 长亭 MonkeyCode 国内站 | 弹窗登录（登录后自动取会话；也可粘贴 session cookie）、30 天有效、**上游无续期接口**、**无需安装客户端** | 每日签到领积分 |
 | **MonkeyCode 国际版** | MonkeyCode 国际站 | 同上（两站账号与额度互不相通，各自成渠道） | 每日签到领积分 |
 
 各渠道的号池、签到、策略完全独立，互不影响：在号池页顶部切换渠道，下方整块区域只显示当前渠道的账号。
