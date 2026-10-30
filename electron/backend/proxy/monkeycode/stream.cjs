@@ -33,8 +33,9 @@ const WebSocket = globalThis.WebSocket;
 const endpoints = require("./endpoints.cjs");
 const task = require("./task.cjs");
 
-/** 任务流总时长上限：与建任务的 resource.life 同口径，别只改一边 */
-const TASK_TOTAL_MS = 60 * 60 * 1000;
+/** 任务流总时长上限：与建任务的 resource.life 同口径，别只改一边。
+ *  3 小时是上游「公共主机」能申请的最大值时（task.go: `Life > 3*60*60` 直接拒绝建任务）。 */
+const TASK_TOTAL_MS = 3 * 60 * 60 * 1000;
 /** 空闲兜底下限：上游约每 10 秒推一条 ping，正常不会触达空闲判定 */
 const IDLE_MIN_MS = 30000;
 
@@ -327,7 +328,7 @@ function runTaskStream(opts) {
       }
       signal.addEventListener("abort", onAbort, { once: true });
     }
-    totalTimer = setTimeout(() => fail("任务流超过 1 小时上限（与上游资源时长对齐）", 504, "task_timeout"), TASK_TOTAL_MS);
+    totalTimer = setTimeout(() => fail("任务流超过 3 小时上限（与上游资源时长对齐）", 504, "task_timeout"), TASK_TOTAL_MS);
     // 握手兜底：空闲计时是在 open 之后才开始的，握手卡住时必须有独立的口子，
     // 否则这条请求会一直挂到外层超时，报错归属也说不清是上游不通还是账号不通
     handshakeTimer = setTimeout(

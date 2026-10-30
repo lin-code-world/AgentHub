@@ -146,7 +146,9 @@ function resolveTarget(channel, requested) {
       if (!entry.upstreamId) return null;
       return {
         modelId: entry.upstreamId,
-        cliName: entry.cliName || endpoints.cliNameFor(entry.interfaceType),
+        // 用**当前**规则算 cli_name，不读落盘值：早先的目录把 cliName 存成过 claude/codex，
+        // 读旧值会让已拉过目录的账号继续用错的 agent（改为 opencode 后必须吃新值）。
+        cliName: endpoints.cliNameFor(entry.interfaceType),
         model: entry.model,
       };
     }

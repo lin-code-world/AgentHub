@@ -89,13 +89,15 @@ function taskStreamUrl(region, section, taskId, mode) {
 }
 
 /**
- * 目录里的 interface_type 决定任务容器里装哪个 coding agent，也就决定建任务的 cli_name。
- * 未知/缺失回落 opencode——那是最通用的一档，不是随手默认值。
+ * 容器里装哪个 coding agent（= 建任务的 cli_name）。
+ *
+ * 固定 opencode，**不按模型的 interface_type 挑**：opencode 内部会按接口类型自动选
+ * 对应的 provider 适配器（anthropic / openai / openai_responses 都吃），官方网页端、
+ * 官方桌面客户端、第三方实现三处一律用 opencode。按接口类型映射成 claude/codex 时，
+ * 容器里跑的 agent 连不上模型 API（实测：任务起得来、但一直 llm_call_retry
+ * "Cannot connect to API"）。interfaceType 形参保留只为调用点少改、并留出日后扩展位。
  */
 function cliNameFor(interfaceType) {
-  const t = String(interfaceType || "").trim().toLowerCase();
-  if (t === "openai_responses") return "codex";
-  if (t === "anthropic") return "claude";
   return "opencode";
 }
 

@@ -50,6 +50,11 @@ console.log("\n[1] 站点身份与端点常量");
   ok(region.byChannel("cn") === region.byChannel("monkeycode"), "短键 cn 与渠道 id 同指");
   ok(region.byChannel("intl") === region.byChannel("monkeycode_intl"), "短键 intl 与渠道 id 同指");
   eq(region.toWsScheme("https://monkeycode-ai.com"), "wss://monkeycode-ai.com", "https → wss");
+  // cli_name 固定 opencode，不随接口类型变：按接口映射成 claude/codex 时容器里的 agent
+  // 连不上模型 API（实测 llm_call_retry "Cannot connect to API"），官方三端一律用 opencode
+  eq(endpoints.cliNameFor("anthropic"), "opencode", "anthropic 接口也用 opencode（不映射 claude）");
+  eq(endpoints.cliNameFor("openai_responses"), "opencode", "openai_responses 接口也用 opencode（不映射 codex）");
+  eq(endpoints.cliNameFor(""), "opencode", "缺接口类型也回落 opencode");
 }
 
 console.log("\n[2] 建任务：messages → prompt + 请求体");
@@ -74,14 +79,15 @@ console.log("\n[2] 建任务：messages → prompt + 请求体");
     section: {},
     deps: {},
     prompt: { prompt: "hi", systemPrompt: "sys" },
-    target: { modelId: "c79063e2-a4d4-4f15-8f8c-a604f959c377", cliName: "claude" },
+    target: { modelId: "c79063e2-a4d4-4f15-8f8c-a604f959c377", cliName: "opencode" },
     imageId: "img-uuid",
   });
   eq(body.model_id, "c79063e2-a4d4-4f15-8f8c-a604f959c377", "model_id 用目录里的 UUID");
   eq(body.host_id, "public_host", "host_id 用公共宿主占位符");
   eq(body.image_id, "img-uuid", "image_id 原样带上");
   eq(body.system_prompt, "sys", "system_prompt 独立字段");
-  ok(body.resource && body.resource.core === 1 && body.resource.life === 3600, "resource 与任务流总时长同口径", body.resource);
+  ok(body.resource && body.resource.core === 2 && body.resource.life === 3 * 3600, "resource 用官方口径（2核/3小时）且与任务流总时长同口径", body.resource);
+  eq(body.task_type, "develop", "task_type 固定 develop（与官方客户端一致）");
   ok(body.repo && body.repo.branch === "master", "repo 为必填占位");
 
   const ui = JSON.parse(task.userInputData("你好"));
@@ -200,6 +206,8 @@ console.log("\n[8] 目录持久化：只有磁盘文件（模拟重启）时仍�
   eq(models2.ids("monkeycode"), ["glm-5"], "ids() 从盘上读回模型名");
   const target = models2.resolveTarget("monkeycode", "glm-5");
   ok(target && target.modelId === "uuid-glm5", "建任务能从盘上目录解析出 UUID", target);
+  // 落盘条目里 cliName 是旧的 claude：必须吃当前规则（opencode），不能被旧值带走
+  eq(target && target.cliName, "opencode", "cli_name 不信任落盘旧值（旧目录里的 claude 被纠正为 opencode）");
   eq(models2.list("monkeycode_intl").length, 0, "另一站独立一格，不串数据");
   // 复位：还原环境与模块，避免影响后续断言
   if (old === undefined) delete process.env.AGENTHUB_DATA_DIR;

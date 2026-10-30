@@ -16,15 +16,16 @@
 //      与上游客户端自己的取值口径一致，改成拼接反而会造出上游没见过的形态）；
 //   2. tools / tool_choice 不透传：任务容器里的 agent 自带工具循环，建任务接口没有接收客户端
 //      工具表的字段。客户端带工具表是常态，不为此报错。
-//   3. resource.life 与任务流的总时长上限同一口径（1 小时）：到点上游本来就要回收 VM，
-//      继续等只会把下游挂死。
+//   3. resource.life 与任务流的总时长上限同一口径（3 小时，上游公共主机的上限）：到点上游
+//      本来就要回收 VM，继续等只会把下游挂死。
 "use strict";
 
 const endpoints = require("./endpoints.cjs");
 const regionStore = require("./region.cjs");
 
-/** 资源限额：1 核 / 1 GiB / 1 小时（与任务流总超时同一口径，别只改一边） */
-const RESOURCE = { core: 1, memory: 1073741824, life: 3600 };
+/** 资源限额：2 核 / 8 GiB / 3 小时（与官方客户端一致，也与任务流总超时同口径，别只改一边）。
+ *  1 核 1 GiB 跑不起容器里的 opencode（Node 程序），实测会因资源不足起不来。 */
+const RESOURCE = { core: 2, memory: 8 * 1024 * 1024 * 1024, life: 3 * 3600 };
 
 /** 一条消息的可读文本：字符串直接用；数组只收 text / input_text 部件并**无分隔拼接**。
  *  多模态的其它部件（图片、文件）本渠道不接——上游只收文本提示词。 */
@@ -91,6 +92,9 @@ function buildBody({ region, section, deps, prompt, target, imageId }) {
     image_id: imageId,
     model_id: target.modelId,
     cli_name: target.cliName,
+    // 任务类型：官方网页端 / 桌面端 / 第三方一律传 develop；缺省时上游不走"开发任务"那套
+    // 初始化（system prompt 注入等按 Type 分支），所以照官方口径显式带上
+    task_type: "develop",
     resource: { core: RESOURCE.core, memory: RESOURCE.memory, life: RESOURCE.life },
     repo: { repo_url: "", branch: "master", repo_filename: "", zip_url: "" },
   };

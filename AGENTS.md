@@ -42,6 +42,29 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - `electron/backend/proxy/` 是唯一的网关核心实现，桌面窗口与局域网网页控制台共用同一份调度、选号、冷却与计费。
 - 只有一种运行形态，凭据以 safeStorage 加密落盘；跨机传号走凭据 JSON 导出 / 导入（号池 WebDAV/S3 同步已移除）。
 
+## MonkeyCode 渠道：参考来源与已核实口径
+
+改 `electron/backend/proxy/monkeycode/`（建任务 / 任务流 / 模型目录 / 签到）前，先对齐下面三处外部实现，**不要凭记忆写协议**：
+
+- **官方仓库 `chaitin/MonkeyCode`（main 分支）https://github.com/chaitin/MonkeyCode/** —— 任务与协议的权威依据。按需看：
+  `backend/domain/task.go` 的 `CreateTaskReq`（建任务请求体）；`backend/biz/task/usecase/task.go` 的 `getCodingConfigs`
+  与 `backend/templates/{claude,codex,opencode}.tmpl`（容器里装哪个 agent、怎么配 API）；`backend/biz/task/handler/v1/task.go`
+  的 `Stream`（任务流帧协议，`mode=new|attach`）；`handler/v1/task.go` 里 `req.Resource.Life > 3*60*60` 直接拒绝（公共主机上限）。
+- **第三方 `ZFXing-lite/monkeycode2api` https://github.com/ZFXing-lite/monkeycode2api/** —— 可跑通的最小实现（Go），
+  用于交叉验证参数（`cli_name=opencode`、`task_type=develop`、公共 devbox 镜像 UUID、签到 PoW）。
+- **本仓库 `main` 分支的 `electron/backend/proxy/monkeycode/`** —— 同一渠道在本工程的既有实现，动手前先
+  `git diff main -- electron/backend/proxy/monkeycode/` 看差异。
+
+已核实、**不要改回去**的几条（三处口径一致，实测得出）：
+
+- `cli_name` 固定 `opencode`，**不按模型的 `interface_type` 映射**成 claude / codex。官方网页端、官方桌面端、第三方一律用
+  opencode（它内部按接口类型自动选 provider）。实测按接口映射成 claude 时，容器里的 agent 连不上模型 API：任务能建起来，
+  但任务流一直 `llm_call_retry` "Cannot connect to API"，客户端拿不到回答。同理 `resolveTarget` 不读目录里落盘的旧
+  `cliName`，一律按当前规则算（旧目录存的是 claude）。
+- 建任务带 `task_type: "develop"`（官方三处都传）。
+- `resource` 用 `core:2 / memory:8GiB / life:3h`（与官方默认值一致）。`life` 上限 3 小时是上游硬限制；我们的任务流总时长
+  `TASK_TOTAL_MS` 必须与它同口径，改一处要一起改。
+
 ## 渠道路由特殊判断走插件
 
 - 任何「只针对某个渠道」的路由偏好（如某渠道余额构成、某渠道临时让位等）**不得**在 `pool.cjs` / `server.cjs` 主干里写 `if (channel === "xxx")`，一律做成独立插件，便于添加与移除。
