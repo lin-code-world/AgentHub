@@ -97,6 +97,8 @@ async function main() {
 
   const cfg = {
     port: 19562, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 1, // 每渠道上限 1：并发现场最容易构造
+    // 关同 body 去重：本测试靠「内容相同的并发请求」观察每渠道在途闸，去重会把它们串行化（测不出并发）
+    dedupeSameBody: false,
     routeStrategy: "smart", fixedChannel: "", modelOverrides: {}, debugStatus: false,
     humanizeJitter: false, disabledModels: [],
     routeOrder: "score", channelFailover: true, channelFailoverMax: 3,
@@ -142,7 +144,7 @@ async function main() {
     let r5 = await call();
     let body5 = await r5.text();
     check("B2 全部候选都满才 429", r5.status === 429, `${r5.status} ${body5.slice(0, 200)}`);
-    check("B2 文案如实写「在途并发已满」并带渠道轨迹（不再冒充上游）", /在途并发已满/.test(body5) && /已尝试/.test(body5), body5.slice(0, 260));
+    check("B2 文案如实写「在途并发已满」并带渠道轨迹（不再冒充上游）", /在途并发已满/.test(body5) && /workbuddy/.test(body5), body5.slice(0, 260));
 
     // ===== B3：放行后在途计数必须归零（泄漏面与租约同生命周期）=====
     // 先关开关再放行：waiters 是「已挂住的旧请求」，开关管的是「之后的新请求」——B4 要发新请求
@@ -169,7 +171,14 @@ async function main() {
   }
 
   console.log(`\n并发作用域自测：${pass} 通过 / ${fail} 失败${fails.length ? "\n  " + fails.join("\n  ") : ""}`);
-  if (fail) process.exit(1);
+  if (fail) console.log(fails.join("\n"));
+  // 显式收尾：sqlite 句柄不关会让进程挂住不退出（此前只有失败路径早退）
+  try {
+    require("../electron/backend/proxy/store.cjs").close();
+  } catch {
+    /* 句柄已关或从未打开 */
+  }
+  process.exit(fail ? 1 : 0);
 }
 
 main().catch((e) => {
