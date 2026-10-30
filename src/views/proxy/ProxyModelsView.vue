@@ -64,12 +64,13 @@ function displayId(m: ProxyModel): string {
   return ids.find((x) => x.toLowerCase() === lower) || m.id;
 }
 
-/** 来源渠道明细的单项：该渠道自己的 id / 倍率 / 上下文 / 最大输出 / 能力 */
+/** 来源渠道明细的单项：该渠道自己的 id / 名字 / 倍率 / 上下文 / 最大输出 / 能力 */
 type SourceDetail = NonNullable<ProxyModel["sourceDetails"]>[number];
 /** 来源渠道行的最小形状（sourceRows 的兜底项也满足） */
 type SourceDetailLike = {
   channel: string;
   id: string;
+  name?: string;
   rate: number | null;
   contextLength: number;
   maxOutputTokens: number;
@@ -87,6 +88,20 @@ function channelMetaOf(m: ProxyModel): SourceDetail | null {
 
 /** 上下文 / 能力 / 倍率的取数来源：渠道视图用该渠道自己的元数据，全部视图用行级合并值 */
 const metaOf = (m: ProxyModel): SourceDetail | ProxyModel => channelMetaOf(m) || m;
+
+/**
+ * 显示名：渠道视图只认该渠道自己的目录名，全部视图用合并值。
+ *
+ * 为什么不能直接用行级 name：同名的模型可能被多个渠道提供，合并时只留了其中一个渠道给的名字
+ * （例如 MonkeyCode 与 WorkBuddy 都有 minimax-m2.5，名字来自 WorkBuddy）。渠道页里显示它，
+ * 就等于把这个渠道根本没有的名字安在了它头上——上游没给名就该是空的。
+ */
+function displayName(m: ProxyModel): string {
+  const tab = activeTab.value;
+  if (!tab) return String(m.name || "");
+  const own = channelMetaOf(m)?.name;
+  return own ? String(own) : "";
+}
 
 /** 渠道视图下的倍率：只显示该渠道自己的值（全部视图在「来源渠道」列里逐个渠道显示） */
 const activeTabRate = (m: ProxyModel): number | null => channelMetaOf(m)?.rate ?? null;
@@ -117,7 +132,8 @@ const rows = computed(() => {
     return (
       m.id.toLowerCase().includes(kw) ||
       displayId(m).toLowerCase().includes(kw) ||
-      String(m.name || "").toLowerCase().includes(kw) ||
+      // 搜索口径与显示口径一致：渠道页只搜该渠道自己的名字，别用合并来的名字把不相干的搜出来
+      displayName(m).toLowerCase().includes(kw) ||
       aliasText(m).toLowerCase().includes(kw)
     );
   });
@@ -772,8 +788,8 @@ watch(active, (on) => {
                         <span class="tag tag-dim alias-tag">别名</span>
                       </el-tooltip>
                     </div>
-                    <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
-                      <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
+                    <el-tooltip v-if="displayName(m) && displayName(m) !== displayId(m)" :content="displayName(m)" placement="top">
+                      <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ displayName(m) }}</div>
                     </el-tooltip>
                     <el-tooltip v-if="m.accountless" content="单来源渠道未配置账号，模型已自动关闭" placement="top">
                       <span class="tag tag-dim accountless-tag">无账号</span>
@@ -830,7 +846,6 @@ watch(active, (on) => {
                       <template #content>
                         <div class="tip-title">模型能力</div>
                         <div v-for="n in capabilityNames(metaOf(m))" :key="n" class="tip-line">· {{ n }}</div>
-                        <div v-if="ctxValue(m)" class="tip-line">· 上下文 {{ fmtCtx(ctxValue(m)) }}（{{ ctxValue(m).toLocaleString("en-US") }}）</div>
                       </template>
                       <span class="tip-host" :class="{ 'can-tip': capabilityTags(metaOf(m)).length }">
                         <span v-for="t in capabilityTags(metaOf(m))" :key="t" class="tag tag-dim" style="margin-right: 3px; font-size: 10px; padding: 1px 4px">{{ t }}</span>

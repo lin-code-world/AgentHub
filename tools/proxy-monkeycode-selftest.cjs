@@ -146,6 +146,10 @@ console.log("\n[5] 模型目录过滤（隐藏不列、只留 basic 档与裸名
   ok(shaped && shaped.capabilities.reasoning === true, "思考能力取上游 thinking_enabled");
   ok(shaped && shaped.capabilities.tools === true, "工具能力为 true");
   ok(models.mapEntry(row({ model: "" })) === null, "无模型名的幽灵条目不列");
+  // 名字只认上游 remark：上游没给名时必须是空串（回填 model 等于凭空造名字，
+  // 渠道页按名字分列时就看不出「这个渠道其实没给名」）
+  eq(models.mapEntry(row({ model: "glm-5" })).name, "", "上游没给 remark → 名字为空");
+  eq(models.mapEntry(row({ model: "glm-5", remark: "极致模型-5" })).name, "极致模型-5", "名字取上游 remark 字段");
 }
 
 console.log("\n[6] 镜像发现优先级");

@@ -5026,6 +5026,9 @@ function mergedModels(cfg, opts) {
       entry.sourceDetails.push({
         channel,
         id: lookupId,
+        // 该渠道自己的显示名：单渠道视图只认这份，避免把别的渠道给同名模型起的名字
+        // 显示成本渠道的名字（上游没给名就是空串）
+        name: meta.name ? String(meta.name) : "",
         rate: meta.rate != null && !Number.isNaN(Number(meta.rate)) ? Number(meta.rate) : null,
         contextLength: Number(meta.contextLength) || 0,
         maxOutputTokens: Number(meta.maxOutputTokens) || 0,

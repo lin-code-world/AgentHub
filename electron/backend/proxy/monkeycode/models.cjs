@@ -49,7 +49,9 @@ function mapEntry(row) {
   // 思考、图片能力全是空的）。建任务要的 upstreamId / interfaceType / cliName 随条目一起落盘。
   const entry = {
     id,
-    name: trimText(row.display_name) || model,
+    // 上游的显示名字段是 remark（不是 display_name）；没给就是空串——这里不能回填 model，
+    // 否则等于凭空造了个与 id 相同的「名字」，界面按名字分列时看不出它其实没名字。
+    name: trimText(row.remark),
     rate: null,
     // 能力三项都以上游字段为准（support_image / thinking_enabled 上游都回）；
     // 工具调用是任务容器里 coding agent 的固有能力，给 true。

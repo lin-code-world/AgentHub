@@ -46,6 +46,8 @@ export function mergeAliasRows(models: ChannelRowModel[], activeTab: string, rev
 export interface SourceDetailRow {
   channel: string;
   id: string;
+  /** 该渠道自己的显示名（上游没给就是空串） */
+  name?: string;
   rate: number | null;
   contextLength: number;
   maxOutputTokens: number;
