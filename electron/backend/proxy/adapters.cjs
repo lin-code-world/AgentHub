@@ -4903,6 +4903,7 @@ function mergedModels(cfg) {
   const c = cfg || proxyConfig();
   const seen = new Map();
   const catMaps = {};
+  const perChanCustom = c.modelCustomByChannel || {};
   for (const channel of Object.keys(ADAPTERS)) catMaps[channel] = catalogMap(channel);
   // 提供商的模型清单也铺成同一种 catalog 形状：下面那条共用的富化循环因此认得它们，
   // 不必为自建渠道再写第二套 name/rate/capabilities/上限的填法（抄第二遍必然漂）
@@ -4986,6 +4987,8 @@ function mergedModels(cfg) {
         contextLength: Number(meta.contextLength) || 0,
         maxOutputTokens: Number(meta.maxOutputTokens) || 0,
         capabilities: meta.capabilities || {},
+        // 该渠道自己的自定义参数（键 = 该渠道实际模型 id + 渠道）：界面按渠道分列编辑时直接用
+        custom: (perChanCustom[lookupId] || {})[channel] || null,
       });
       if (meta.name && meta.name !== entry.id && entry.name === entry.id) entry.name = String(meta.name);
       if (entry.rate == null && meta.rate != null && !Number.isNaN(Number(meta.rate))) entry.rate = Number(meta.rate);

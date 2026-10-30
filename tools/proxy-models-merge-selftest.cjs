@@ -215,6 +215,16 @@ function main() {
     eq(adapters.modelOwners("DEEPSEEK-V4.1-FLASH", revCfg), [], "大写写法不继承小写写法的反向映射归属");
     eq(adapters.resolveModelTarget("DEEPSEEK-V4.1-FLASH", "workbuddy", revCfg), null, "大写写法不解析到小写写法的映射目标");
     check("小写写法自身仍按映射归属", adapters.modelOwners("deepseek-v4.1-flash", revCfg).includes("workbuddy"));
+    const perChanCfg = {
+      channelEnabled: {},
+      modelCustomByChannel: { "DeepSeek-V4.1-Flash": { loomy: { contextLength: 300000, reasoningEffort: "high" } } },
+    };
+    const perRows = adapters.mergedModels(perChanCfg);
+    const perUpper = perRows.find((m) => m.id === "DeepSeek-V4.1-Flash");
+    const loomyMeta = (perUpper.sourceDetails || []).find((d) => d.channel === "loomy");
+    eq(loomyMeta && loomyMeta.custom, { contextLength: 300000, reasoningEffort: "high" }, "来源明细带该渠道的自定义参数");
+    const traeMeta = (perRows.find((m) => m.id === "deepseek-v4.1-flash").sourceDetails || [])[0];
+    eq(traeMeta.custom, null, "没有渠道级配置时为 null");
   } finally {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, orig2);
