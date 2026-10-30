@@ -40,29 +40,37 @@ function mapEntry(row) {
   // 只保留 basic 档与裸名：pro/ultra 且带档位前缀的一律不列（现有的渠道口径）
   if (trimText(row.access_level) !== "basic" && model.includes("/")) return null;
   const provider = trimText(row.provider);
-  const id = provider ? `${provider}/${model}` : model;
+  // 模型 id 直接用上游模型名（不拼 provider）：MonkeyCode 的模型全部同属 BaiZhiCloud，
+  // 拼上前缀只是把名字拉长（与桌面客户端的显示口径也更一致）。
+  const id = model;
   const interfaceType = trimText(row.interface_type);
+  // 条目形状必须与其它渠道一致：网关目录页的富化只认 name / rate / capabilities /
+  // contextLength / maxOutputTokens 这几个键（只回一个 id 列表的话，页面上的上下文、
+  // 思考、图片能力全是空的）。建任务要的 upstreamId / interfaceType / cliName 随条目一起落盘。
   const entry = {
     id,
     name: trimText(row.display_name) || model,
-    provider,
+    rate: null,
+    // 能力三项都以上游字段为准（support_image / thinking_enabled 上游都回）；
+    // 工具调用是任务容器里 coding agent 的固有能力，给 true。
+    capabilities: {
+      images: row.support_image === true,
+      reasoning: row.thinking_enabled === true,
+      tools: true,
+    },
+    contextLength: Number(row.context_limit) || 0,
+    maxOutputTokens: Number(row.output_limit) || 0,
+    // 建任务所需（随目录一起落盘，其它渠道条目同样带各自的自定义键）
     model,
+    provider,
     upstreamId: trimText(row.id),
     interfaceType,
     cliName: endpoints.cliNameFor(interfaceType),
-    // 工具调用是上游 coding agent 的固有能力（三个 agent 都走工具循环），给 true；
-    // 图片位上游没给依据，保守 false——写 true 会让客户端附图然后静默丢图
-    supportsToolCall: true,
-    supportsImages: false,
-    supportsVideo: false,
-    supportsReasoning: row.thinking_enabled === true,
     isDefault: row.is_default === true,
   };
   if (row.is_free !== undefined) entry.isFree = row.is_free === true;
   const accessLevel = trimText(row.access_level);
   if (accessLevel) entry.accessLevel = accessLevel;
-  if (Number(row.context_limit) > 0) entry.maxInputTokens = Math.trunc(Number(row.context_limit));
-  if (Number(row.output_limit) > 0) entry.maxOutputTokens = Math.trunc(Number(row.output_limit));
   return entry;
 }
 
@@ -125,17 +133,17 @@ async function requestJson(deps, url, cred, section, region, what) {
 async function refresh(region, section, deps, session, force) {
   const channel = region.channel;
   if (!String(session || "").trim()) {
-    return { ok: true, skipped: true, models: ids(channel), message: "尚未添加账号，模型目录待添加后刷新" };
+    return { ok: true, skipped: true, models: list(channel), message: "尚未添加账号，模型目录待添加后刷新" };
   }
   const slot = slots.get(channel);
   if (!force && slot && slot.models.length && Date.now() - slot.at < CATALOG_TTL_MS) {
-    return { ok: true, models: ids(channel), cached: true };
+    return { ok: true, models: list(channel), cached: true };
   }
   let payload = null;
   try {
     payload = await requestJson(deps, `${baseUrlFor(region, section)}${endpoints.MODELS_PATH}`, session, section, region, "模型目录查询");
   } catch (e) {
-    return { ok: false, message: String((e && e.message) || e), models: ids(channel) };
+    return { ok: false, message: String((e && e.message) || e), models: list(channel) };
   }
   const rows = extractRows(payload);
   const models = [];
@@ -143,9 +151,9 @@ async function refresh(region, section, deps, session, force) {
     const entry = mapEntry(row);
     if (entry) models.push(entry);
   }
-  if (!models.length) return { ok: false, message: "MonkeyCode 模型目录为空或格式不认识（保留现有清单）", models: ids(channel) };
+  if (!models.length) return { ok: false, message: "MonkeyCode 模型目录为空或格式不认识（保留现有清单）", models: list(channel) };
   slots.set(channel, { models, at: Date.now() });
-  return { ok: true, models: models.map((m) => m.id), count: models.length };
+  return { ok: true, models, count: models.length };
 }
 
 /** 站点基址（规则文件 / 环境变量可改到自建站点；结尾斜杠统一去掉） */

@@ -133,11 +133,18 @@ console.log("\n[5] 模型目录过滤（隐藏不列、只留 basic 档与裸名
   ok(models.mapEntry(row({ model: "monkeycode-pro/hy3", access_level: "pro" })) === null, "pro 档且带前缀 → 不列");
   ok(models.mapEntry(row({ model: "monkeycode-ultra/gpt-5", access_level: "ultra" })) === null, "ultra 档且带前缀 → 不列");
   const basicPrefixed = models.mapEntry(row({ model: "monkeycode-basic/glm-5.3-flash", access_level: "basic" }));
-  ok(basicPrefixed && basicPrefixed.id === "BaiZhiCloud/monkeycode-basic/glm-5.3-flash", "basic 档带前缀 → 保留（显示 id 带 provider 前缀）");
+  ok(basicPrefixed && basicPrefixed.id === "monkeycode-basic/glm-5.3-flash", "basic 档带前缀 → 保留（id 不拼 provider）");
   const naked = models.mapEntry(row({ model: "glm-5", access_level: "basic" }));
   ok(naked && naked.model === "glm-5", "裸名 basic → 保留");
   const nakedPro = models.mapEntry(row({ model: "monkeycode-pro", access_level: "pro" }));
   ok(nakedPro && nakedPro.model === "monkeycode-pro", "裸名 pro → 保留（裸名规则优先）");
+  // 条目形状必须带目录页富化要的键（上下文 / 能力 / 思考），否则页面上这几列全是空的
+  const shaped = models.mapEntry(row({ model: "glm-5", support_image: true, thinking_enabled: true }));
+  ok(shaped && shaped.contextLength === 200000, "带上下文长度（contextLength）", shaped && shaped.contextLength);
+  ok(shaped && shaped.maxOutputTokens === 32000, "带输出上限（maxOutputTokens）", shaped && shaped.maxOutputTokens);
+  ok(shaped && shaped.capabilities.images === true, "图片能力取上游 support_image", shaped && shaped.capabilities);
+  ok(shaped && shaped.capabilities.reasoning === true, "思考能力取上游 thinking_enabled");
+  ok(shaped && shaped.capabilities.tools === true, "工具能力为 true");
   ok(models.mapEntry(row({ model: "" })) === null, "无模型名的幽灵条目不列");
 }
 
