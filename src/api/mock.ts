@@ -308,7 +308,7 @@ const PROXY_USAGE = [
   { id: 5, ts: NOW - 60000, reqId: "r5", keyId: "k1", keyName: "本地主 Key", channel: "trae", accountId: "a1", accountName: "主账号 · 沐", model: "deepseek-v4-flash", modelActual: "DeepSeek-V4-Flash", promptTokens: 1204, completionTokens: 3841, ttftMs: 820, latencyMs: 1200, status: 200, error: "" },
   { id: 4, ts: NOW - 89000, reqId: "r4", keyId: "k2", keyName: "Trae 专用", channel: "trae", accountId: "a1", accountName: "主账号 · 沐", model: "glm-4.6", promptTokens: 2010, completionTokens: 6233, ttftMs: 1500, latencyMs: 2800, status: 200, error: "" },
   { id: 3, ts: NOW - 140000, reqId: "r3", keyId: "k3", keyName: "WorkBuddy 专用", channel: "workbuddy", accountId: "a3", accountName: "工作号", model: "claude-sonnet-4.5", promptTokens: 890, completionTokens: 2210, ttftMs: 640, latencyMs: 1900, status: 200, error: "" },
-  { id: 2, ts: NOW - 220000, reqId: "r2", keyId: "k1", keyName: "本地主 Key", channel: "workbuddy_ai", accountId: "a5", accountName: "Trial 加油包", model: "gpt-5", promptTokens: 312, completionTokens: 0, ttftMs: 0, latencyMs: 300, status: 429, error: "rate limited" },
+  { id: 2, ts: NOW - 220000, reqId: "r2", keyId: "k1", keyName: "本地主 Key", channel: "workbuddy_ai", accountId: "a5", accountName: "Trial 加油包", model: "hy3", promptTokens: 312, completionTokens: 0, ttftMs: 0, latencyMs: 300, status: 429, error: "rate limited" },
   { id: 1, ts: NOW - 310000, reqId: "r1", keyId: "k1", keyName: "本地主 Key", channel: "trae", accountId: "a2", accountName: "备用号", model: "kimi-k2", promptTokens: 1560, completionTokens: 4120, ttftMs: 910, latencyMs: 2400, status: 200, error: "" },
 ];
 
@@ -387,7 +387,7 @@ const PROXY_MODELS = [
   { id: "glm-4.6", object: "model", created: 0, owned_by: "trae", sources: ["trae"], name: "GLM-4.6", rate: null, capabilities: {}, contextLength: 131072, maxOutputTokens: 0, enabled: true, override: "", fallback: "" },
   { id: "kimi-k2", object: "model", created: 0, owned_by: "trae", sources: ["trae"], name: "Kimi-K2", rate: null, capabilities: {}, contextLength: 131072, maxOutputTokens: 0, enabled: true, override: "", fallback: "" },
   { id: "claude-sonnet-4.5", object: "model", created: 0, owned_by: "workbuddy", sources: ["workbuddy", "workbuddy_ai"], name: "Claude Sonnet 4.5", rate: 1, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 64000, enabled: true, override: "", fallback: "" },
-  { id: "gpt-5", object: "model", created: 0, owned_by: "workbuddy", sources: ["workbuddy", "workbuddy_ai"], name: "GPT-5", rate: 0.5, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 32000, enabled: true, override: "", fallback: "" },
+  { id: "hy3", object: "model", created: 0, owned_by: "workbuddy", sources: ["workbuddy", "workbuddy_ai"], name: "HY3", rate: 0.5, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 32000, enabled: true, override: "", fallback: "" },
   { id: "gemini-2.5-pro", object: "model", created: 0, owned_by: "workbuddy_ai", sources: ["workbuddy_ai"], name: "Gemini 2.5 Pro", rate: 0.05, capabilities: { images: true, tools: true }, contextLength: 1000000, maxOutputTokens: 64000, enabled: false, override: "", fallback: "" },
   { id: "raccoon-chat-ml-5-5", object: "model", created: 0, owned_by: "raccoon", sources: ["raccoon"], name: "Raccoon Chat ML 5.5", rate: null, capabilities: { reasoning: true, tools: true }, contextLength: 180000, maxOutputTokens: 80000, enabled: true, override: "", fallback: "" },
   { id: "glm-5.3-flash", object: "model", created: 0, owned_by: "catpaw", sources: ["catpaw"], name: "GLM-5.3-Flash", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1024000, maxOutputTokens: 0, enabled: true, override: "", fallback: "" },
@@ -400,7 +400,6 @@ const PROXY_MODELS = [
 ];
 
 const PROXY_RULES = [  { file: "model_map.json", desc: "Trae 模型映射（显示名 → config_name/model_name）", size: 642, mtimeMs: NOW - 86400000, ok: true, error: "" },
-  { file: "wb_models.json", desc: "WorkBuddy 双区模型目录（兜底，catalog.json 优先）", size: 318, mtimeMs: NOW - 86400000, ok: true, error: "" },
   { file: "catalog.json", desc: "模型权威目录（拉取模型写回：倍率/能力/上下文，可手编）", size: 2048, mtimeMs: NOW - 3600000, ok: true, error: "" },
   { file: "wb_template_map.json", desc: "WorkBuddy 审核模板最小改写表", size: 274, mtimeMs: NOW - 2 * 86400000, ok: true, error: "" },
   { file: "headers.json", desc: "渠道默认头 / UA / 上游域", size: 1204, mtimeMs: NOW - 86400000, ok: true, error: "" },

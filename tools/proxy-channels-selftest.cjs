@@ -323,6 +323,23 @@ const loomyModels = require("../electron/backend/proxy/loomy/models.cjs");
         emit: () => {},
       });
       eq(mapped.sent[0] && mapped.sent[0].model, "DeepSeek-V4.1-Flash", "Loomy chat 发上游的是 ctx.model（映射目标），不是 body.model（请求名）");
+
+      // ⑤ 拉取目录的返回形状：proxy_models_sync 只认 { ok, models }，而 models.refresh 给的是 count
+      const loomyModelsMod = require("../electron/backend/proxy/loomy/models.cjs");
+      const origRefresh = loomyModelsMod.refresh;
+      const origEntries = loomyModelsMod.entries;
+      try {
+        loomyModelsMod.refresh = async () => ({ ok: true, added: 2, count: 2 });
+        loomyModelsMod.entries = () => [{ id: "a" }, { id: "b" }];
+        const fr = await mapped.adapter.fetchModels({}, { token: "test-session" }, { force: true });
+        ok(fr.ok === true && Array.isArray(fr.models) && fr.models.length === 2, "Loomy fetchModels 返回 { ok, models }（与 Trae/WB 同形）");
+        loomyModelsMod.refresh = async () => ({ ok: false, message: "目录为空" });
+        const fe = await mapped.adapter.fetchModels({}, { token: "test-session" }, {});
+        ok(fe.ok === false && fe.message === "目录为空", "Loomy fetchModels 失败时透出 message");
+      } finally {
+        loomyModelsMod.refresh = origRefresh;
+        loomyModelsMod.entries = origEntries;
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

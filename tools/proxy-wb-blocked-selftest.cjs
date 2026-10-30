@@ -67,6 +67,14 @@ async function main() {
 
   store.open();
   rules.init();
+  // 模型目录不再内置：从测试模型清单读入
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    const cat = {};
+    for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
 
   // ===== 假上游：按 authorization 里的 token 分辨账号 =====
   const hits = { blocked: 0, good: 0 };
@@ -101,7 +109,7 @@ async function main() {
   await new Promise((r) => fake.listen(19533, "127.0.0.1", r));
 
   const headersPath = path.join(rules.rulesDir(), "headers.json");
-  const headersCfg = JSON.parse(fs.readFileSync(headersPath, "utf8"));
+  const headersCfg = JSON.parse(JSON.stringify(rules.DEFAULTS["headers.json"]));
   headersCfg.workbuddy_ai.consoleChatUrl = ""; // console 候选置空，请求只打假上游
   headersCfg.workbuddy_ai.chatUrl = "http://127.0.0.1:19533/wba/chat";
   headersCfg.workbuddy.chatUrl = "http://127.0.0.1:19533/wba/chat";
@@ -241,10 +249,14 @@ async function main() {
   await server.stopAsync();
   await new Promise((r) => fake.close(r));
   console.log(`\n${pass} passed, ${fail} failed`);
-  if (fail) {
-    console.log(failures.join("\n"));
-    process.exit(1);
+  if (fail) console.log(failures.join("\n"));
+  // 显式收尾：sqlite 句柄不关会让进程挂住不退出（此前只有失败路径早退，成功路径一直挂着）
+  try {
+    require("../electron/backend/proxy/store.cjs").close();
+  } catch {
+    /* 句柄已关或从未打开 */
   }
+  process.exit(fail ? 1 : 0);
 }
 
 main().catch((e) => {

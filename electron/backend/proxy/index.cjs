@@ -245,6 +245,17 @@ async function checkinBatch({ channel, accountId, action, interactive }) {
         continue;
       }
       const useAct = act === "checkin" && acc.channel === "workbuddy_ai" ? "trial" : act;
+      // 自动签到预检：当天已成功过就不再 claim，省一次请求也少撞一次设备级限流
+      if (useAct === "checkin" && !interactive && acc.checkin && acc.checkin.day === store.dayStr() && acc.checkin.ok === true) {
+        rows.push({ accountId: acc.id, channel: acc.channel, name: acc.name, uid: acc.uid, ok: true, already: true, message: "今日已签到（预检跳过）" });
+        continue;
+      }
+      // 9074 冷却中：跳过本次，退避到点后由自动 tick 重试（撞上去也只会再吃一次限流）
+      const cd9074 = Number(acc.checkin && acc.checkin.retry9074At) || 0;
+      if (useAct === "checkin" && cd9074 > Date.now()) {
+        rows.push({ accountId: acc.id, channel: acc.channel, name: acc.name, uid: acc.uid, ok: false, deferred: true, retryAt: cd9074, message: "上游签到限流冷却中，稍后自动重试" });
+        continue;
+      }
       let secrets = store.accountSecrets(store.getAccount(acc.id));
       try {
         // 凭证保鲜：手上 token 已过期/临期时先刷一次（与余额链路 ensureFreshSecrets 同一口径）。
@@ -263,7 +274,21 @@ async function checkinBatch({ channel, accountId, action, interactive }) {
             const rr = await adapters.refreshTokenLocked(acc.channel, acc, secrets).catch(() => ({ ok: false }));
             if (rr.ok) {
               secrets = { ...secrets, token: rr.token, refreshToken: rr.refreshToken };
+              if (!rr.noPersist) store.updateAccount(acc.id, { token: rr.token, refreshToken: rr.refreshToken });
               r = await ad.checkin(acc, secrets);
+            }
+          }
+          // Trae 9074 是设备级限流：换一套设备指纹重试一次，仍失败则按退避冷却并交给自动 tick 重试
+          if (r && r.code === 9074 && typeof ad.rotateCheckinDevice === "function") {
+            const nextGen = ad.rotateCheckinDevice(acc);
+            const retry = await ad.checkin({ ...acc, checkin: { ...(acc.checkin || {}), deviceGeneration: nextGen } }, secrets);
+            if (retry && retry.code !== 9074) {
+              r = retry;
+            } else {
+              const count = Number((acc.checkin && acc.checkin.retry9074Count) || 0) + 1;
+              const retryAt = store.noteCheckinCooldown(acc.id, count);
+              acc.checkin = { ...(acc.checkin || {}), deviceGeneration: nextGen, retry9074Count: count, retry9074At: retryAt };
+              r = { ...(retry || {}), code: 9074, deferred: true, retryAt, message: (retry && retry.message) || r.message || "上游签到限流" };
             }
           }
           // zcode 领取奖励的人机校验二段流：上游启用验证码时适配器返回 needCaptcha，
@@ -709,6 +734,7 @@ function poolView(opts) {
     }));
     const agent = agents.find((a) => a.id === c.id) || {};
     const rule = checkinRules[c.id];
+    const ad = adapters.get(c.id);
     return {
       ...c,
       // 成本档：库内值优先（用户可能改过），空值回落 CHANNELS 种子默认
@@ -720,6 +746,9 @@ function poolView(opts) {
       enabled: channelOn(c.id),
       summary,
       accounts,
+      // 目录接口是否需要登录态（口径与 proxy_models_sync 的 needAuth 一致）：
+      // 前端「全部拉取」据此跳过号池里没有可用账号的渠道，不把它算作失败
+      modelsNeedAuth: !(ad && ad.modelsNeedAuth === false),
       health: health[c.id] || null, // 降级状态（until/reason/streak），null=正常
     };
   });
@@ -1297,9 +1326,13 @@ function register(ipcMain) {
     if (auto.changed) emitConfigChanged();
     const cfg = settings();
     const channelModelIds = Object.fromEntries(
-      Object.keys(adapters.ADAPTERS).map((channel) => [channel, adapters.channelModelIds(channel)])
+      Object.keys(adapters.ADAPTERS)
+        .filter((channel) => adapters.channelOn(channel, cfg))
+        .map((channel) => [channel, adapters.channelModelIds(channel)])
     );
-    const channelRateFlags = adapters.channelRateFlags();
+    const channelRateFlags = Object.fromEntries(
+      Object.entries(adapters.channelRateFlags()).filter(([channel]) => adapters.channelOn(channel, cfg))
+    );
     return auto.models.map((m, index) => {
       const item = {
         ...m,
@@ -1321,9 +1354,9 @@ function register(ipcMain) {
       return item;
     });
   }));
-  // 官方模型目录拉取（三渠道通用）：取号池里第一个 online 有 token 的账号，adapter.fetchModels 走云端接口
-  // （Trae get_detail_param / WB v3/config + console models），结果写回 rules/catalog.json 热生效。
-  // 拉取失败不写空——保留旧目录，面板报错由用户重试
+  // 官方模型目录拉取（各渠道通用）：用户主动点击，强制刷新（绕过适配器自己的 TTL 缓存）；
+  // 取号池里第一个 online 有 token 的账号，adapter.fetchModels 走云端接口，结果写回
+  // rules/catalog.json 热生效。拉取失败不写空，保留旧目录。
   ipcMain.handle("proxy_models_sync", handle(async ({ channel }) => {
     const ch = String(channel || "");
     const adapter = adapters.get(ch);
@@ -1334,7 +1367,7 @@ function register(ipcMain) {
     const acc = needAuth ? pool.poolAccounts(ch).find((a) => a.status === "online" && a.hasToken) : null;
     if (needAuth && !acc) return fail(`${store.channelDisplay(ch)}号池无可用账号，无法拉取模型目录`);
     const secrets = acc ? store.accountSecrets(store.getAccount(acc.id)) : null;
-    const r = await adapter.fetchModels(acc, secrets);
+    const r = await adapter.fetchModels(acc, secrets, { force: true });
     if (!r || !r.ok || !Array.isArray(r.models) || !r.models.length) {
       oplog.log("error", "模型目录", `${store.channelDisplay(ch)} 模型目录拉取失败：${(r && r.message) || "返回为空"}`, { channel: ch });
       return fail((r && r.message) || "目录拉取失败");
@@ -1429,11 +1462,11 @@ function register(ipcMain) {
   }));
 
   // ===== 操作日志（反代网关「日志」页签）：分页查询 / 类型下拉 / 导出 Excel =====
-  ipcMain.handle("proxy_oplog_list", handle(({ from, to, level, op, limit, offset, sinceId }) =>
-    oplog.list({ from, to, level, op, limit, offset, sinceId })));
+  ipcMain.handle("proxy_oplog_list", handle(({ from, to, level, op, channel, limit, offset, sinceId }) =>
+    oplog.list({ from, to, level, op, channel, limit, offset, sinceId })));
   ipcMain.handle("proxy_oplog_ops", handle(() => oplog.listOps()));
-  ipcMain.handle("proxy_oplog_export", handle(({ from, to, level, op }) => {
-    const rows = oplog.exportRows({ from, to, level, op });
+  ipcMain.handle("proxy_oplog_export", handle(({ from, to, level, op, channel }) => {
+    const rows = oplog.exportRows({ from, to, level, op, channel });
     const { app } = require("electron");
     const dir = app.getPath("downloads");
     // 文件名精确到毫秒，同一秒多次导出不互相覆盖

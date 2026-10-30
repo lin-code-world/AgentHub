@@ -86,6 +86,18 @@ async function T(name, fn) {
     }
   });
 
+  // 未拉取目录时清单为空（不再内置静态目录）
+  await T("T2b 未拉取目录时 modelscope 清单为空", () => {
+    assert.strictEqual(ad.models().length, 0, "未拉取时应为空");
+  });
+
+  // 从测试模型清单取 modelscope 段：供 mapModel 归一 / rewriteBody 断言当算法输入
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify({ modelscope: { syncedAt: Date.now(), models: fixture.modelscope.models } }, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
+
   // ===== T3 mapModel：含斜杠 id 与简写回退 =====
   await T("T3 mapModel 处理斜杠 id 与简写", () => {
     assert.strictEqual(ad.mapModel("deepseek-ai/DeepSeek-V4.1-Flash"), "deepseek-ai/DeepSeek-V4.1-Flash", "全名应原样");
@@ -94,12 +106,11 @@ async function T(name, fn) {
     assert.strictEqual(ad.mapModel("unknown-model-x"), "unknown-model-x", "未知模型原样透传（不猜）");
   });
 
-  // ===== T4 静态目录：GLM-5.3-Flash 必须在（清单≠全集的补偿） =====
-  await T("T4 静态目录含 GLM-5.3-Flash（不在上游 /v1/models 但直调可用）", () => {
+  // ===== T4 目录内容（来自注入的紧凑目录） =====
+  await T("T4 目录含 GLM-5.3-Flash 与 DeepSeek-V4.1-Flash", () => {
     const ids = ad.models();
     assert.ok(ids.includes("ZhipuAI/GLM-5.3-Flash"), "目录应含 ZhipuAI/GLM-5.3-Flash");
     assert.ok(ids.includes("deepseek-ai/DeepSeek-V4.1-Flash"), "目录应含 DeepSeek-V4.1-Flash");
-    assert.ok(ids.length >= 20, `目录模型数应 ≥20，实际 ${ids.length}`);
   });
 
   // ===== T5 rewriteBody：max_completion_tokens 翻译 + stream_options 注入（usage 修复的回归锁） =====

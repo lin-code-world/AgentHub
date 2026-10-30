@@ -289,6 +289,16 @@ function runScenario(id) {
   const server = require("../electron/backend/proxy/server.cjs");
 
   store.open();
+  // 模型目录不再内置：从测试模型清单读入（错误文案里的「可用模型」列表需要它）
+  {
+    const rules = require("../electron/backend/proxy/rules.cjs");
+    rules.init();
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "test-catalog.json"), "utf8"));
+    const cat = {};
+    for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
   const gwKey = store.createKey({ name: "golden", route: "auto", dailyQuota: 0, rateLimit: 0 });
 
   // 观测记录：冷却决策与选号顺序，和字节流同等重要（重构最容易悄悄改掉的就是这两条）

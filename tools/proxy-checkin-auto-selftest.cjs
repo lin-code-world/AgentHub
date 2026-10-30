@@ -94,6 +94,27 @@ row = store.listAccounts("trae").find((a) => a.id === accId);
 ok("失败原因截断 400 字", row.checkin.message.length === 400);
 const others = store.listAccounts("trae").filter((a) => a.id !== accId);
 ok("无记录账号 checkin 为 null", others.every((a) => a.checkin === null));
+// 9074 设备级限流：冷却落库、跨次保留、成功清除
+store.noteCheckinCooldown(accId, 2);
+row = store.listAccounts("trae").find((a) => a.id === accId);
+ok("9074 冷却写入重试时刻与次数", row.checkin.retry9074At > Date.now() && row.checkin.retry9074Count === 2);
+ok("冷却写入不清掉当天签到结果", row.checkin.ok === false && row.checkin.message.length === 400);
+store.noteCheckin(accId, { ok: false, message: "上游限流" }, "checkin");
+row = store.listAccounts("trae").find((a) => a.id === accId);
+ok("失败重记保留 9074 冷却（跨次状态不被覆盖）", row.checkin.retry9074Count === 2 && row.checkin.retry9074At > Date.now());
+store.noteCheckin(accId, { ok: true, message: "签到成功" }, "checkin");
+row = store.listAccounts("trae").find((a) => a.id === accId);
+ok("签到成功后清除 9074 冷却", row.checkin.retry9074At === undefined && row.checkin.retry9074Count === undefined);
+
+// 设备号代数：签到撞 9074 后换一套指纹
+const adapters = require("../electron/backend/proxy/adapters.cjs");
+const genAcc = { id: "gen-test" };
+const dev0 = adapters.deviceIds(genAcc, 0).deviceId;
+ok("设备号按代数变化", dev0 !== adapters.deviceIds(genAcc, 1).deviceId);
+ok("代数 0 与缺省一致（存量设备号不变）", adapters.deviceIds(genAcc).deviceId === dev0);
+const traeAd = adapters.get("trae");
+ok("9074 轮换递增设备代数", traeAd.rotateCheckinDevice({ checkin: { deviceGeneration: 2 } }) === 3);
+ok("无代数时从 1 开始", traeAd.rotateCheckinDevice({}) === 1);
 store.removeAccount(accId);
 store.close();
 
@@ -182,5 +203,7 @@ ok("config.cjs 含旧配置迁移段", /delete merged\.proxy\.checkinAuto;/.test
 const view = read("src/views/proxy/ProxyAgentsView.vue");
 ok("号池页有自动签到设置弹窗", /autoDlg/.test(view) && /saveAutoCheckin/.test(view));
 ok("号池页行内三态与详情弹窗", /checkinRowState/.test(view) && /checkinDetailTag/.test(view));
+ok("checkinBatch 处理 9074 轮换与冷却", /rotateCheckinDevice/.test(idx) && /noteCheckinCooldown/.test(idx));
+ok("自动签到预检跳过已签", /今日已签到（预检跳过）/.test(idx));
 
 console.log(`\n全部通过：${pass} 项`);

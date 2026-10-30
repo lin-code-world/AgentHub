@@ -9,7 +9,7 @@
  * ============================================================
  */
 // 反代网关 · 外置规则热加载（第②层）
-// rules/*.json 首次启动从内置默认值拷贝，用户可直接改文件；chokidar 监听变更即重载内存态，无需重启
+// rules/catalog.json（模型目录）落盘保存「拉取模型」的结果并热重载；其余规则只认代码里的内置默认值
 // 坏 JSON 回退上次快照并在面板警示（status 里带 error）
 "use strict";
 const fs = require("node:fs");
@@ -28,190 +28,9 @@ const DEFAULTS = {
     "qwen3-coder": ["Qwen3-Coder", "qwen3_coder__dev"],
     "minimax-m2": ["MiniMax-M2", "minimax_m2__dev"],
   },
-  // WorkBuddy 双区模型目录（倍率/能力后续可由官方目录接口刷新覆盖）
-  "wb_models.json": {
-    workbuddy: ["claude-sonnet-4.5", "claude-opus-4.1", "gpt-5", "gpt-5-codex", "hy3-preview", "deepseek-v3.2"],
-    workbuddy_ai: ["default-model", "fast-model", "deepseek-v4.1-flash", "kimi-k2.8-preview", "glm-5.3", "glm-5.2"],
-  },
-  // 拉取到的权威模型目录（含倍率/能力/上下文元数据）：各渠道「拉取模型」写回此文件，可手编热生效。
-  // 内置默认 = Trae 静态兜底清单（逆向实证 32 个 config_name）+ WB 双区基础目录，
-  // 保证从未拉取过时模型目录开箱即用；拉取成功后整段覆盖对应渠道
-  "catalog.json": {
-    trae: {
-      syncedAt: 0,
-      // Trae 真实官方目录（2026-09 实证拉取 get_detail_param，39 个 config_name）
-      models: [
-        "Doubao-Seed-Evolving", "Doubao-Seed-2.1-Pro", "seed-code-pro-0430", "Doubao-Seed-2.1-Turbo",
-        "computer_use_subagent", "Doubao-Seed-2.0-Code", "browser_use_subagent",
-        "glm-5.3", "glm-5.2", "glm-5-turbo", "glm-5",
-        "DeepSeek-V4-Flash-Official", "DeepSeek-V4-Flash", "DeepSeek-V4-Pro-Official", "DeepSeek-V4-Pro",
-        "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "minimax-m3",
-        "qwen3.8-max", "qwen-3.7-plus", "sagitta", "aquila",
-        "custom_model_gemini", "custom_model_placeholder", "custom_model_1M_text", "custom_model_1M",
-        "custom_model_doubao_1M", "custom_model_doubao_256k", "custom_model_kimi", "custom_model_claude",
-        "custom_model_gpt-5", "custom_model_no-fc", "custom_model_deepseek_chat", "custom_model_deepseek_reasoner",
-        "custom_model_deepseek_v4", "file_search_agent", "explore_sub_agent_v2", "summary",
-      // 上限未知时写 0：目录刷新会用官方条目里的 context_window_tokens / max_tokens 覆盖。
-      // 原先写死 contextLength: 131072 会让下游客户端把 30 万 token 的正常回答误判为上下文溢出
-      ].map((id) => ({ id, name: id, rate: null, capabilities: {}, contextLength: 0, maxOutputTokens: 0 })),
-    },
-    workbuddy: {
-      syncedAt: 0,
-      models: ["claude-sonnet-4.5", "claude-opus-4.1", "gpt-5", "gpt-5-codex", "hy3-preview", "deepseek-v3.2"]
-        .map((id) => ({ id, name: id, rate: null, capabilities: {}, contextLength: 0, maxOutputTokens: 0 })),
-    },
-    workbuddy_ai: {
-      syncedAt: 0,
-      // AI 区真实官方目录（2026-09 实证拉取）：gpt-5/gemini-2.5-pro 已不在列，防止内置默认带死模型
-      models: [
-        "default-model", "fast-model", "balanced-model", "primary-model", "deep-model", "kimi-k2.8-preview",
-        "deepseek-v4.1-flash", "deepseek-v4.1-flash-sg", "gpt-6-astra", "hy4-preview-f", "hy4-preview", "hy3",
-        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gemini-3.5-flash", "glm-5.3", "glm-5.2",
-      ].map((id) => ({ id, name: id, rate: null, capabilities: {}, contextLength: 0, maxOutputTokens: 0 })),
-    },
-    // 商汤小浣熊：默认模型静态兜底（保证开箱即用；拉取 /model_catalog 后整段覆盖对应渠道）
-    raccoon: {
-      syncedAt: 0,
-      models: ["raccoon-chat-ml-5-5"].map((id) => ({
-        id,
-        name: id,
-        rate: null,
-        capabilities: { images: false, reasoning: true, tools: true },
-        contextLength: 180000,
-        maxOutputTokens: 80000,
-      })),
-    },
-    // ModelScope（魔搭 · 阿里）：静态兜底 = 实测 GET /v1/models 的 35 个模型
-    // （2026-10-06 拉取，需 Bearer）。⚠ 清单按社区热度精选，**不是全集**：
-    //   GLM-5.3-Flash 不在清单内但直调 200（已实测）——故清单仅供开箱展示，
-    //   可用性以直调为准。contextLength 取同模型在其它渠道的跨渠道声明值
-    //   （DeepSeek-V4.1-Flash/GLM-5.2 等均为 1M）；上游未声明输出上限者记 0（不编造）。
-    modelscope: {
-      syncedAt: 0,
-      models: [
-        // —— 对话主力（实测可用，含 tier 计费分档）——
-        { id: "deepseek-ai/DeepSeek-V4.1-Flash", name: "DeepSeek-V4.1-Flash", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-ai/DeepSeek-V4-Flash-0731", name: "DeepSeek-V4-Flash-0731", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-ai/DeepSeek-V4-Pro", name: "DeepSeek-V4-Pro", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-ai/DeepSeek-V4-Pro-0813", name: "DeepSeek-V4-Pro-0813", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        // 不在 /v1/models 清单但直调 200（2026-10-06 实测，模型名与其它渠道同名模型一致）
-        { id: "ZhipuAI/GLM-5.3-Flash", name: "GLM-5.3-Flash", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "ZhipuAI/GLM-5.2", name: "GLM-5.2", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "ZhipuAI/GLM-4.7-Flash", name: "GLM-4.7-Flash", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Qwen/Qwen3.8-Flash-Next", name: "Qwen3.8-Flash-Next", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        // —— 其余清单内模型（开箱可选）——
-        { id: "Qwen/Qwen3.8-27B", name: "Qwen3.8-27B", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Qwen/Qwen3.5-397B-A17B", name: "Qwen3.5-397B-A17B", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Qwen/Qwen3.5-122B-A10B", name: "Qwen3.5-122B-A10B", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Qwen/Qwen3.5-35B-A3B", name: "Qwen3.5-35B-A3B", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Qwen/Qwen3.5-27B", name: "Qwen3.5-27B", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "MiniMax/MiniMax-M3", name: "MiniMax-M3", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "MiniMax/MiniMax-M1-80k", name: "MiniMax-M1-80k", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 80000, maxOutputTokens: 0 },
-        { id: "meituan-longcat/LongCat-Flash-Lite", name: "LongCat-Flash-Lite", rate: null, capabilities: { images: false, reasoning: false, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "stepfun-ai/Step-3.5-Flash", name: "Step-3.5-Flash", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "stepfun-ai/Step-3.7-Flash", name: "Step-3.7-Flash", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Shanghai_AI_Laboratory/Intern-S1", name: "Intern-S1", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "Shanghai_AI_Laboratory/Intern-S2-Preview", name: "Intern-S2-Preview", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "mistralai/Mistral-Large-Instruct-2407", name: "Mistral-Large-Instruct-2407", rate: null, capabilities: { images: false, reasoning: false, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "nex-agi/Nex-N2.5-Pro", name: "Nex-N2.5-Pro", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "nex-agi/Nex-N2.5-mini", name: "Nex-N2.5-mini", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-      ],
-    },
-    // LobsterAI（网易有道龙虾）：静态兜底 = **公开端点** GET /api/models/pricing-catalog
-    // 的实测目录（2026-10-05 拉取，HTTP 200 / 37KB，无需鉴权）。这是权威源：
-    // 官方开源仓库 docs/server-integration/2026-08-27-more-models.md 明写该端点 public。
-    // ⚠ 不要用第三方反代项目里的静态表——那份是 2026-08-06 的旧快照且 context_length
-    //   是硬编码占位值（131072），与真实值（多为 1000000）差 8 倍。
-    // contextWindow 为 null 的模型：官方客户端回落 OpenClaw 默认 200k，但按本仓库约定
-    // 「模型上限类字段绝不给编造的默认值」→ 一律记 0（未知），由拉取结果覆盖。
-    lobster: {
-      syncedAt: 0,
-      models: [
-        // —— 限时免费（freeAccess=true）——
-        { id: "deepseek-flash", name: "DeepSeek-V4.1-Flash", rate: 0.05, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro", rate: 0.26, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash", rate: 0.05, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "deepseek-v4-flash-vision-exp", name: "DeepSeek-V4-Flash-Vision-Exp", rate: 0.05, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "glm-5.3-flash", name: "GLM-5.3-Flash", rate: 0.06, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "glm-5.3-flashx", name: "GLM-5.3-FlashX", rate: 0.15, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "MiniMax-M3", name: "MiniMax-M3", rate: 0.24, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        // —— 其余目录（按倍率升序）——
-        { id: "MiniMax-M3.1-Flash-Preview", name: "MiniMax-M3.1-Flash-Preview", rate: 0, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "MiniMax-M2.7", name: "MiniMax-M2.7", rate: 0.24, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "qwen3.5-plus-2026-04-20", name: "Qwen3.5-plus", rate: 0.12, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "qwen3.6-plus", name: "Qwen3.6-Plus", rate: 0.34, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "doubao-seed-2-1-turbo-260628", name: "Doubao-Seed-2.1-Turbo", rate: 0.34, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 256000, maxOutputTokens: 0 },
-        { id: "kimi-k2.5", name: "Kimi-K2.5", rate: 0.41, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "qwen3.7-plus", name: "Qwen3.7-Plus", rate: 0.53, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "doubao-seed-2-0-code-preview-260215", name: "Doubao-Seed-2.0-Code", rate: 0.54, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "kimi-k2.6", name: "Kimi-K2.6", rate: 0.64, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "glm-5", name: "GLM-5", rate: 0.64, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "doubao-seed-2-1-pro-260915", name: "Doubao-Seed-2.1-Pro", rate: 0.68, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 256000, maxOutputTokens: 0 },
-        { id: "kimi-k2.8-preview", name: "Kimi-K2.8-Preview", rate: 0.73, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 262144, maxOutputTokens: 0 },
-        { id: "kimi-k2.7-code", name: "Kimi-K2.7-Code", rate: 0.73, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 262144, maxOutputTokens: 0 },
-        { id: "qwen3.8-flash", name: "Qwen3.8-Flash", rate: 0.06, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "qwen3.8-omni-flash", name: "Qwen3.8-Omni-Flash", rate: 0.06, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "qwen3.8-max", name: "Qwen3.8-Max", rate: 0.91, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "glm-5v-turbo", name: "GLM-5V-Turbo", rate: 0.96, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "glm-5.1", name: "GLM-5.1", rate: 1.07, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 0, maxOutputTokens: 0 },
-        { id: "glm-5.2", name: "GLM-5.2", rate: 1.08, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "glm-5.3", name: "GLM-5.3", rate: 1.08, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "qwen3.7-max", name: "Qwen3.7-Max", rate: 1.33, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "kimi-k2.7-code-highspeed", name: "Kimi-K2.7-Code-Highspeed", rate: 1.46, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 262144, maxOutputTokens: 0 },
-        { id: "kimi-k3", name: "Kimi-K3", rate: 20, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1048576, maxOutputTokens: 0 },
-      ],
-    },
-    // ZCode（智谱 GLM 编码套餐）：pinned 静态兜底（zcode-api 3.11.2 实证目录；
-    // billing/balance 的 balances[].capabilities 可在线刷新出真实可用模型）
-    zcode: {
-      syncedAt: 0,
-      models: [
-        { id: "GLM-5.3", name: "GLM-5.3", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 128000 },
-        // 客户端自带能力表实测：.*glm-5\.3(?:-flash)? 为 false，但其后的 .*glm-5\.3-flash 专用规则为 true
-        { id: "GLM-5.3-Flash", name: "GLM-5.3-Flash", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 128000 },
-        { id: "GLM-5.2", name: "GLM-5.2", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 128000 },
-        { id: "GLM-5.1", name: "GLM-5.1", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 64000 },
-        { id: "GLM-5-Turbo", name: "GLM-5-Turbo", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 64000 },
-        { id: "GLM-4.7", name: "GLM-4.7", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 131072 },
-        { id: "GLM-4.6", name: "GLM-4.6", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 131072 },
-        { id: "GLM-4.5-Air", name: "GLM-4.5-Air", rate: null, capabilities: { images: false, reasoning: true, tools: true }, contextLength: 131072, maxOutputTokens: 98304 },
-      ],
-    },
-    // ===== Cline 双池：静态兜底（远程目录拉取后整段覆盖对应渠道）=====
-    // 取自实测的 recommended-models 响应（2026-09）的稳定主力模型，**不抄全**：
-    // 上游清单会变（模型上下架频繁），抄全只会得到一份很快过时的表，其余靠拉取补齐。
-    // ⚠ 模型 id 必须带池前缀（cline-free/ / cline-pass/ 是计费通道选择器，剥掉转发 404
-    // model not found）；免费池那两条裸 id（z-ai/、poolside/）**同样是免费池成员**
-    // （实测免费账号打返回 200，走聚合通道转售）——归池看响应分组，不按前缀猜。
-    // 上下文窗口取 Cline 官方目录实测值；上游未声明输出上限者记 0（不编造）。
-    cline_free: {
-      syncedAt: 0,
-      models: [
-        { id: "cline-free/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash（免费）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "cline-free/muse-spark-1.3-contributor", name: "Muse Spark 1.3（免费）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 0 },
-        { id: "cline-free/solar-pro4", name: "Solar Pro 4（免费）", rate: null, capabilities: { images: true, reasoning: false, tools: true }, contextLength: 128000, maxOutputTokens: 0 },
-        { id: "z-ai/glm-5.3-flash", name: "GLM-5.3-Flash（免费）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1310720, maxOutputTokens: 0 },
-        { id: "poolside/laguna-s-2.1:free", name: "Laguna S 2.1（免费）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 262144, maxOutputTokens: 0 },
-      ],
-    },
-    cline_pass: {
-      syncedAt: 0,
-      models: [
-        { id: "cline-pass/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash（ClinePass）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 1000000, maxOutputTokens: 0 },
-        { id: "cline-pass/deepseek-v4-pro", name: "DeepSeek V4 Pro（ClinePass）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 128000, maxOutputTokens: 0 },
-        { id: "cline-pass/glm-5.3", name: "GLM-5.3（ClinePass）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 200000, maxOutputTokens: 0 },
-        { id: "cline-pass/kimi-k3", name: "Kimi K3（ClinePass）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 256000, maxOutputTokens: 0 },
-        { id: "cline-pass/qwen3.8-max", name: "Qwen3.8 Max（ClinePass）", rate: null, capabilities: { images: true, reasoning: true, tools: true }, contextLength: 256000, maxOutputTokens: 0 },
-      ],
-    },
-  },
-  // Trae function 字段按模型分发（实测：
-  // 部分模型仅在 solo_agent 下可用，其余走 solo_work_lite；未命中默认 solo_work_lite）
-  "function_map.json": {
-    "doubao-seed-code": "solo_agent",
-    "glm-5.3-flash": "solo_agent",
-    "qwen3.8-flash": "solo_agent",
-  },
+  // 模型目录：代码里不内置任何渠道的默认模型。catalog.json 是唯一权威目录，
+  // 由「拉取模型」写入；没拉过时为空（模型页此时显示空态提示，点拉取后云端同步）。
+  "catalog.json": {},
   // WorkBuddy 审核指纹最小改写表（from→to 逐字替换；键名要够长防误伤）
   // 对齐 sanitizeRewrites：上游按整句精确匹配拦截（400 code 11-128），
   // 只保留整句形态的改写——禁止短键全局替换（会把用户正文/代码里的普通词组一并改掉）
@@ -234,8 +53,8 @@ const DEFAULTS = {
       creditsUrl: "https://api.trae.cn/trae/api/v2/pay/ide_user_ent_usage",
       exchangeUrl: "https://api.trae.com.cn/cloudide/api/v3/trae/oauth/ExchangeToken",
       userInfoUrl: "https://api.trae.com.cn/cloudide/api/v3/trae/GetUserInfo",
-      // 模型目录拉取（实测：get_detail_param 返回 config_info_list[].config_name + display_name）
-      modelsUrl: "https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param",
+      // 模型目录拉取：Web/Remote models（与桌面客户端同源）
+      modelsUrl: "https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent_remote%2Csolo_work_remote%2Csolo_design_remote&show_custom_model=false",
       mirrorModelsUrl: "",
       userAgent: "TraeClient/TTNet",
       appId: "6eefa01c-1036-4c7e-9ca5-d891f63bfcd8",
@@ -678,8 +497,6 @@ const DEFAULTS = {
 
 const DESC = {
   "model_map.json": "Trae 模型映射（显示名 → config_name/model_name）",
-  "function_map.json": "Trae function 字段按模型分发（solo_agent / solo_work_lite）",
-  "wb_models.json": "WorkBuddy 双区模型目录（兜底，catalog.json 优先）",
   "catalog.json": "模型权威目录（拉取模型写回：倍率/能力/上下文，可手编）",
   "wb_template_map.json": "WorkBuddy 审核模板最小改写表",
   "headers.json": "渠道默认头 / UA / 上游域",
@@ -708,34 +525,38 @@ function mergeMissing(target, defaults) {
   return target;
 }
 
-/** 首次启动把内置默认值拷贝到 rules/，用户可直接编辑 */
+/** rules/ 目录启动准备：只有模型目录（catalog.json）落盘——它保存「拉取模型」的结果，要跨启动留存；
+ *  其余规则只认代码里的内置默认（DEFAULTS），启动时把历史上写到磁盘的那几份清掉：
+ *  旧文件会盖住代码默认值，导致「改代码不生效」（这些规则文件不再对外暴露）。 */
+let ensuredOnce = false;
 function ensureFiles() {
+  // 只在进程首次准备时清理一次：之后 init 可能被反复调用（如 list() / 各页面），
+  // 再删就会把运行期写下的文件清掉
+  if (ensuredOnce) return;
+  ensuredOnce = true;
   const dir = rulesDir();
   for (const [file, data] of Object.entries(DEFAULTS)) {
     const p = path.join(dir, file);
+    if (file !== "catalog.json") {
+      try {
+        fs.rmSync(p, { force: true });
+      } catch { /* 删不掉就留着（不影响启动，下次再试） */ }
+      continue;
+    }
     if (!fs.existsSync(p)) {
       try {
         fs.writeFileSync(p, JSON.stringify(data, null, 2), "utf8");
       } catch { /* 写不进去就用内存默认值 */ }
       continue;
     }
-    // 升级迁移：新版内置里新增的键（如登录端点）补进用户文件。
-    // 不做这一步的话，老装机永远拿不到新键，只能让用户删文件重来
+    // 目录文件存在：只补内置里新增、文件里缺的键（拉取写入的条目一律不动）
     try {
       const cur = JSON.parse(fs.readFileSync(p, "utf8"));
       const before = JSON.stringify(cur);
       mergeMissing(cur, data);
-      migrateFile(file, cur);
       if (JSON.stringify(cur) !== before) fs.writeFileSync(p, JSON.stringify(cur, null, 2), "utf8");
     } catch { /* 文件坏了留给 loadFile 报错并回退内置默认 */ }
   }
-}
-
-/** 升级迁移特例：只删不改——老版本 wb_template_map.json 里的短键全局替换会
- *  改写用户正文（"Claude Code"→"CodeBuddy" 连正常提问都被改），必须从用户文件里移除 */
-function migrateFile(file, cur) {
-  if (file !== "wb_template_map.json" || !cur || typeof cur !== "object") return;
-  for (const bad of ["Claude Code", "Anthropic's official CLI"]) delete cur[bad];
 }
 
 function loadFile(file) {
@@ -744,9 +565,11 @@ function loadFile(file) {
     const data = JSON.parse(fs.readFileSync(p, "utf8"));
     cache.set(file, { data, error: "" });
   } catch (e) {
-    // 坏 JSON：保留上次快照，没有快照退回内置默认值，错误交给面板警示
+    // 文件不存在（未落盘的规则：headers/model_map/wb_template_map）不算错误，直接用内置默认；
+    // 坏 JSON 才保留上次快照并报错（错误交给面板警示）
     const prev = cache.get(file);
-    cache.set(file, { data: prev ? prev.data : DEFAULTS[file], error: String((e && e.message) || e) });
+    const missing = !!(e && e.code === "ENOENT");
+    cache.set(file, { data: prev ? prev.data : DEFAULTS[file], error: missing ? "" : String((e && e.message) || e) });
   }
 }
 

@@ -1048,16 +1048,24 @@ function noteAccount(id, note) {
 }
 
 /** 记录账号今日签到结果（meta.checkin）：号池行内按钮「已签到 / 签到失败 + 详情弹窗」的数据源。
- *  只留当天最新一条（同日重跑即覆盖）；跨天不做清理，由前端按 day 判为过期 */
+ *  只留当天最新一条（同日重跑即覆盖）；跨天不做清理，由前端按 day 判为过期。
+ *  设备号代数与 9074 冷却跨次保留（不是签到结果本身）；签到成功时清掉冷却。 */
 function noteCheckin(id, result, action) {
   if (!id) return;
   open();
   const cur = getAccount(id);
   if (!cur) return;
   const r = result || {};
+  const prev = parseMeta(cur.meta);
+  const prevCheckin = prev.checkin && typeof prev.checkin === "object" ? { ...prev.checkin } : {};
+  if (r.ok === true) {
+    delete prevCheckin.retry9074At;
+    delete prevCheckin.retry9074Count;
+  }
   const meta = {
-    ...parseMeta(cur.meta),
+    ...prev,
     checkin: {
+      ...prevCheckin,
       day: dayStr(),
       at: Date.now(),
       action: action === "trial" ? "trial" : "checkin",
@@ -1072,6 +1080,23 @@ function noteCheckin(id, result, action) {
     },
   };
   updateAccount(id, { meta });
+}
+
+/** 记录 Trae 签到 9074 冷却（设备级限流）：指数退避 60s → 最长 1 小时，返回重试时刻。
+ *  与 noteCheckin 分开写，避免这次写入把当天签到结果覆盖成「未签到」。 */
+function noteCheckinCooldown(id, count) {
+  if (!id) return 0;
+  open();
+  const cur = getAccount(id);
+  if (!cur) return 0;
+  const n = Math.max(1, Math.floor(Number(count) || 0));
+  const backoffMs = Math.min(60 * 1000 * 2 ** Math.min(n - 1, 3), 60 * 60 * 1000);
+  const meta = { ...parseMeta(cur.meta) };
+  const ck = meta.checkin && typeof meta.checkin === "object" ? meta.checkin : {};
+  const retryAt = Date.now() + backoffMs;
+  meta.checkin = { ...ck, retry9074At: retryAt, retry9074Count: n };
+  updateAccount(id, { meta });
+  return retryAt;
 }
 
 /**
@@ -1106,7 +1131,7 @@ function insertOpLog(row) {
   );
 }
 
-/** 操作日志筛选（与列表同一套 where）：from/to 毫秒区间、level、op */
+/** 操作日志筛选（与列表同一套 where）：from/to 毫秒区间、level、op、channel */
 function opLogWhere(filter) {
   const where = [];
   const vals = [];
@@ -1114,6 +1139,9 @@ function opLogWhere(filter) {
   if (Number(filter.to) > 0) { where.push("ts <= ?"); vals.push(Number(filter.to)); }
   if (filter.level) { where.push("level = ?"); vals.push(String(filter.level)); }
   if (filter.op) { where.push("op = ?"); vals.push(String(filter.op)); }
+  // channel："__none__" 哨兵 = 空渠道精确匹配（网关启停/配置类日志无渠道）；其他非空值按渠道 id 精确匹配；缺省/空串不过滤
+  if (filter.channel === "__none__") { where.push("channel = ''"); }
+  else if (filter.channel) { where.push("channel = ?"); vals.push(String(filter.channel)); }
   return { clause: where.length ? ` WHERE ${where.join(" AND ")}` : "", vals };
 }
 
@@ -1754,7 +1782,7 @@ module.exports = {
   createKey, importKey, listKeys, findKeyBySecret, updateKey, deleteKey, keyTodayReq,
   validateKeyParams,
   listAgents, setPoolStrategy, setAgentCostTier,
-  listAccounts, getAccount, accountSecrets, addAccount, updateAccount, bumpAccountUsage, removeAccount, noteError, clearError, noteCheckin, noteOnboardingGrant, noteAccount,
+  listAccounts, getAccount, accountSecrets, addAccount, updateAccount, bumpAccountUsage, removeAccount, noteError, clearError, noteCheckin, noteCheckinCooldown, noteOnboardingGrant, noteAccount,
   setCreditPackages, listCreditPackages, listAllCreditPackages, setCreditsDetail,
   insertOpLog, listOpLogs, listOpLogOps, exportOpLogRows,
   listModelCooldowns, upsertModelCooldown, deleteModelCooldowns,

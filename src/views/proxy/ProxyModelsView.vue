@@ -13,7 +13,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import * as api from "../../api/ipc";
-import type { ModelCustomEntry, ProxyChannelId, ProxyModel } from "../../types";
+import type { ModelCustomEntry, ProxyChannelId, ProxyChannelView, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, fmtRate, parseCtxInput } from "./format";
 import { hiddenByRate } from "./rateGate";
@@ -22,6 +22,9 @@ import { mergeAliasRows, sourceRows, channelCustomOf } from "./channelRows";
 const app = useAppStore();
 const models = ref<ProxyModel[]>([]);
 const err = ref("");
+/** err 当前这条是不是 refresh 自己写下的加载错误：只有它能被 refresh 自动回收，
+ *  拉取/保存等业务错误一律保留到用户点关闭（否则刚显示就被 finally 里的 refresh 清掉） */
+let errFromRefresh = false;
 const msg = ref("");
 const syncing = ref("");
 const filter = ref("");
@@ -31,7 +34,7 @@ const mainTab = ref<"catalog" | "reverse">("catalog");
 const ruleDialogOpen = ref(false);
 
 // 渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
-const channels = ref<{ id: string; display: string }[]>([]);
+const channels = ref<ProxyChannelView[]>([]);
 const CHANNEL_OPTIONS = computed<{ value: "" | ProxyChannelId; label: string }[]>(() => [
   { value: "", label: "自动（打分）" },
   ...channels.value.map((c) => ({ value: c.id as ProxyChannelId, label: c.display })),
@@ -71,6 +74,7 @@ type SourceDetailLike = {
   contextLength: number;
   maxOutputTokens: number;
   capabilities?: { images?: boolean; reasoning?: boolean; tools?: boolean };
+  reasoning_effort?: string[];
   custom?: ModelCustomEntry | null;
 };
 
@@ -144,6 +148,24 @@ const REASONING_EFFORT_OPTIONS = [
   { value: "xhigh", label: "极高 (xhigh)" },
   { value: "max", label: "最大 (max)" },
 ];
+const REASONING_LABELS: Record<string, string> = {
+  light: "轻 (light)",
+  high: "标准 (high)",
+  extra_high: "最高 (extra_high)",
+  off: "关闭思考 (off)",
+  minimal: "极低 (minimal)",
+  low: "低 (low)",
+  medium: "中等 (medium)",
+  xhigh: "极高 (xhigh)",
+  max: "最大 (max)",
+};
+
+/** 有目录档位时只显示支持的档位；完全没有目录数据时回落到通用选项（其它渠道） */
+function reasoningOptionsOf(m: ProxyModel, d?: SourceDetailLike): { value: string; label: string }[] {
+  const values = d && Array.isArray(d.reasoning_effort) ? d.reasoning_effort : Array.isArray(m.reasoning_effort) ? m.reasoning_effort : null;
+  if (values === null) return REASONING_EFFORT_OPTIONS;
+  return [{ value: "", label: "默认" }, ...values.map((v) => ({ value: v, label: REASONING_LABELS[v] || v }))];
+}
 
 // ===== 模型自定义参数更新 =====
 // ===== 上下文长度输入：显示 K/M 缩写，编辑时展开为数字 =====
@@ -304,9 +326,11 @@ async function refresh() {
     channels.value = await api.proxyPool().catch(() => channels.value);
     // 渠道启闭：当前页签指向被关闭的渠道时回落「全部」（上游启闭后模型页立即跟随）
     if (activeTab.value && !channels.value.some((c) => c.id === activeTab.value)) activeTab.value = "";
-    err.value = "";
+    // 只回收本函数自己写下的加载错误：业务错误（拉取/保存）保留给用户手动关闭
+    if (errFromRefresh) { err.value = ""; errFromRefresh = false; }
   } catch (e) {
     err.value = String((e as Error).message || e);
+    errFromRefresh = true;
   }
 }
 
@@ -398,40 +422,55 @@ async function setOverride(m: ProxyModel, v: string) {
 async function syncCatalog(channel: string) {
   if (syncing.value) return;
   syncing.value = channel;
+  err.value = "";
+  errFromRefresh = false;
   try {
     const r = await api.proxyModelsSync(channel);
-    if (r && r.ok === false) err.value = r.message || "拉取失败";
-    else {
+    if (r && r.ok === false) {
+      err.value = r.message || "拉取失败";
+      errFromRefresh = false;
+    } else {
       const rateInfo = r.withRate ? `，其中 ${r.withRate} 个含倍率` : "";
       msg.value = `已拉取 ${r.count ?? 0} 个模型到 ${channelName(channel)}目录${rateInfo}`;
       setTimeout(() => (msg.value = ""), 3000);
     }
   } catch (e) {
     err.value = String((e as Error).message || e);
+    errFromRefresh = false;
   } finally {
     syncing.value = "";
     await refresh();
   }
 }
 
-/** 全部渠道并发拉取：逐渠道汇总结果，部分失败不拖垮整体 */
+/** 全部渠道并发拉取：只拉「有可用账号」或「目录免登录」的渠道，逐渠道汇总结果，部分失败不拖垮整体 */
 async function syncAll() {
   if (syncing.value) return;
   syncing.value = "__all__";
+  err.value = "";
+  errFromRefresh = false;
   try {
-    const results = await Promise.all(channels.value.map((c) => api.proxyModelsSync(c.id).catch((e) => ({ ok: false as const, message: String((e as Error).message || e) }))));
+    // 号池里没有可用账号、且目录接口需要登录态的渠道直接跳过：这类渠道拉取必然返回
+    // 「无可用账号」，属于没配置而非失败，不该堆成一片红字（单渠道「拉取」仍会如实报错）
+    const targets = channels.value.filter((c) => c.modelsNeedAuth === false || c.accounts.some((a) => a.status === "online" && a.hasToken));
+    const skipped = channels.value.length - targets.length;
+    const results = await Promise.all(targets.map((c) => api.proxyModelsSync(c.id).catch((e) => ({ ok: false as const, message: String((e as Error).message || e) }))));
     const okParts: string[] = [];
     const failParts: string[] = [];
     results.forEach((r, i) => {
-      const name = channelName(channels.value[i].id);
+      const name = channelName(targets[i].id);
       if (r && r.ok !== false) okParts.push(`${name} ${r.count ?? 0} 个`);
       else failParts.push(`${name}：${(r && r.message) || "失败"}`);
     });
     if (okParts.length) {
-      msg.value = `已拉取 ${okParts.join("、")}`;
+      const skipInfo = skipped ? `，已跳过 ${skipped} 个未登录渠道` : "";
+      msg.value = `已拉取 ${okParts.join("、")}${skipInfo}`;
       setTimeout(() => (msg.value = ""), 3000);
     }
-    if (failParts.length) err.value = failParts.join("；");
+    if (failParts.length) {
+      err.value = failParts.join("；");
+      errFromRefresh = false;
+    }
   } finally {
     syncing.value = "";
     await refresh();
@@ -444,7 +483,10 @@ onMounted(refresh);
 <template>
   <section class="page">
     <div class="page-body">
-      <div v-if="err" class="card err-card"><div class="set-desc err-text">{{ err }}</div></div>
+      <div v-if="err" class="card err-card">
+        <div class="set-desc err-text">{{ err }}</div>
+        <button class="err-close" title="关闭" @click="err = ''"><i class="ph ph-x"></i></button>
+      </div>
 
       <!-- 顶部两大 Tab：合并模型目录 / 全渠道反向模型映射 + 路由说明按钮 -->
       <div class="models-main-tabs">
@@ -462,24 +504,26 @@ onMounted(refresh);
 
       <!-- Tab 1: 模型目录 -->
       <template v-if="mainTab === 'catalog'">
-        <!-- 页头工具条：渠道分段选择器在左、状态筛选与搜索与官方目录拉取在右 -->
+        <!-- 页头工具条：渠道独占一行，状态筛选与搜索/拉取在下一行 -->
         <div class="models-head">
-          <div class="seg-group">
-            <span class="seg-label">渠道</span>
-            <div class="seg">
-              <button class="seg-item" :class="{ active: !activeTab }" @click="activeTab = ''">全部</button>
-              <button
-                v-for="c in tabChannels"
-                :key="c.id"
-                class="seg-item"
-                :class="{ active: activeTab === c.id }"
-                @click="activeTab = c.id"
-              >
-                {{ c.display }}
-              </button>
+          <div class="models-head-row models-head-channels">
+            <div class="seg-group">
+              <span class="seg-label">渠道</span>
+              <div class="seg">
+                <button class="seg-item" :class="{ active: !activeTab }" @click="activeTab = ''">全部</button>
+                <button
+                  v-for="c in tabChannels"
+                  :key="c.id"
+                  class="seg-item"
+                  :class="{ active: activeTab === c.id }"
+                  @click="activeTab = c.id"
+                >
+                  {{ c.display }}
+                </button>
+              </div>
             </div>
           </div>
-          <span class="head-tools">
+          <div class="models-head-row models-head-filters">
             <div class="seg-group">
               <span class="seg-label">状态</span>
               <div class="seg">
@@ -488,20 +532,22 @@ onMounted(refresh);
                 <button class="seg-item" :class="{ active: statusFilter === 'off' }" @click="statusFilter = 'off'">关闭</button>
               </div>
             </div>
-            <label class="search-box">
-              <i class="ph ph-magnifying-glass"></i>
-              <input v-model="filter" class="search-input" placeholder="搜索模型 ID / 名称" spellcheck="false" />
-              <el-tooltip v-if="filter" content="清空搜索" placement="top">
-                <button class="search-clear" @click.prevent="filter = ''"><i class="ph ph-x"></i></button>
-              </el-tooltip>
-            </label>
-            <button v-if="activeTab" class="btn btn-cta" :disabled="!!syncing" @click="syncCatalog(activeTab)">
-              <i class="ph ph-cloud-arrow-down"></i>{{ syncing === activeTab ? "拉取中…" : "拉取模型" }}
-            </button>
-            <button v-else class="btn btn-cta" :disabled="!!syncing" @click="syncAll">
-              <i class="ph ph-cloud-arrow-down"></i>{{ syncing === "__all__" ? "拉取中…" : "全部拉取" }}
-            </button>
-          </span>
+            <span class="head-tools">
+              <label class="search-box">
+                <i class="ph ph-magnifying-glass"></i>
+                <input v-model="filter" class="search-input" placeholder="搜索模型 ID / 名称" spellcheck="false" />
+                <el-tooltip v-if="filter" content="清空搜索" placement="top">
+                  <button class="search-clear" @click.prevent="filter = ''"><i class="ph ph-x"></i></button>
+                </el-tooltip>
+              </label>
+              <button v-if="activeTab" class="btn btn-cta" :disabled="!!syncing" @click="syncCatalog(activeTab)">
+                <i class="ph ph-cloud-arrow-down"></i>{{ syncing === activeTab ? "拉取中…" : "拉取模型" }}
+              </button>
+              <button v-else class="btn btn-cta" :disabled="!!syncing" @click="syncAll">
+                <i class="ph ph-cloud-arrow-down"></i>{{ syncing === "__all__" ? "拉取中…" : "全部拉取" }}
+              </button>
+            </span>
+          </div>
           <Transition name="headmsg">
             <span v-if="msg" class="head-msg tag tag-ok">{{ msg }}</span>
           </Transition>
@@ -642,7 +688,7 @@ onMounted(refresh);
                                 placeholder="默认"
                                 @update:model-value="(v: string) => updateChannelCustom(d, { reasoningEffort: v })"
                               >
-                                <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
+                                <el-option v-for="opt in reasoningOptionsOf(m, d)" :key="opt.value" :value="opt.value" :label="opt.label" />
                               </el-select>
                             </span>
                           </el-tooltip>
@@ -665,26 +711,25 @@ onMounted(refresh);
                       </td>
                       <td style="text-align: center; color: var(--text-3)">{{ fmtRate(d.rate) }}</td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length">
-                        <el-tooltip :content="m.sources.length === 1 ? '单源模型强制走所属渠道，无需覆盖' : ''" :disabled="m.sources.length !== 1" placement="top">
-                          <span>
-                            <el-select
-                              class="f-el-select"
-                              popper-class="glass-popper"
-                              :persistent="false"
-                              style="width: 100px"
-                              :model-value="m.override"
-                              :disabled="!m.enabled || m.sources.length === 1"
-                              @update:model-value="(v: string) => setOverride(m, v)"
-                            >
-                              <el-option
-                                v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
-                                :key="o.value"
-                                :value="o.value"
-                                :label="o.label"
-                              />
-                            </el-select>
-                          </span>
-                        </el-tooltip>
+                        <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
+                        <span v-else>
+                          <el-select
+                            class="f-el-select"
+                            popper-class="glass-popper"
+                            :persistent="false"
+                            style="width: 100px"
+                            :model-value="m.override"
+                            :disabled="!m.enabled"
+                            @update:model-value="(v: string) => setOverride(m, v)"
+                          >
+                            <el-option
+                              v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
+                              :key="o.value"
+                              :value="o.value"
+                              :label="o.label"
+                            />
+                          </el-select>
+                        </span>
                       </td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
                         <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
@@ -758,7 +803,7 @@ onMounted(refresh);
                             placeholder="默认"
                             @update:model-value="(v: string) => updateChannelCustom(editDetail(m), { reasoningEffort: v })"
                           >
-                            <el-option v-for="opt in REASONING_EFFORT_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label" />
+                            <el-option v-for="opt in reasoningOptionsOf(m, editDetail(m))" :key="opt.value" :value="opt.value" :label="opt.label" />
                           </el-select>
                         </span>
                       </el-tooltip>
@@ -782,26 +827,25 @@ onMounted(refresh);
                     </el-tooltip>
                   </td>
                   <td>
-                    <el-tooltip :content="m.sources.length === 1 ? '单源模型强制走所属渠道，无需覆盖' : ''" :disabled="m.sources.length !== 1" placement="top">
-                      <span>
-                        <el-select
-                          class="f-el-select"
-                          popper-class="glass-popper"
-                          :persistent="false"
-                          style="width: 100px"
-                          :model-value="m.override"
-                          :disabled="!m.enabled || m.sources.length === 1"
-                          @update:model-value="(v: string) => setOverride(m, v)"
-                        >
-                          <el-option
-                            v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
-                            :key="o.value"
-                            :value="o.value"
-                            :label="o.label"
-                          />
-                        </el-select>
-                      </span>
-                    </el-tooltip>
+                    <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
+                    <span v-else>
+                      <el-select
+                        class="f-el-select"
+                        popper-class="glass-popper"
+                        :persistent="false"
+                        style="width: 100px"
+                        :model-value="m.override"
+                        :disabled="!m.enabled"
+                        @update:model-value="(v: string) => setOverride(m, v)"
+                      >
+                        <el-option
+                          v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
+                          :key="o.value"
+                          :value="o.value"
+                          :label="o.label"
+                        />
+                      </el-select>
+                    </span>
                   </td>
                   <td style="text-align: center">
                     <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
@@ -934,12 +978,12 @@ onMounted(refresh);
             </el-tooltip>
           </header>
           <div class="rule-body">
-            <div class="rule-item"><b>1. 渠道路由：</b>模型仅存在于单渠道 → 强制走该渠道；多源重叠 → per-model 覆盖优先，否则按路由策略打分。</div>
-            <div class="rule-item"><b>2. 反向模型映射：</b>一个统一请求名映射到各渠道不同模型名，渠道确定后自动转为该渠道模型转发（响应保持统一请求名）。实际模型与统一名相同且属于渠道原生模型时，按恒等映射处理。</div>
-            <div class="rule-item"><b>3. 上下文与思考强度：</b>支持在表格中行内自定义覆盖，修改后即时注入出站参数并反映在模型目录。</div>
-            <div class="rule-item"><b>4. 全局回退降级：</b>模型未知或号池耗尽 → 按配置页「不可用时自动切换模型」统一设置切到全局回退模型（客户端无感）。</div>
-            <div class="rule-item"><b>5. 模型级负缓存：</b>模型级限流（6004）/ 该号不支持（11102）→ 只冷却「账号×模型」组合，切模型即豁免。</div>
-            <div class="rule-item"><b>6. 用量统计标记：</b>切换命中会在用量明细的备注列标记 rev→实际模型 / fallback→实际模型。</div>
+            <div class="rule-item"><b>1. 渠道选择：</b>同一个模型只有一个渠道提供时，会自动走这个渠道；多个渠道都提供时，优先走你为它指定的渠道，没有指定就自动挑当前更合适的一个。</div>
+            <div class="rule-item"><b>2. 统一模型名：</b>不同渠道对同一模型的叫法可能不同。设置统一名称后，你用这个名称请求，系统会自动换成对应渠道的真实模型名，返回给你的仍是统一名称。</div>
+            <div class="rule-item"><b>3. 上下文与思考强度：</b>可以在表格里直接调整上下文长度和思考强度，保存后立即生效，模型目录也会同步更新。</div>
+            <div class="rule-item"><b>4. 自动切换模型：</b>请求的模型找不到，或它所属渠道暂时没有可用账号时，如果开启了「不可用时自动切换模型」，会自动改用你设置的回退模型，你不用改请求。</div>
+            <div class="rule-item"><b>5. 临时不可用：</b>某个账号在某个模型上被限流，或该账号不支持这个模型时，只会暂时跳过这个账号在这个模型上的使用；换账号或换模型都不受影响。</div>
+            <div class="rule-item"><b>6. 用量记录：</b>发生换渠道、换模型或名称转换时，用量明细会显示实际使用的模型；把鼠标停在状态上还能看到切换详情。</div>
           </div>
           <footer class="rule-foot">
             <button class="btn btn-primary" @click="ruleDialogOpen = false">我知道了</button>
@@ -1075,9 +1119,15 @@ onMounted(refresh);
   justify-content: flex-end;
 }
 
-/* ===== 页头工具条：分段选择器 + 搜索 + 拉取，一条 30px 控件线；反馈消息浮层不占布局 ===== */
+/* ===== 页头工具条：渠道独占一行，状态与搜索/拉取在下一行；反馈消息浮层不占布局 ===== */
 .models-head {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.models-head-row {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1088,6 +1138,13 @@ onMounted(refresh);
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+/* 状态与搜索/拉取整体靠右（head-tools 的 auto 外边距在这里归零，否则状态仍会被顶到左侧） */
+.models-head-filters {
+  justify-content: flex-end;
+}
+.models-head-filters .head-tools {
+  margin-left: 0;
 }
 /* 带文字标签的分段组：页头有两个 seg（渠道 / 状态），无标签时两组「全部」会混淆 */
 .seg-group {
@@ -1113,12 +1170,12 @@ onMounted(refresh);
   border-radius: var(--r-sm);
   background: var(--bg-soft);
 }
-/* 渠道组占满剩余宽度后才有空间真正换行（inline-flex 的宽度会收缩到内容宽度） */
-.models-head .seg-group:first-child {
+/* 渠道组独占一整行才有空间真正换行（inline-flex 的宽度会收缩到内容宽度） */
+.models-head-channels .seg-group {
   min-width: 0;
   flex: 1 1 auto;
 }
-.models-head .seg-group:first-child .seg {
+.models-head-channels .seg {
   width: 100%;
 }
 .seg-item {
@@ -1271,9 +1328,26 @@ onMounted(refresh);
 .err-card {
   margin-bottom: 12px;
   border-color: var(--err, #e05555);
+  padding-right: 34px;
 }
 .err-text {
   color: var(--err, #e05555);
+}
+.err-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: transparent;
+  color: var(--err, #e05555);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px;
+  opacity: 0.75;
+}
+.err-close:hover {
+  opacity: 1;
 }
 /* 模型目录表格：字段值（含表头）统一居中。text-align 管不到 display:flex 的容器，
    模型名与来源渠道两个 flex 单元格单独归中 */

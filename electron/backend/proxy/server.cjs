@@ -112,6 +112,24 @@ function resolveCustomParams(chainModel, targetModel, channel, settings) {
   return byChannel(targetModel) || byChannel(chainModel) || modelLevel[targetModel] || modelLevel[chainModel] || null;
 }
 
+/** 思考档位收敛：Trae 只认 light/high/extra_high，旧配置里的 off/low/medium/xhigh 直接发会 400。
+ *  按「不超过请求强度」取最近的受支持档位；目录没声明档位的模型返回空串，保持原样透传。 */
+const REASONING_LEVELS = ["light", "high", "extra_high"];
+const REASONING_ALIASES = {
+  none: "light", minimal: "light", min: "light", off: "light", low: "light", light: "light",
+  medium: "high", mid: "high", normal: "high", default: "high", high: "high",
+  xhigh: "extra_high", "x-high": "extra_high", very_high: "extra_high",
+  max: "extra_high", maximum: "extra_high", ultra: "extra_high", extra_high: "extra_high", "extra-high": "extra_high",
+};
+function clampReasoningEffort(value, supported) {
+  const levels = REASONING_LEVELS.filter((v) => supported.includes(v));
+  if (!levels.length) return "";
+  const level = REASONING_ALIASES[String(value || "").trim().toLowerCase().replace(/ /g, "_")] || "";
+  if (!level) return "";
+  const eligible = levels.filter((v) => REASONING_LEVELS.indexOf(v) <= REASONING_LEVELS.indexOf(level));
+  return eligible.length ? eligible[eligible.length - 1] : levels[0];
+}
+
 /** 渠道选择：提供商前缀直达 → Key 绑定渠道（严格校验归属）→ 单源强制 → per-model 覆盖 →
  *  打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：modelOwners 已过滤
  *  （单源 → 空 → 400），key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
@@ -1202,7 +1220,12 @@ async function handleChat(req, res, settings, surface, convNotes) {
                 effectiveBody.context_length = custom.contextLength;
               }
               if (custom.reasoningEffort) {
-                if (custom.reasoningEffort === "off") {
+                // 目录声明了档位的模型：把旧档位（off/low/medium/xhigh…）收敛到受支持档位
+                const mapped = clampReasoningEffort(custom.reasoningEffort, adapters.modelReasoningEfforts(targetModel, chan));
+                if (mapped) {
+                  effectiveBody.reasoning_effort = mapped;
+                  effectiveBody.thinking = { type: "enabled" };
+                } else if (custom.reasoningEffort === "off") {
                   effectiveBody.reasoning_effort = "off";
                   effectiveBody.thinking = { type: "disabled" };
                 } else {
@@ -1734,7 +1757,7 @@ function status() {
 
 module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSnapshot, classifyUpstream,
   // 渠道解析与映射目标禁用判定（tools/proxy-mapped-target-selftest.cjs 行为断言用）
-  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams,
+  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams, clampReasoningEffort,
   // 成本感知路由纯函数（tools/proxy-cost-route-selftest.cjs / proxy-empty-pool-route-selftest.cjs 行为断言用）
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）

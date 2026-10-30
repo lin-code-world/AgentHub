@@ -157,8 +157,7 @@ function offline() {
     assert(hdr && hdr.upstreamHeaders["X-CLIENT-TYPE"] === "cline-sdk", "伪装头含 X-CLIENT-TYPE: cline-sdk（免费池硬门槛）");
     assert(hdr.apiBase === "https://api.cline.bot/api/v1" && !/\/v1\/v1/.test(hdr.apiBase + hdr.modelsPath), "apiBase 只有一个 v1");
     const cat = rules["catalog.json"];
-    assert(cat.cline_free && cat.cline_free.models.length && cat.cline_pass && cat.cline_pass.models.length, "catalog 双段静态兜底齐备");
-    assert(cat.cline_free.models.every((m) => /^(cline-free\/|z-ai\/|poolside\/)/.test(m.id)), "免费池兜底 id 形态（带前缀或裸厂商 id）");
+    assert(cat && !cat.cline_free && !cat.cline_pass, "catalog.json 默认不含渠道目录（模型靠拉取写盘，不内置）");
   }
 }
 
@@ -271,6 +270,19 @@ async function e2e() {
     assert(free && pass, "双池适配器已注册");
     assert(free.refreshWindowSec === 600, "临期窗口 600s（access 1 小时的 1/6）");
     assert(free.zeroBalanceUsable === true && pass.zeroBalanceUsable === true, "余额 0 非硬门禁旗标（免费池余额恒 0 时仍可被调度，不误标 exhausted）");
+
+    // 模型目录不再内置：从测试模型清单取双池目录，供 chat 短名补本池前缀使用
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    const catFile = path.join(rules.rulesDir(), "catalog.json");
+    fs.writeFileSync(
+      catFile,
+      JSON.stringify({
+        cline_free: { syncedAt: Date.now(), models: fixture.cline_free.models },
+        cline_pass: { syncedAt: Date.now(), models: fixture.cline_pass.models },
+      }, null, 2),
+      "utf8"
+    );
+    rules.reload("catalog.json");
 
     // —— 1. 对话：头/路径/body 断言 + model 回写 + reasoning 帧透传
     const accId = storeMod.addAccount({ channel: "cline_free", uid: "usr-01M2VW", name: "自测号", token: "eyJx", refreshToken: "rv-old", source: "paste" });

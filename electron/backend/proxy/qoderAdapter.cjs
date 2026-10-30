@@ -102,11 +102,6 @@ const STATIC_MODELS_BY_PRODUCT = {
 /** 兼容导出：默认（CN）静态表，供自测/外部引用 */
 const STATIC_MODELS = STATIC_MODELS_BY_PRODUCT.qoder;
 
-/** 按 product 取静态兜底集（未列出的产品为空——不跨产品借模型） */
-function staticModelsOf(product) {
-  return STATIC_MODELS_BY_PRODUCT[product] || [];
-}
-
 /** 请求侧默认场景（签名头 Cosy-Scene 由 wasm 置为 assistant；目录按场景分组） */
 const DEFAULT_SCENE = "assistant";
 
@@ -329,11 +324,8 @@ function makeQoder(product, deps) {
      *   · 未拉取过目录（目录为空）→ 才退回本 product 的静态兜底，保证首次可用性。
      */
     models() {
-      // 注意用 Map 本身取 size：Map.keys() 返回的是迭代器，迭代器没有 size
-      // （写成 `catalogIndex().byKey.keys()` 再判 .size 会恒为 undefined → 永远走兜底）
-      const byKey = catalogIndex().byKey;
-      if (byKey.size) return [...byKey.keys()];
-      return staticModelsOf(product).map((m) => m.id);
+      // 只列拉取到的目录（不回落静态表：没拉过目录就不该宣称拥有模型）
+      return [...catalogIndex().byKey.keys()];
     },
 
     /**

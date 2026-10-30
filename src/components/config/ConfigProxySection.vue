@@ -16,17 +16,15 @@
 import { computed, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import { denyState, isWebTransport } from "../../api/caps";
-import type { ProxyModel, ProxyRuleFile } from "../../types";
+import type { ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { fmtAgo, fmtK } from "../../views/proxy/format";
 import ProxyUpstreamDialog from "../ProxyUpstreamDialog.vue";
 
 const app = useAppStore();
 // 上游启闭弹窗（渠道级开关：关闭的渠道在反代网关全部页面动态隐藏，重新打开立即恢复）
 const upOpen = ref(false);
-// 页面内的二级子板块：服务与路由 / 监控与安全 / 规则文件
-const tab = ref<"service" | "monitor" | "rules">("service");
-const rules = ref<ProxyRuleFile[]>([]);
+// 页面内的二级子板块：服务与路由 / 监控与安全
+const tab = ref<"service" | "monitor">("service");
 const vault = ref<{ encrypted: boolean; driver: string; dataDir: string } | null>(null);
 const saving = ref(false);
 const restarting = ref(false);
@@ -35,14 +33,13 @@ const msgErr = ref(false);
 const running = ref(false);
 /** 当前监听端口（refresh 时记下）：保存后端口改了要提示点「重启服务」才生效 */
 const listenPort = ref(0);
-/** 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰）：重启服务 / 打开目录 / rules 目录 */
+/** 命令门控（浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面无 caps 不置灰）：重启服务 / 打开目录 */
 const restartGate = denyState("proxy_restart");
 /** 浏览器托管形态：load_config / save_config 被 deny，反代配置段走 proxy_config_get / proxy_config_save */
 const webForm = computed(() => isWebTransport());
 /** 端口 / 绑定地址置灰原因（不是 deny 命令，属字段级说明：保存会忽略这两项，改了也不生效） */
 const portBindHint = "浏览器端不改监听端口与绑定地址：保存会被忽略，请在桌面窗口修改";
 const dataDirGate = denyState("proxy_open_data_dir");
-const rulesDirGate = denyState("proxy_open_rules_dir");
 // 优先渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
 const channels = ref<{ id: string; display: string }[]>([]);
 // 全局回退模型候选 = 合并模型目录
@@ -89,7 +86,6 @@ async function refresh() {
       const remote = await api.proxyConfigGet().catch(() => null);
       if (remote) app.config.proxy = remote;
     }
-    rules.value = await api.proxyRulesList();
     vault.value = await api.proxyVaultStatus();
     channels.value = await api.proxyPool().catch(() => channels.value);
     models.value = await api.proxyModels().catch(() => models.value);
@@ -168,9 +164,6 @@ async function restart() {
   }
 }
 
-function openRulesDir() {
-  api.proxyOpenRulesDir().catch(() => {});
-}
 function openDataDir() {
   api.proxyOpenDataDir().catch(() => {});
 }
@@ -197,7 +190,6 @@ function openDataDir() {
     <div class="cfg-subtabs">
       <button class="cfg-subtab" :class="{ active: tab === 'service' }" @click="tab = 'service'"><i class="ph ph-gear-six"></i>服务与路由</button>
       <button class="cfg-subtab" :class="{ active: tab === 'monitor' }" @click="tab = 'monitor'"><i class="ph ph-chart-bar"></i>监控与安全</button>
-      <button class="cfg-subtab" :class="{ active: tab === 'rules' }" @click="tab = 'rules'"><i class="ph ph-file-code"></i>规则文件</button>
     </div>
 
     <template v-if="tab === 'service'">
@@ -387,31 +379,6 @@ function openDataDir() {
       </div>
     </div>
     </template>
-
-    <div class="card" v-else>
-      <div class="card-title">
-        规则文件热加载
-        <span class="right">改文件即时生效，无需重启 · <el-tooltip :content="rulesDirGate.reason || ''" :disabled="!rulesDirGate.disabled" placement="top"><span><button class="btn-link btn-sm" :disabled="rulesDirGate.disabled" @click="openRulesDir">打开 rules 目录</button></span></el-tooltip></span>
-      </div>
-      <div class="tbl-wrap">
-        <table class="tbl">
-          <tbody>
-            <tr><th>文件</th><th>说明</th><th>大小</th><th>修改时间</th><th>状态</th></tr>
-            <tr v-for="r in rules" :key="r.file">
-              <td class="mono">{{ r.file }}</td>
-              <td>{{ r.desc }}</td>
-              <td class="mono">{{ r.size ? fmtK(r.size) + "B" : "-" }}</td>
-              <td class="mono">{{ r.mtimeMs ? fmtAgo(r.mtimeMs) : "-" }}</td>
-              <td>
-                <el-tooltip :content="r.error || ''" :disabled="!r.error" placement="top">
-                  <span class="tag" :class="r.ok ? 'tag-ok' : 'tag-err'">{{ r.ok ? "已加载" : "解析失败（用上次快照）" }}</span>
-                </el-tooltip>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
 
     <!-- 上游启闭弹窗（渠道级开关）：关闭的渠道在反代网关全部页面动态隐藏，重新打开立即恢复 -->
     <ProxyUpstreamDialog :open="upOpen" @close="upOpen = false" />

@@ -253,6 +253,52 @@ function main() {
     Object.assign(adapters.ADAPTERS, orig3);
   }
 
+  console.log("\n[8b] enabledOnly：关闭上游不参与合并");
+  const orig4 = { ...adapters.ADAPTERS };
+  try {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      workbuddy_ai: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+    });
+    const offCfg = { channelEnabled: { workbuddy_ai: false } };
+    const onRow = adapters.mergedModels(offCfg, { enabledOnly: true }).find((m) => m.id === "deepseek-v4.1-flash");
+    eq(onRow.sources, ["workbuddy"], "关闭上游从来源里剔除");
+    eq((onRow.sourceDetails || []).map((d) => d.channel), ["workbuddy"], "来源明细不含关闭上游");
+    eq(onRow.contextLength, 100000, "行级字段不取关闭上游的值");
+    eq(adapters.mergedModels(offCfg).find((m) => m.id === "deepseek-v4.1-flash").sources, ["workbuddy", "workbuddy_ai"], "不带 opts 仍全量（请求路径识别用）");
+    check(
+      "单源模型随关闭上游整行隐藏",
+      !adapters.mergedModels({ channelEnabled: { loomy: false } }, { enabledOnly: true }).some((m) => m.id === "DeepSeek-V4.1-Flash")
+    );
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, orig4);
+  }
+
+  console.log("\n[8c] 多源模型档位取并集");
+  cat.workbuddy.models[0].reasoning_effort = ["light", "high"];
+  cat.workbuddy_ai.models[0].reasoning_effort = ["high", "extra_high"];
+  cat.loomy.models[0].reasoning_effort = [];
+  fs.writeFileSync(catFile, JSON.stringify(cat, null, 2));
+  rules.reload("catalog.json");
+  const orig5 = { ...adapters.ADAPTERS };
+  try {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, {
+      workbuddy: { models: () => ["deepseek-v4.1-flash"] },
+      workbuddy_ai: { models: () => ["deepseek-v4.1-flash"] },
+      loomy: { models: () => ["DeepSeek-V4.1-Flash"] },
+    });
+    const row = adapters.mergedModels({}).find((m) => m.id === "deepseek-v4.1-flash");
+    eq(row.reasoning_effort, ["light", "high", "extra_high"], "行级档位是各来源并集，不重复");
+    eq(row.sourceDetails.map((d) => d.reasoning_effort), [["light", "high"], ["high", "extra_high"]], "来源明细保留各自档位");
+  } finally {
+    for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
+    Object.assign(adapters.ADAPTERS, orig5);
+  }
+
   console.log("\n[9] 渠道页别名合并");
   const aliasModels = [
     { id: "deepseek-v4.1-flash", sources: ["trae", "workbuddy", "loomy"] },

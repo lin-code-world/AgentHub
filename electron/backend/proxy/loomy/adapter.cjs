@@ -55,11 +55,14 @@ function makeLoomy(deps) {
       return models.entries(rules.rulesDir(), channel);
     },
 
-    // 拉取官方目录：GET {模型网关}/models，token + Bearer 双头；拉不到就如实报错（不编模型名）
+    // 拉取官方目录：GET {模型网关}/models，token + Bearer 双头；拉不到就如实报错（不编模型名）。
+    // 返回形状与 Trae/WB 对齐（调用方 proxy_models_sync 只认 { ok, models }）
     async fetchModels(account, secrets, opts) {
       const session = sessionOf(secrets);
       if (!session) return { ok: false, message: "该账号没有凭据" };
-      return models.refresh({ session }, rules.rulesDir(), channel, !!(opts && opts.force));
+      const r = await models.refresh({ session }, rules.rulesDir(), channel, !!(opts && opts.force));
+      if (!r || r.ok === false) return { ok: false, message: (r && r.message) || "目录拉取失败" };
+      return { ok: true, models: models.entries(rules.rulesDir(), channel) };
     },
 
     /** 对话主流程：OpenAI 兼容 SSE。model 按目录**逐字校验**（见 models.resolveFrom：上游大小写敏感，

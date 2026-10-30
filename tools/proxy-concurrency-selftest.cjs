@@ -71,7 +71,7 @@ async function main() {
   await new Promise((r) => fake.listen(19561, "127.0.0.1", r));
 
   const headersPath = path.join(rules.rulesDir(), "headers.json");
-  const headersCfg = JSON.parse(fs.readFileSync(headersPath, "utf8"));
+  const headersCfg = JSON.parse(JSON.stringify(rules.DEFAULTS["headers.json"]));
   headersCfg.workbuddy.chatUrl = "http://127.0.0.1:19561/wb/chat";
   headersCfg.workbuddy_ai.consoleChatUrl = "";
   headersCfg.workbuddy_ai.chatUrl = "http://127.0.0.1:19561/wba/chat";

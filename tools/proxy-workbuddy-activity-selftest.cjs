@@ -75,7 +75,7 @@ async function main() {
   try {
     const rules = require("../electron/backend/proxy/rules.cjs");
     const cfgPath = path.join(rules.rulesDir(), "headers.json");
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    const cfg = JSON.parse(JSON.stringify(rules.DEFAULTS["headers.json"]));
     // 三个域都指到本地假上游：billingBase（report/streak）、chatUrl（免费模型）、pluginBase
     cfg.workbuddy_ai.chatUrl = `${base}/v2/chat/completions`;
     cfg.workbuddy_ai.billingBase = base;

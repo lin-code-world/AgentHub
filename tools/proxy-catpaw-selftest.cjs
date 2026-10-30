@@ -61,7 +61,7 @@ async function main() {
   assert(checkin.ok === true && checkin.unavailable === true, "无签到如实回报不适用（不是假装成功）");
   const refresh = await ad.refreshToken({}, {});
   assert(refresh.ok === false && /不支持自动刷新/.test(refresh.message), "refreshToken 如实回报不支持");
-  assert(ad.models().includes("glm-5.3-flash") && ad.models().includes("kimi-k3"), "静态兜底模型清单");
+  assert(Array.isArray(ad.models()) && ad.models().length === 0, "未拉取目录时模型清单为空（不再内置静态兜底）");
   console.log("gate ok（渠道注册 / stateful 声明 / 无签到与无刷新如实回报）");
 
   // ===== 2. 消息归一化（messages/blocks）=====
@@ -556,7 +556,7 @@ async function main() {
   const headers = upstreamHttp.requestHeaders({ token: "t", uid: "u" }, "application/json");
   assert(headers.Cookie === "X-Passport-Token=t" && headers["user-uid"] === "u" && headers["M-APPKEY"], "凭证头形态（Cookie + 独立 uid 头 + APPKEY）");
   assert(!("Authorization" in headers), "不带 Authorization（本家不是 Bearer）");
-  assert(catalog.list().some((m) => m.id === "kimi-k3"), "catalog.list 回落静态表");
+  assert(Array.isArray(catalog.list()) && catalog.list().length === 0, "未拉取目录时 catalog.list 为空（不再回落静态表）");
   assert(catalog.normalizeEntry({ modelTypeName: "glm-x", modelTypeId: 7, extendedInfo: { isAuto: "true" } }) === null, "auto 伪模型被过滤");
   assert(catalog.normalizeEntry({ modelTypeName: "gm", provider: "USER_CUSTOM" }) === null, "用户自建模型被过滤");
   const normalized = catalog.normalizeEntry({
@@ -617,6 +617,20 @@ async function main() {
   // → emit 回流 → server 组装 SSE / 聚合 / 记账。协议层自测绿不代表这条链通。
   const gateway = require("../electron/backend/proxy/server.cjs");
   store.open();
+  // 模型目录不再内置：从测试模型清单取 catpaw 段，供网关路由解析
+  {
+    const fsMod = require("node:fs");
+    const pathMod = require("node:path");
+    const rulesMod = require("../electron/backend/proxy/rules.cjs");
+    rulesMod.init();
+    const fixture = JSON.parse(fsMod.readFileSync(pathMod.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    fsMod.writeFileSync(
+      pathMod.join(rulesMod.rulesDir(), "catalog.json"),
+      JSON.stringify({ catpaw: { syncedAt: Date.now(), models: fixture.catpaw.models } }, null, 2),
+      "utf8"
+    );
+    rulesMod.reload("catalog.json");
+  }
   const key = store.createKey({ name: "catpaw 自测", route: "auto", dailyQuota: 100, rateLimit: 0 });
   const accountId = store.addAccount({ channel: "catpaw", uid: "cp-e2e", name: "CatPaw 端到端号", token: "tok-e2e", source: "paste" });
   // 反向映射用例可切换的配置（server 每请求读一次 settings）

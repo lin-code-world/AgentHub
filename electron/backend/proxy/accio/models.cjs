@@ -8,12 +8,10 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 反代网关 · Accio 模型目录：catalog.json 静态兜底 + POST /api/llm/config 远程刷新（v1，失败回落 v2）
+// 反代网关 · Accio 模型目录：POST /api/llm/config 远程刷新（v1，失败回落 v2），结果落 catalog.json
 //
-// 清单来源：
-//   1. 静态兜底：客户端内置 model-catalog.json 的 visible:true 条目（见 FALLBACK）。进程启动即可用，
-//      没有账号 / 网络不通时模型目录仍有内容。条目名是「代号之前」的那一代，上游接口仍认（逐条实测）。
-//   2. 远程刷新：POST {gw}/api/llm/config，body {token}，头带 x-package-region（GLOBAL / CN）。
+// 清单来源：只有远程刷新这一条路（没有拉取过时为空，不内置静态兜底）。
+//   远程刷新：POST {gw}/api/llm/config，body {token}，头带 x-package-region（GLOBAL / CN）。
 //      上游按地区与账号权限给清单。
 //
 // 上游响应形态（实测，解析必须按这一份）：
@@ -36,23 +34,6 @@ const auth = require("./auth.cjs");
 const endpoints = require("./endpoints.cjs");
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 目录变化不频繁，与 qoder 的 1 小时同量级；force 绕过
-
-// 静态兜底（客户端内置 model-catalog.json 的 visible 条目，2026-09 快照）。
-// upstreamKey 是发给上游的 model 字段值（就是 modelCode）。placement 一列是思考档位落点
-// （静态表没有上游 protocol 字段，按实测逐条写死；远程清单走「读 protocol」）。
-const FALLBACK = [
-  // [modelCode, 展示名, contextWindow, multimodal, reasoningEfforts, isDefault, placement]
-  ["gemini-3-flash-preview", "Gemini 3 Flash", 1000000, true, ["low", "high"], true, "top"],
-  ["gemini-3.1-pro-preview", "Gemini 3.1 Pro", 1000000, true, ["low", "high"], false, "top"],
-  ["qwen3.6-plus", "Qwen 3.6 Plus", 991808, false, [], false, "top"],
-  ["qwen3-max-2026-01-23", "Qwen 3 Max", 262144, false, [], false, "top"],
-  ["gpt-5.4", "GPT 5.4", 1050000, true, ["low", "high"], false, "properties"],
-  ["gpt-5.2-1211", "GPT 5.2", 400000, true, ["low", "high"], false, "properties"],
-  ["claude-sonnet-4-6", "Claude Sonnet 4.6", 1000000, true, ["low", "medium", "high", "max"], false, "top"],
-  ["claude-opus-4-6", "Claude Opus 4.6", 1000000, true, ["low", "medium", "high", "max"], false, "top"],
-  ["glm-5", "GLM-5", 200000, false, [], false, "top"],
-  ["MiniMax-M2.5", "MiniMax M2.5", 204800, true, [], false, "properties"],
-];
 
 // 老模型名 → 上游展示名：把「目录里有 Claude Sonnet 4.6 这一条」接回老名字当对外 id（upstreamKey 仍是代号）。
 // 按展示名而不是硬编码代号：代号是上游随时会换的不透明串，展示名才是稳定对外的东西。
@@ -102,11 +83,6 @@ function normalizeEntry(entry, forcedPlacement) {
   return item;
 }
 
-function fallbackModels() {
-  return FALLBACK.map(([code, name, window, multimodal, efforts, isDefault, placement]) =>
-    normalizeEntry({ modelCode: code, modelDisplayName: name, contextWindow: window, multimodal, reasoningEfforts: efforts, isDefault }, placement));
-}
-
 // 一渠道一缓存格
 const caches = new Map(); // channel -> { at, models }
 function cacheOf(channel) {
@@ -114,10 +90,9 @@ function cacheOf(channel) {
   return caches.get(channel);
 }
 
-// 当前清单：远程（有的话）优先，否则静态兜底
+// 当前清单：只认拉取到的远程目录（没拉过时为空）
 function regionModels(channel) {
-  const cached = cacheOf(channel).models;
-  return cached.length ? cached : fallbackModels();
+  return cacheOf(channel).models;
 }
 
 // 路由与界面都按小写 id 匹配，去重也必须大小写不敏感，否则同名模型会各留一份
@@ -210,4 +185,4 @@ async function refresh(channel, env, force) {
   return { ok: true, added: models.length, count: models.length };
 }
 
-module.exports = { list, resolve, refresh, parseCatalog, normalizeEntry, effortPlacement, fallbackModels };
+module.exports = { list, resolve, refresh, parseCatalog, normalizeEntry, effortPlacement };

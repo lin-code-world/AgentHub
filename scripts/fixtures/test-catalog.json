@@ -1,0 +1,64 @@
+{
+  "trae": {
+    "models": [
+      { "id": "DeepSeek-V4-Pro-Official", "name": "DeepSeek-V4-Pro" },
+      { "id": "deepseek-v4.1-flash", "name": "DeepSeek-V4.1-Flash" },
+      { "id": "qwen3.8-max", "name": "Qwen3.8-Max" },
+      { "id": "qwen3.8-flash", "name": "Qwen3.8-Flash", "reasoning_effort": ["light", "high", "extra_high"] },
+      { "id": "minimax-m3", "name": "MiniMax-M3", "reasoning_effort": [] },
+      { "id": "glm-5.3", "name": "GLM-5.3" }
+    ]
+  },
+  "workbuddy": {
+    "models": [
+      { "id": "deepseek-v4.1-flash", "name": "DeepSeek-V4.1-Flash" },
+      { "id": "hy3", "name": "HY3" }
+    ]
+  },
+  "workbuddy_ai": {
+    "models": [
+      { "id": "deepseek-v4.1-flash", "name": "DeepSeek-V4.1-Flash" },
+      { "id": "glm-5.3", "name": "GLM-5.3" }
+    ]
+  },
+  "raccoon": {
+    "models": [{ "id": "raccoon-chat-ml-5-5", "name": "raccoon-chat-ml-5-5" }]
+  },
+  "lobster": {
+    "models": [
+      { "id": "deepseek-v4-pro", "name": "DeepSeek-V4-Pro" },
+      { "id": "deepseek-v4-flash", "name": "DeepSeek-V4-Flash" },
+      { "id": "glm-5.2", "name": "GLM-5.2" }
+    ]
+  },
+  "modelscope": {
+    "models": [
+      { "id": "deepseek-ai/DeepSeek-V4.1-Flash", "name": "DeepSeek-V4.1-Flash" },
+      { "id": "ZhipuAI/GLM-5.3-Flash", "name": "GLM-5.3-Flash" }
+    ]
+  },
+  "catpaw": {
+    "models": [
+      { "id": "kimi-k3", "name": "Kimi-K3" },
+      { "id": "glm-5.3-flash", "name": "GLM-5.3-Flash" }
+    ]
+  },
+  "qoder": {
+    "models": [
+      { "id": "dfmodel", "name": "DeepSeek-Flash" },
+      { "id": "qfmodel", "name": "Qwen3.8-Flash" }
+    ]
+  },
+  "autoclaw": {
+    "models": [
+      { "id": "glm-5.3", "name": "GLM-5.3", "routeId": "zaicoding_glm-5.3" },
+      { "id": "glm-5.3-flash", "name": "GLM-5.3-Flash", "routeId": "zai_glm-5.3-flash" }
+    ]
+  },
+  "cline_free": {
+    "models": [{ "id": "cline-free/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash（免费）" }]
+  },
+  "cline_pass": {
+    "models": [{ "id": "cline-pass/kimi-k3", "name": "Kimi K3（ClinePass）" }]
+  }
+}

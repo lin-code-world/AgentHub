@@ -49,7 +49,7 @@ function sseStream(text) {
 }
 
 async function main() {
-  const { makeQoder, toQoderMessages, toQoderTools, STATIC_MODELS } = require("../electron/backend/proxy/qoderAdapter.cjs");
+  const { makeQoder, toQoderMessages, toQoderTools } = require("../electron/backend/proxy/qoderAdapter.cjs");
   const util = require("../electron/backend/proxy/util.cjs");
 
   // ===== 1. 消息归一 =====
@@ -123,15 +123,13 @@ async function main() {
   const meta = { requestId: "R1", sessionId: "S1" };
   const rw2 = ad.rewriteBody("gfmodel", { messages: [] }, {}, meta);
   assert(rw2.request_id === "R1" && rw2.session_id === "S1", "meta 提供时复用 id（轮内稳定）");
-  // 静态兜底仅在「无目录」时生效（沙箱无 catalog.json）
-  assert(ad.models().length >= STATIC_MODELS.length, "无目录时 models() 回退静态兜底表");
-  // ===== 3b. issue #74 回归：静态兜底不得跨产品串味 =====
-  console.log("\n[3b] 静态兜底表按产品隔离（issue #74 回归）");
+  // 未拉取目录时模型清单为空（不再回退静态表）
+  assert(ad.models().length === 0, "无目录时 models() 为空");
+  // ===== 3b. issue #74 回归：无目录时不得凭空宣称拥有模型 =====
+  console.log("\n[3b] 无目录时不凭空宣称拥有模型");
   const adIntl = makeQoder("qoder_intl", deps);
-  assert(ad.models().includes("dfmodel"), "qoder(CN) 静态兜底含 dfmodel");
   assert(!adIntl.models().includes("dfmodel"), "qoder_intl 不得凭空宣称拥有 CN 专属模型（dfmodel）");
-  assert(!adIntl.models().includes("qmodel"), "qoder_intl 静态兜底应为空（未实测过其目录）");
-  assert(adIntl.models().length === 0, "qoder_intl 无目录且无兜底 → 模型清单为空");
+  assert(adIntl.models().length === 0, "qoder_intl 无目录时模型清单为空");
 
   // ===== 3c. issue #74 回归：有目录时只认目录（静态兜底不得复活已下架模型） =====
   // 场景：目录里只有 2 个模型，静态表里却有 14 个。修复前 models() = 并集 → 14 个都会

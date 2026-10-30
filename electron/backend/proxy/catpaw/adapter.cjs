@@ -26,15 +26,11 @@
 "use strict";
 const rules = require("../rules.cjs");
 const CatPawError = require("./errors.cjs");
-const { MODELS } = require("./models.cjs");
 const catalog = require("./catalog.cjs");
 const balance = require("./balance.cjs");
 const { resolveCredentials } = require("./credentials.cjs");
 const { postJson, requestHeaders, upstreamBaseUrl } = require("./upstreamHttp.cjs");
 const { runConversation } = require("./conversation.cjs");
-
-/** 静态兜底模型清单（远程目录不可用时的 id 集） */
-const STATIC_MODEL_IDS = MODELS.map((model) => model.id);
 
 /**
  * 把编排层解析出的**上游真实模型名**写回请求体。
@@ -64,14 +60,9 @@ function makeCatPaw() {
       return rules.get("headers.json").catpaw;
     },
 
-    /** 模型清单：远程目录优先（catalog.list 已带静态表回落），去重保序 */
+    /** 模型清单：只列拉取到的远程目录（catalog.list 读 catalog.json 的 catpaw 段） */
     models() {
-      const ids = catalog.list().map((item) => String(item.id || "")).filter(Boolean);
-      const out = [];
-      for (const id of [...ids, ...STATIC_MODEL_IDS]) {
-        if (!out.some((x) => x.toLowerCase() === id.toLowerCase())) out.push(id);
-      }
-      return out;
+      return catalog.list().map((item) => String(item.id || "")).filter(Boolean);
     },
 
     /** 静态基础头（排障与契约用；真正的请求头由 upstreamHttp.requestHeaders 按凭据现场生成，

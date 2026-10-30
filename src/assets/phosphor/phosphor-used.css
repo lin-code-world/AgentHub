@@ -67,20 +67,8 @@
 .ph.ph-clock-countdown:before {
   content: "\ed2c";
 }
-.ph.ph-cloud:before {
-  content: "\e1aa";
-}
 .ph.ph-cloud-arrow-down:before {
   content: "\e1ac";
-}
-.ph.ph-cloud-check:before {
-  content: "\e1b0";
-}
-.ph.ph-cloud-slash:before {
-  content: "\e1b6";
-}
-.ph.ph-desktop:before {
-  content: "\e560";
 }
 .ph.ph-desktop-tower:before {
   content: "\e562";
@@ -109,6 +97,9 @@
 .ph.ph-key:before {
   content: "\e2d6";
 }
+.ph.ph-lock-key:before {
+  content: "\e2fe";
+}
 .ph.ph-magnifying-glass:before {
   content: "\e30c";
 }
@@ -126,6 +117,9 @@
 }
 .ph.ph-question:before {
   content: "\e3e8";
+}
+.ph.ph-scroll:before {
+  content: "\eb7a";
 }
 .ph.ph-seal-check:before {
   content: "\e606";
@@ -147,6 +141,9 @@
 }
 .ph.ph-warning-circle:before {
   content: "\e4e2";
+}
+.ph.ph-wifi-slash:before {
+  content: "\e4f2";
 }
 .ph.ph-x:before {
   content: "\e4f6";

@@ -20,7 +20,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-mapped-target-"));
 process.env.AGENTHUB_DATA_DIR = tmp;
 
 const adapters = require(path.join(ROOT, "electron/backend/proxy/adapters.cjs"));
-const { resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams } = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
+const { resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams, clampReasoningEffort } = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
 
 let fail = 0;
 const eq = (a, e, l) => {
@@ -37,6 +37,16 @@ const check = (l, cond, extra) => {
   }
 };
 
+// 模型目录不再内置：从测试模型清单读入（本文件要查某个模型的思考档位）
+{
+  const rules = require(path.join(ROOT, "electron/backend/proxy/rules.cjs"));
+  rules.init();
+  const fixture = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts", "fixtures", "test-catalog.json"), "utf8"));
+  const cat = {};
+  for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+  fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+  rules.reload("catalog.json");
+}
 const orig = { ...adapters.ADAPTERS };
 try {
   for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
@@ -85,6 +95,22 @@ try {
   eq(resolveCustomParams("deepseek-v4.1-flash", "deepseek-v4.1-flash", "workbuddy", s), { contextLength: 200000 }, "请求模型 + 渠道");
   eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "trae", s), { reasoningEffort: "medium" }, "回落旧模型级配置");
   eq(resolveCustomParams("deepseek-v4.1-flash", "DeepSeek-V4.1-Flash", "loomy", { ...s, modelCustomByChannel: { "deepseek-v4.1-flash": { loomy: { contextLength: 1 } } } }), { contextLength: 1 }, "大小写逐字：大写键不命中走小写键");
+
+  console.log("[6] 思考档位收敛到目录声明");
+  const traeLevels = ["light", "high", "extra_high"];
+  eq(clampReasoningEffort("off", traeLevels), "light", "off 收敛到最低档");
+  eq(clampReasoningEffort("minimal", traeLevels), "light", "minimal → light");
+  eq(clampReasoningEffort("low", traeLevels), "light", "low → light");
+  eq(clampReasoningEffort("medium", traeLevels), "high", "medium → high");
+  eq(clampReasoningEffort("high", traeLevels), "high", "high 原样");
+  eq(clampReasoningEffort("xhigh", traeLevels), "extra_high", "xhigh → extra_high");
+  eq(clampReasoningEffort("max", ["light", "high"]), "high", "超出支持档位降一档");
+  eq(clampReasoningEffort("light", ["high"]), "high", "低于最低支持档取最低");
+  eq(clampReasoningEffort("high", []), "", "目录未声明档位时不映射");
+  eq(clampReasoningEffort("", traeLevels), "", "空值不注入");
+  eq(clampReasoningEffort("unknown", traeLevels), "", "未知档位不猜");
+  eq(adapters.modelReasoningEfforts("qwen3.8-flash", "trae"), traeLevels, "按模型查目录档位");
+  eq(adapters.modelReasoningEfforts("minimax-m3", "trae"), [], "不支持思考的模型档位为空");
 } finally {
   for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
   Object.assign(adapters.ADAPTERS, orig);

@@ -5,6 +5,10 @@ AgentApiGateway：Windows 桌面应用（Electron + Vue 3 + TS），反代网关
 记忆中枢三大板块，只保留反代网关。仓库语言为中文：提交信息、注释、文档一律简体中文，提交信息用
 conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
+## 沟通方式（最高优先）
+
+仓库主人不了解这个工程的技术内容：回复一律用白话文，从产品角度描述——讲清楚做了什么、为什么做、对使用有什么影响；不出现技术术语，确需引用文件名 / 报错信息等原文时，先用一句白话解释它是什么再给原文。
+
 ## 分支策略
 
 - `main` 分支只用来跟上游工程（HUIdada1/AgentHub）同步，不在它上面修改代码。
@@ -76,6 +80,7 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - 网关核心依赖闭包自检：`node tools/gateway-closure-check.cjs`（下限 109，防引用指向已删文件）。
 - 渠道路由插件自测：`ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/proxy-channel-defer-selftest.cjs`（队列让位 / 截断、显式边界门控、账号分档与渠道让位）；余额 `known` 口径与插件判据另见 `tools/proxy-channels-selftest.cjs`。
 - 沙箱约定：跑核心自测时把 `AGENTHUB_DATA_DIR` 指向临时目录；自测脚本不得读写真实用户数据。
+- 测试模型清单 `scripts/fixtures/test-catalog.json`：自测要用的模型目录数据（模型目录已不在代码里内置，没拉取过就是空的）。**动上游渠道代码时要同步检查它**——条目字段可能随渠道变动（如 autoclaw 的 routeId、catpaw 要的上游数字 modelType），漏改会让对应自测失真或直接失败。
 
 ## 环境与发布
 

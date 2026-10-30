@@ -40,6 +40,14 @@ async function main() {
 
   store.open();
   rules.init();
+  // 模型目录不再内置：从测试模型清单读入
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    const cat = {};
+    for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
   assert(Object.keys(server.channelHealthSnapshot()).length === 0, "初始渠道健康快照为空");
 
   // ===== T0 渠道数上限归一化 / 每模型上游尝试预算（纯函数边界；failover 契约的前置） =====
@@ -133,7 +141,7 @@ async function main() {
 
   // headers.json 热加载指向假上游
   const headersPath = path.join(rules.rulesDir(), "headers.json");
-  const headersBackup = fs.readFileSync(headersPath, "utf8");
+  const headersBackup = JSON.stringify(rules.DEFAULTS["headers.json"], null, 2);
   const headersCfg = JSON.parse(headersBackup);
   headersCfg.trae.chatUrl = "http://127.0.0.1:19532/trae/chat";
   headersCfg.trae.mirrorChatUrl = "";

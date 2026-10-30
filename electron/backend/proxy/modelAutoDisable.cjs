@@ -43,7 +43,8 @@ function accountCounts() {
 function sync() {
   const cfg = config.loadConfig();
   const proxy = cfg.proxy || {};
-  const models = adapters.mergedModels(proxy);
+  // 只判启用渠道：关闭上游的单源模型不写 disabledModels，重开自动恢复。
+  const models = adapters.mergedModels(proxy, { enabledOnly: true });
   const accountless = accountlessIds(models, accountCounts());
   const first = Array.isArray(proxy.disabledModels) ? proxy.disabledModels.slice() : [];
   const firstSet = new Set(first);

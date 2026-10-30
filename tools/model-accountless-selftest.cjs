@@ -45,6 +45,13 @@ async function main() {
   }
   store.open();
   rules.init();
+  // 模型目录不再内置：从测试模型清单读入，供「无账号单源模型自动关闭」判定使用
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+  const catPath = path.join(rules.rulesDir(), "catalog.json");
+  const seeded = {};
+  for (const [ch, seg] of Object.entries(fixture)) seeded[ch] = { syncedAt: Date.now(), models: seg.models };
+  fs.writeFileSync(catPath, JSON.stringify(seeded, null, 2), "utf8");
+  rules.reload("catalog.json");
 
   console.log("\n[1] 纯判定");
   const ids = modelAutoDisable.accountlessIds(

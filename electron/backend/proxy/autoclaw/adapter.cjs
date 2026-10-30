@@ -101,25 +101,18 @@ function makeAutoClaw(channel, deps) {
     return catalogCache;
   }
 
-  /** 路由解析用的目录条目数组：目录非空用目录，否则静态兜底（条目都带 routeId） */
+  /** 路由解析用的目录条目数组（只认拉取到的目录） */
   function catalogEntries() {
-    const byKey = catalogIndex().byKey;
-    if (byKey.size) return [...byKey.values()];
-    return modelsMod.STATIC_MODELS;
+    return [...catalogIndex().byKey.values()];
   }
 
   return {
     id: channel,
     cfg,
 
-    /**
-     * 模型 id 清单（同步；管理页/路由用）：已拉取过目录只认目录（防幽灵模型，qoder issue #74 同款），
-     * 未拉取过回静态兜底（两地共用同一份，条目含 routeId）。
-     */
+    /** 模型 id 清单（同步；管理页/路由用）：只认拉取到的目录 */
     models() {
-      const byKey = catalogIndex().byKey;
-      if (byKey.size) return [...byKey.keys()];
-      return modelsMod.STATIC_MODELS.map((m) => m.id);
+      return [...catalogIndex().byKey.keys()];
     },
 
     /** 拉取官方目录：GET {userapi}{catalogPath}，签名头。响应顶层直接是 {models:[…]}（无信封）。 */

@@ -89,7 +89,7 @@ async function main() {
   await new Promise((r) => fake.listen(19541, "127.0.0.1", r));
 
   const headersPath = path.join(rules.rulesDir(), "headers.json");
-  const headersBackup = fs.readFileSync(headersPath, "utf8");
+  const headersBackup = JSON.stringify(rules.DEFAULTS["headers.json"], null, 2);
   const headersCfg = JSON.parse(headersBackup);
   headersCfg.trae.chatUrl = "http://127.0.0.1:19541/tr/chat";
   headersCfg.trae.mirrorChatUrl = "";

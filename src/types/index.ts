@@ -235,6 +235,8 @@ export interface ProxyChannelView {
   health: ProxyChannelHealth | null;
   /** 渠道启闭（「上游启闭」弹窗）：缺省/true = 启用；false = 已关闭（全部页面动态隐藏） */
   enabled?: boolean;
+  /** 目录接口是否需要登录态（缺省/true = 需要）：前端「全部拉取」跳过未登录渠道的判据 */
+  modelsNeedAuth?: boolean;
 }
 
 // ===== 自定义提供商（中转站 / 自建 OpenAI 兼容端点） =====
@@ -479,11 +481,13 @@ export interface ProxyModel {
   name?: string;
   rate?: number | null;
   capabilities?: { images?: boolean; reasoning?: boolean; tools?: boolean };
+  /** 该模型支持的思考强度档位（空数组 = 不支持/未知） */
+  reasoning_effort?: string[];
   contextLength?: number;
   maxOutputTokens?: number;
   /** 来源渠道明细：各渠道自己的模型 id / 倍率 / 上下文 / 最大输出 / 能力（合并键按精确写法，
    *  因此同一行的各来源写法一致；没有 catalog 条目的渠道不产生明细） */
-  sourceDetails?: { channel: ProxyChannelId; id: string; rate: number | null; contextLength: number; maxOutputTokens: number; capabilities: { images?: boolean; reasoning?: boolean; tools?: boolean }; custom?: ModelCustomEntry | null }[];
+  sourceDetails?: { channel: ProxyChannelId; id: string; rate: number | null; contextLength: number; maxOutputTokens: number; capabilities: { images?: boolean; reasoning?: boolean; tools?: boolean }; reasoning_effort?: string[]; custom?: ModelCustomEntry | null }[];
   /** 管理态（proxy_models 返回时合并）：启用 / per-model 渠道覆盖 / 回退模型 / 自定义参数 */
   /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
   accountless?: boolean;

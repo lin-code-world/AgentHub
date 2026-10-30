@@ -68,7 +68,7 @@ function knownIds() {
  *  列进清单会造出「清单里有、请求却报 400」的自相矛盾 */
 function list() {
   const remote = remoteModels();
-  if (!remote.length) return staticList();
+  if (!remote.length) return [];
   const out = [];
   for (const source of remote) {
     if (!source || typeof source !== "object") continue;
@@ -85,24 +85,6 @@ function list() {
     out.push(entry);
   }
   return out;
-}
-
-/** 静态表形态的清单（远程不可用时的回落） */
-function staticList() {
-  return MODELS.map((model) => {
-    const entry = {
-      id: model.id,
-      name: model.name,
-      capabilities: { images: model.supportImage, reasoning: model.supportThinking, tools: true },
-      rate: null, // 静态表没有倍率（上游目录才有），界面显示 —
-      contextLength: model.contextWindows.length ? Math.max(...model.contextWindows.map((text) => Number(text))) : 0,
-      maxOutputTokens: 0,
-      // 上游数字 modelType 与默认档位是转发必须用的（客户端请求的模型名要反查它）
-      modelType: model.hostModelId,
-    };
-    if (model.defaultContextWindow) entry.defaultContextWindow = model.defaultContextWindow;
-    return entry;
-  });
 }
 
 /** 静态表里按 id 找条目（大小写/分隔符宽容，与 models.findModelEntry 同口径） */

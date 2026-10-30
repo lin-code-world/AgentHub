@@ -100,69 +100,10 @@ async function main() {
     assert.ok(/^\d{4}\.\d+/.test(c.clientVersion), `clientVersion 应是 2026.x 形态，实际 ${c.clientVersion}`);
   });
 
-  // ===== T4 静态目录兜底（权威源：公开 pricing-catalog 实测） =====
-  await T("T4 catalog.json.lobster 静态兜底目录非空且形态正确", () => {
+  // ===== T4 未拉取目录时清单为空（不再内置静态目录） =====
+  await T("T4 未拉取目录时 lobster 模型清单为空", () => {
     const ids = ad.models();
-    assert.ok(Array.isArray(ids) && ids.length >= 25, `兜底模型数应 ≥25，实际 ${ids.length}`);
-    for (const want of ["deepseek-flash", "glm-5.3-flash", "glm-5.3-flashx", "deepseek-v4-pro", "kimi-k3", "glm-5.2", "qwen3.8-max", "MiniMax-M3"]) {
-      assert.ok(ids.includes(want), `兜底目录应含 ${want}`);
-    }
-  });
-
-  // ===== T4b 上下文长度必须是真实值而非占位常量 =====
-  await T("T4b 上下文长度取真实值（非 131072 占位；1M 档正确）", () => {
-    const cat = rules.get("catalog.json").lobster;
-    const by = (id) => cat.models.find((m) => m.id === id);
-    // 官方公开端点实测：deepseek-flash / glm-5.3-flash 均为 1000000
-    assert.strictEqual(by("deepseek-flash").contextLength, 1000000, "deepseek-flash 上下文应为 1M");
-    assert.strictEqual(by("glm-5.3-flash").contextLength, 1000000, "glm-5.3-flash 上下文应为 1M");
-    assert.strictEqual(by("deepseek-v4-pro").contextLength, 1000000, "deepseek-v4-pro 上下文应为 1M");
-    assert.strictEqual(by("kimi-k3").contextLength, 1048576, "kimi-k3 上下文应为 1048576");
-    assert.strictEqual(by("kimi-k2.7-code").contextLength, 262144, "kimi-k2.7-code 上下文应为 262144");
-    assert.strictEqual(by("doubao-seed-2-1-turbo-260628").contextLength, 256000, "豆包 turbo 上下文应为 256000");
-    // 服务端未标 contextWindow 的模型必须记 0（未知），绝不编造
-    assert.strictEqual(by("glm-5.1").contextLength, 0, "未标窗口的模型应记 0（不编造默认值）");
-    assert.strictEqual(by("qwen3.6-plus").contextLength, 0, "未标窗口的模型应记 0（不编造默认值）");
-    // 全表不得出现 131072 这个第三方占位值
-    const bogus = cat.models.filter((m) => m.contextLength === 131072);
-    assert.strictEqual(bogus.length, 0, `不得残留 131072 占位值，实际 ${bogus.map((m) => m.id).join(",")}`);
-  });
-
-  // ===== T4c 能力位与倍率来自权威源 =====
-  await T("T4c 能力位/倍率取自公开目录实测值", () => {
-    const cat = rules.get("catalog.json").lobster;
-    const by = (id) => cat.models.find((m) => m.id === id);
-    assert.strictEqual(by("deepseek-flash").capabilities.images, true, "DeepSeek-V4.1-Flash 支持图片");
-    assert.strictEqual(by("deepseek-v4-pro").capabilities.images, false, "DeepSeek-V4-Pro 不支持图片");
-    assert.strictEqual(by("glm-5.3-flash").capabilities.images, true, "GLM-5.3-Flash 支持图片");
-    assert.strictEqual(by("deepseek-flash").rate, 0.05, "deepseek-flash 倍率 0.05");
-    assert.strictEqual(by("glm-5.3-flash").rate, 0.06, "glm-5.3-flash 倍率 0.06");
-    assert.strictEqual(by("kimi-k3").rate, 20, "kimi-k3 倍率 20");
-  });
-
-  // ===== T4e 同系列易混模型必须都在表内且分档正确 =====
-  // GLM-5.3-Flash 与 FlashX 是同模型的两个速度档（官方同一文档页、Model Code 并列），
-  // 能力/上下文完全相同，只差速度与 2.5 倍价格。两者都要在目录里，倍率不得写反。
-  await T("T4e 同系列易混模型齐备（Flash/FlashX、DeepSeek V4.1/V4、code/highspeed）", () => {
-    const cat = rules.get("catalog.json").lobster;
-    const by = (id) => cat.models.find((m) => m.id === id);
-    for (const id of ["glm-5.3-flash", "glm-5.3-flashx", "deepseek-flash", "deepseek-v4-flash",
-      "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "qwen3.8-flash", "qwen3.8-omni-flash"]) {
-      assert.ok(by(id), `目录应含 ${id}`);
-    }
-    // FlashX = Flash 的 2.5 倍价，能力与窗口完全相同
-    assert.strictEqual(by("glm-5.3-flashx").rate / by("glm-5.3-flash").rate, 2.5, "FlashX 应为 Flash 的 2.5 倍价");
-    assert.strictEqual(by("glm-5.3-flashx").contextLength, by("glm-5.3-flash").contextLength, "Flash/FlashX 窗口应相同");
-    assert.strictEqual(by("glm-5.3-flashx").capabilities.images, by("glm-5.3-flash").capabilities.images, "Flash/FlashX 图片能力应相同");
-    // deepseek-flash 是 V4.1（多模态），deepseek-v4-flash 是 V4（纯文本）——两个不同模型
-    assert.notStrictEqual(by("deepseek-flash").name, by("deepseek-v4-flash").name, "V4.1-Flash 与 V4-Flash 应是不同模型");
-    assert.strictEqual(by("deepseek-flash").capabilities.images, true, "V4.1-Flash 支持图片");
-    assert.strictEqual(by("deepseek-v4-flash").capabilities.images, false, "V4-Flash 不支持图片");
-    // highspeed 是同模型的高速档，价格更高
-    assert.ok(by("kimi-k2.7-code-highspeed").rate > by("kimi-k2.7-code").rate, "highspeed 应比标准版贵");
-    // glm-5.3（非 Flash）是另一能力等级的旗舰：更贵且不支持图片
-    assert.ok(by("glm-5.3").rate > by("glm-5.3-flashx").rate, "glm-5.3 旗舰应比 FlashX 贵");
-    assert.strictEqual(by("glm-5.3").capabilities.images, false, "glm-5.3 旗舰不支持图片（与 Flash 系列不同）");
+    assert.ok(Array.isArray(ids) && ids.length === 0, `未拉取时应为空数组，实际 ${ids.length}`);
   });
 
   // ===== T16 <think> 思考链归一（MiniMax 系把思考塞在 content 里） =====
@@ -429,6 +370,12 @@ async function main() {
   });
 
   // ===== T7 模型名归一（下划线变体容错） =====
+  // 归一靠目录里的 id：从测试模型清单取 lobster 段当算法输入
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify({ lobster: { syncedAt: Date.now(), models: fixture.lobster.models } }, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
   await T("T7 mapModel 归一大小写/下划线变体", () => {
     assert.strictEqual(ad.mapModel("DeepSeek-V4-Pro"), "deepseek-v4-pro");
     assert.strictEqual(ad.mapModel("deepseek_v4_pro"), "deepseek-v4-pro");

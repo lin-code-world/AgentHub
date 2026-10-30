@@ -163,10 +163,12 @@ async function pumpSse(resp, onEvent) {
   scanner.flush();
 }
 
-/** 账号级稳定指纹：device_id（自然分布 15 位数字，首位非零，消除连续补零假特征）/ machine_id（64 hex），同账号多次请求保持一致 */
-function deviceIds(account) {
+/** 账号级稳定指纹：device_id（自然分布 15 位数字，首位非零，消除连续补零假特征）/ machine_id（64 hex），同账号多次请求保持一致。
+ *  generation > 0 时派生另一套指纹（签到 9074 是设备级限流，换代数即可换设备）。 */
+function deviceIds(account, generation = 0) {
   const seed = String((account && (account.id || account.uid)) || "anon");
-  const h = crypto.createHash("sha256").update(`agenthub:device:${seed}`).digest();
+  const gen = Math.max(0, Math.floor(Number(generation) || 0));
+  const h = crypto.createHash("sha256").update(gen ? `agenthub:device:${seed}:${gen}` : `agenthub:device:${seed}`).digest();
   let digits = String((h[0] % 9) + 1); // 首位保证 1~9
   let zeroCount = 0;
   for (let i = 1; i < 15; i++) {
@@ -186,6 +188,12 @@ function deviceIds(account) {
   return { deviceId: digits, machineId };
 }
 
+/** 签到设备号代数：命中 9074 后递增（换一套设备指纹重试一次），存在 meta.checkin.deviceGeneration */
+function checkinDeviceGeneration(account) {
+  const ck = account && account.checkin;
+  return Math.max(0, Math.floor(Number(ck && ck.deviceGeneration) || 0));
+}
+
 /** 权威目录（rules/catalog.json）：渠道 → Map(模型id小写 → 条目{id,name,rate,capabilities,contextLength,...}) */
 function catalogMap(channel) {
   const cat = rules.get("catalog.json") || {};
@@ -195,6 +203,20 @@ function catalogMap(channel) {
     if (m && m.id) map.set(String(m.id).toLowerCase(), m);
   }
   return map;
+}
+
+/** 模型在某渠道目录里声明的思考档位（无目录条目或未声明 → 空数组） */
+function modelReasoningEfforts(model, channel) {
+  const meta = catalogMap(channel).get(String(model || "").toLowerCase());
+  return meta && Array.isArray(meta.reasoning_effort) ? meta.reasoning_effort.map(String).filter(Boolean) : [];
+}
+
+/** 模型目录地址归一：旧接口 get_detail_param/model_list 拉不到目录（返回空串）；
+ *  show_custom_model=true 改成 false（目录不需要自定义模型）。 */
+function normalizeModelsUrl(u) {
+  const s = String(u || "").trim();
+  if (!s || /get_detail_param|\/api\/ide\/v1\/model_list/.test(s)) return "";
+  return s.replace(/([?&]show_custom_model=)true\b/i, "$1false");
 }
 
 /**
@@ -240,38 +262,6 @@ function tokenLimit(v) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-/**
- * Trae 目录条目的上下文/输出上限（字段结构实证自 2026-10-03 抓取的 get_detail_param 原始响应）：
- *
- *   {
- *     context_window_tokens: { dev: 200000, max: 268000 },   // 上下文窗口，**按环境分档的字典**
- *     model_detail_list: [
- *       { model_name: "xxx__dev", prompt_max_tokens: 168000, max_tokens: 32000 },
- *       { model_name: "xxx__max", prompt_max_tokens: 240000, max_tokens: 32000 },
- *     ],
- *   }
- *
- * 要点：① 窗口是字典而非标量（43 个模型里 10 个有 dev/max 两档，个别为空）；
- * ② 输出上限在 model_detail_list 里，且**每个档位一个条目**（取 [0] 会取错档）；
- * ③ prompt_max_tokens 恒等于「上下文窗口 − max_tokens」（给输出预留），故窗口直接取
- *    context_window_tokens，输出取 max_tokens，两者语义不重叠。
- * 多档位时取最大值，与合并视图「取各来源最大声明」的口径一致，避免少报。
- */
-function traeLimits(it) {
-  const o = it && typeof it === "object" ? it : {};
-  let contextLength = 0;
-  const cw = o.context_window_tokens;
-  if (cw && typeof cw === "object" && !Array.isArray(cw)) {
-    for (const v of Object.values(cw)) contextLength = Math.max(contextLength, tokenLimit(v));
-  } else {
-    contextLength = tokenLimit(cw);
-  }
-  let maxOutputTokens = 0;
-  if (Array.isArray(o.model_detail_list)) {
-    for (const det of o.model_detail_list) maxOutputTokens = Math.max(maxOutputTokens, tokenLimit(det && det.max_tokens));
-  }
-  return { contextLength, maxOutputTokens };
-}
 
 /**
  * 能力合并：images 采用 **OR** 语义（任一来源声明支持即支持），undefined 不覆盖已有值；
@@ -437,6 +427,8 @@ function zcodeCreditPackages(balances, plans) {
 
 const trae = {
   id: "trae",
+  // 提前 30 分钟续期：窗口过大会频繁刷新，与桌面客户端抢 refresh_token
+  refreshWindowSec: 1800,
 
   cfg() {
     return rules.get("headers.json").trae;
@@ -460,62 +452,105 @@ const trae = {
   },
 
   models() {
-    const catalog = [...catalogMap("trae").values()].map((m) => String(m.id));
-    return unionIds(catalog, Object.keys(rules.get("model_map.json") || {}));
+    // 只列拉取到的目录。
+    return [...catalogMap("trae").values()].map((m) => String(m.id));
   },
 
-  /** 拉取官方模型目录：get_detail_param（实测：config_info_list[].config_name + display_config.display_name），
-   *  镜像域优先（与对话出口同域），失败回退官方域 */
+  /** 拉取官方模型目录：与桌面客户端 Web/Remote models 同源。
+   *  GET {modelsUrl} -> data.list[].models，取 solo_agent 组；不要自定义模型。
+   *  倍率读 features.consumption_rate.data.rate，上下文读 context_window_tokens。 */
   async fetchModels(account, secrets) {
+    const DEFAULT_WEB_MODELS_URL = "https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent_remote%2Csolo_work_remote%2Csolo_design_remote&show_custom_model=false";
     const c = this.cfg();
-    const body = JSON.stringify({
-      function: "solo_work_lite",
-      config_names: null,
-      need_prompt: false,
-      current_config_info: null,
-      poly_prompt: true,
-    });
+    const urls = [normalizeModelsUrl(c.modelsUrl), normalizeModelsUrl(c.mirrorModelsUrl)].filter(Boolean);
+    if (!urls.length) urls.push(DEFAULT_WEB_MODELS_URL);
+    const headers = {
+      Authorization: "Cloud-IDE-JWT " + secrets.token,
+      "Content-Type": "application/json",
+      "X-Trae-Client-Type": "web",
+      "X-Preferenced-Language": "zh-CN",
+      "x-user-region": "CN",
+      Origin: "https://solo.trae.cn",
+      Referer: "https://solo.trae.cn/",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    };
     let lastErr = "";
-    for (const url of [c.modelsUrl, c.mirrorModelsUrl].filter(Boolean)) {
-      const headers = { ...this.headers(account, secrets), referer: url };
-      const r = await httpJson(url, { method: "POST", headers, body })
-        .catch((e) => ({ ok: false, status: 0, message: String((e && e.message) || e) }));
+    const prevCatalog = catalogMap("trae");
+    for (const url of urls) {
+      const r = await httpJson(url, { method: "GET", headers }).catch((e) => ({ ok: false, status: 0, message: String((e && e.message) || e) }));
       if (!r.ok || !r.data) {
-        lastErr = r.status === 401 ? "账号登录态失效（401），请重新登录" : `HTTP ${r.status || 0} ${r.message || ""}`.trim();
+        lastErr = r.status === 401 ? "账号登录态失效（401），请重新登录" : ("HTTP " + (r.status || 0) + " " + (r.message || "")).trim();
         continue;
       }
-      const list = findList(r.data, "config_info_list", 0) || [];
+      const groups = r.data.data && Array.isArray(r.data.data.list) ? r.data.data.list : (Array.isArray(r.data.list) ? r.data.list : []);
+      const group =
+        groups.find((g) => String((g && g.function) || "").toLowerCase() === "solo_agent_remote") ||
+        groups.find((g) => String((g && g.function) || "").toLowerCase() === "solo_agent");
+      if (!group) {
+        lastErr = "官方目录缺少 solo_agent 组（接口结构可能已变更）";
+        continue;
+      }
+      const list = Array.isArray(group.models) ? group.models : [];
       const models = [];
       for (const it of list) {
-        const id = it && (it.config_name || it.configName);
+        const id = it && (it.config_name || it.name);
         if (typeof id !== "string" || !id) continue;
-        // 目录里混着三类「不是模型」的条目（对 38 条实测目录校准）：
-        //   ① is_invisible_to_user = true  → 内部 subagent / 实验通道
-        //      （browser_use_subagent / file_search_agent / sagitta / aquila …）
-        //   ② display_config.display_name 为空 → 租户自定义模型的**占位模板**
-        //      （custom_model_* / summary …），能出现在表里但不可选
-        //   ③ config_switch = false → 已下线开关
-        // 三者的判据一律「缺省 = 可见」（字段缺失/非 false 都放行）：上游删字段时若把整张表
-        // 滤空，用户看到的是「上游没模型了」，而真相是本机判空判错了——这是最坏的失效方式。
-        // 只做布尔严格判定（=== true / === false），不做真值转换，避免 "false" 字符串误杀。
+        if (it.status === false || it.selectable === false) continue;
         if (it.is_invisible_to_user === true || it.isInvisibleToUser === true) continue;
-        const disp = it.display_config || {};
-        const dispName = disp.display_name ?? disp.displayName ?? disp.name ?? "";
-        if (!String(dispName).trim()) continue;
         if (it.config_switch === false || it.configSwitch === false) continue;
-        const name = dispName;
+        let features = it.features;
+        if (typeof features === "string") {
+          try { features = JSON.parse(features); } catch { features = {}; }
+        }
+        const rate = Number(
+          (features && features.consumption_rate && features.consumption_rate.data && features.consumption_rate.data.rate) ??
+            (it.consumption_rate && it.consumption_rate.rate) ??
+            it.rate
+        );
+        let contextLength = 0;
+        const cw = it.context_window_tokens;
+        if (cw && typeof cw === "object" && !Array.isArray(cw)) {
+          for (const v of Object.values(cw)) contextLength = Math.max(contextLength, tokenLimit(v));
+        } else {
+          contextLength = tokenLimit(cw);
+        }
+        if (!contextLength) {
+          const cs = it.context_window_size;
+          if (cs && typeof cs === "object") contextLength = Math.max(tokenLimit(cs.default), tokenLimit(Array.isArray(cs.max) ? cs.max[0] : cs.max));
+          else contextLength = tokenLimit(it.prompt_max_tokens);
+        }
+        let maxOutput = tokenLimit(it.max_tokens);
+        if (!maxOutput && Array.isArray(it.model_detail_list)) {
+          for (const det of it.model_detail_list) maxOutput = Math.max(maxOutput, tokenLimit(det && det.max_tokens));
+        }
+        // Web/Remote models 不返回输出上限：沿用旧目录（没有旧值就记 0，不编造）
+        if (!maxOutput) {
+          const prev = prevCatalog.get(id.toLowerCase());
+          maxOutput = tokenLimit(prev && prev.maxOutputTokens);
+        }
+        let nativeTools = false;
+        try { nativeTools = !!JSON.parse(it.custom_config || "{}").native_function_call; } catch { /* 非 JSON 配置按无工具处理 */ }
+        let reasoningConfig = it.reasoning_effort_config;
+        if (typeof reasoningConfig === "string") {
+          try { reasoningConfig = JSON.parse(reasoningConfig); } catch { reasoningConfig = null; }
+        }
+        const reasoningEffort = reasoningConfig && reasoningConfig.support_thinking !== false && Array.isArray(reasoningConfig.options)
+          ? reasoningConfig.options.map(String).filter(Boolean)
+          : [];
+        const capabilities = {};
+        if (typeof it.multimodal === "boolean") capabilities.images = it.multimodal;
+        if (features && features.reasoning && features.reasoning.enable) capabilities.reasoning = true;
+        if (nativeTools) capabilities.tools = true;
         if (!models.some((m) => m.id === id)) {
-          // 上限取自官方目录条目，字段结构实证自 2026-10-03 抓取的原始响应（详见 traeLimits 注释）。
-          // 取不到写 0（=未知，与 workbuddy 系列静态兜底一致）。**原先无条件写 131072 是凭空捏造**：
-          // 下游客户端（如 DSH 的 pi-ai）会拿它比对用量 —— isContextOverflow 的
-          // 「stop 且 usage.input + cacheRead > contextWindow」分支 —— 把 30 万 token 的正常回答
-          // 误判成 CONTEXT_WINDOW_EXCEEDED，整个 turn 失败（且溢出恢复的摘要请求同样超限，二次失败）。
+          const disp = it.display_config && (it.display_config.display_name || it.display_config.name);
           models.push({
             id,
-            name: String(name),
-            rate: null,
-            capabilities: capsWithImages(sniffImages(it)),
-            ...traeLimits(it),
+            name: String(it.display_name || disp || it.name || id),
+            rate: Number.isFinite(rate) && rate >= 0 ? rate : null,
+            capabilities,
+            contextLength,
+            maxOutputTokens: maxOutput,
+            reasoning_effort: reasoningEffort,
           });
         }
       }
@@ -568,18 +603,9 @@ const trae = {
     return h;
   },
 
-  /** function 字段按模型分发（实测：部分模型仅在
-   *  solo_agent 下可用）；映射表外置 rules/function_map.json，未命中默认 solo_work_lite */
-  functionForModel(model) {
-    const map = rules.get("function_map.json") || {};
-    const direct = map[String(model)];
-    if (direct) return String(direct);
-    const norm = (s) => String(s).toLowerCase().replace(/_/g, "-");
-    const want = norm(model);
-    for (const k of Object.keys(map)) {
-      if (norm(k) === want) return String(map[k]);
-    }
-    return "solo_work_lite";
+  /** 统一走 solo_agent。 */
+  functionForModel() {
+    return "solo_agent";
   },
 
   /** OpenAI body → llm_utils_chat 改写（对齐上游 prepare_llm_chat_body） */
@@ -625,11 +651,8 @@ const trae = {
     } else if (tc && typeof tc === "object") {
       out.tool_choice = (tc.function && tc.function.name) || tcType || "auto";
     }
-    // 必填注入字段
+    // 必填注入字段：config_name 与 model 同值
     out.config_name = configName;
-    // model 与 config_name 同值（实测形态：上游认这两个键同值）。
-    // model_map 第二列（__dev 内部名）保留备用：若上游报 "the model is unknown"，
-    // 切换 TraeWorkAssistant 形态——把本行改为 out.model_name = modelName 并删掉 out.model
     out.model = configName;
     out.stream = true; // 强制流式，非流式本地聚合
     out.function = this.functionForModel(model);
@@ -727,17 +750,10 @@ const trae = {
         } else if (ev === "done" || ev === "turn_completion") {
           emit({ type: "finish", reason: data.finish_reason || data.finishReason || "stop" });
         } else if (ev === "error") {
-          // code:1005 = 积分不足 PlanLimit；4008 = 限流；4001 = 模型在当前 function 通道不可用（不罚号）
+          // 1005 = 积分不足；4008 = 限流；4001 = 模型在当前 function 通道不存在
           sawError = true;
           const code = Number(data.code) || 0;
           if (code === 1005) result.planLimit = true;
-          // 状态映射对齐 trae 的实测表 [4008→429, 4001→404, 20101→502]：
-          // 4001 是「模型在 solo_work_lite 通道不存在」，不是服务端故障——报 502 会让客户端
-          // 以为上游挂了并触发无意义重试；报 404 才符合语义（该模型在此渠道不存在），
-          // 且与通用分类器的 not_found 短冷却/终态口径一致。20101 等其余业务码仍按 502。
-          // 输入过大（prompt is too long 族）优先于 code：上游明写「4001 配
-          // 'prompt is too long' 仍归过大」，那是请求问题而不是通道问题，故排在最前（1005 除外，
-          // 它是额度耗尽、语义与请求长度无关）。判错会顺着换号链个罚整池账号。
           const msgText = String(data.message || data.msg || "");
           const status = code === 1005 ? 402
             : util.isInputTooLargeMsg(msgText) ? 413
@@ -823,7 +839,7 @@ const trae = {
   /** 签到状态：GET+did（cockpit 现行）为主，POST+Cloud-IDE-JWT 兜底；code 1001 = 签到服务对该账号不开放 */
   async checkinStatus(account, secrets) {
     const c = this.cfg();
-    const { deviceId } = deviceIds(account);
+    const { deviceId } = deviceIds(account, checkinDeviceGeneration(account));
     const base = c.checkinBase || "https://api.trae.cn";
     const tries = [
       {
@@ -874,10 +890,10 @@ const trae = {
     return { ok: false, message: lastMsg || "查询签到状态失败" };
   },
 
-  /** 签到领取：code 1001 = 服务不开放；「已签到」文案 = 幂等成功 */
+  /** 签到领取：code 1001 = 服务不开放；「已签到」文案 = 幂等成功；9074 = 设备级限流（调用方换设备号重试） */
   async checkin(account, secrets) {
     const c = this.cfg();
-    const { deviceId } = deviceIds(account);
+    const { deviceId } = deviceIds(account, checkinDeviceGeneration(account));
     const base = c.checkinBase || "https://api.trae.cn";
     const r = await httpJson(`${base}/trae/api/v2/ug/checkin_credits/claim`, {
       method: "POST",
@@ -895,27 +911,33 @@ const trae = {
     }).catch((e) => ({ ok: false, status: 0, data: null, message: String((e && e.message) || e) }));
     const code = Number((r.data && r.data.code) ?? 0);
     const msg = String((r.data && r.data.message) || r.message || "");
-    if (code === 1001) return { ok: true, unavailable: true, message: "签到服务未对该账号开放（官方接口 code 1001）" };
+    if (code === 1001) return { ok: true, unavailable: true, code, message: "签到服务未对该账号开放（官方接口 code 1001）" };
     if (code !== 0 && code !== 200) {
       const already = /已签到|已经签到|already/i.test(msg);
-      return { ok: already, already, message: msg || `签到失败 HTTP ${r.status}` };
+      return { ok: already, already, code, message: msg || `签到失败 HTTP ${r.status}` };
     }
-    if (!r.ok || !r.data) return { ok: false, message: msg || `签到失败 HTTP ${r.status}` };
+    if (!r.ok || !r.data) return { ok: false, code, message: msg || `签到失败 HTTP ${r.status}` };
     // 领取后回查状态拿积分明细
     const st = await this.checkinStatus(account, secrets);
     return { ok: true, already: false, message: (r.data.message || "签到成功"), status: st.ok ? st : null };
   },
 
+  /** 9074 设备级限流：递增设备号代数并返回新代数，调用方据此重发一次 */
+  rotateCheckinDevice(account) {
+    return checkinDeviceGeneration(account) + 1;
+  },
+
   /**
-   * Token 刷新：ExchangeToken（对齐上游：ClientID + RefreshToken + ClientSecret "-"，x-cloudide-token 空串）。
+   * Token 刷新：ExchangeToken（ClientID + RefreshToken + ClientSecret "-"，UserID 与 x-cloudide-token 留空）。
    * 上游多域时依次尝试，避免某个域被墙/维护就整条链路失效；
    * extraOrigins（OAuth 回调 loginHost 的 origin）排最前——官方回调会指定换令牌的域
    */
   async refreshToken(account, secrets, extraOrigins) {
     const c = this.cfg();
     if (!secrets.refreshToken) return { ok: false, message: "无 refreshToken，请重新登录或粘贴" };
+    const startRefresh = String(secrets.refreshToken || "");
     const headers = { "content-type": "application/json", "user-agent": c.userAgent, "x-cloudide-token": "" };
-    const body = JSON.stringify({ ClientID: c.clientId, RefreshToken: secrets.refreshToken, ClientSecret: "-", UserID: "" });
+    const body = JSON.stringify({ ClientID: c.clientId, RefreshToken: startRefresh, ClientSecret: "-", UserID: "" });
     const bases = candidateOrigins(c);
     const candidates = [
       ...(Array.isArray(extraOrigins) ? extraOrigins.filter((x) => x && !bases.includes(x)) : []),
@@ -930,10 +952,18 @@ const trae = {
       if (r.ok && rawToken) {
         const token = String(rawToken).replace(/^Cloud-IDE-JWT\s+/i, "");
         const newRefresh = d.RefreshToken || d.refresh_token || d.refreshToken;
+        // 刷新期间账号可能已被其它进程轮换：返回库里的最新凭证，避免旧结果覆盖
+        try {
+          const cur = account && account.id ? store.getAccount(account.id) : null;
+          const curSecrets = cur ? store.accountSecrets(cur) : null;
+          if (curSecrets && curSecrets.refreshToken && curSecrets.refreshToken !== startRefresh && curSecrets.token) {
+            return { ok: true, token: curSecrets.token, refreshToken: curSecrets.refreshToken, stale: true };
+          }
+        } catch { /* 读取失败按可写处理 */ }
         return {
           ok: true,
           token,
-          refreshToken: newRefresh ? String(newRefresh) : secrets.refreshToken,
+          refreshToken: newRefresh ? String(newRefresh) : startRefresh,
         };
       }
       const errMsg = r.data && (r.data.ResponseMetadata && r.data.ResponseMetadata.Error && r.data.ResponseMetadata.Error.Message);
@@ -1096,9 +1126,7 @@ function makeWorkBuddy(channelId) {
     },
 
     models() {
-      const catalog = [...catalogMap(channelId).values()].map((m) => String(m.id));
-      const legacy = (rules.get("wb_models.json") || {})[channelId];
-      return unionIds(catalog, Array.isArray(legacy) ? legacy : []);
+      return [...catalogMap(channelId).values()].map((m) => String(m.id));
     },
 
     /** 拉取官方模型目录：v3/config 主路（三段式 CLI UA 否则 400 code 12403；含倍率 credits/能力/上下文）
@@ -2114,8 +2142,7 @@ const raccoon = {
   },
 
   models() {
-    const catalog = [...catalogMap("raccoon").values()].map((m) => String(m.id));
-    return unionIds(catalog, [this.cfg().defaultModel]);
+    return [...catalogMap("raccoon").values()].map((m) => String(m.id));
   },
 
   /** 拉取官方模型目录：GET /model_catalog，返回 {default_model, models:[{name,...,params:{context_window,max_tokens},points_multiplier}]}
@@ -3908,8 +3935,7 @@ const zcode = {
   },
 
   models() {
-    const catalog = [...catalogMap("zcode").values()].map((m) => String(m.id));
-    return unionIds(catalog, ["GLM-5.3", "GLM-5.3-Flash", "GLM-5.2"]);
+    return [...catalogMap("zcode").values()].map((m) => String(m.id));
   },
 
   /** 上游模型名大小写敏感（GLM-5.2 大写）：全小写 glm-* 归一为大写族，其余原样 */
@@ -4898,9 +4924,14 @@ function refreshTokenLocked(channel, account, secrets, extraOrigins) {
   return p;
 }
 
-/** 合并模型目录（/v1/models）：canonical id 归并 + 来源标记 + 反向映射融合 + 自定义参数覆盖 + 目录元数据（倍率/能力/上下文） */
-function mergedModels(cfg) {
+/** 合并模型目录（/v1/models）：canonical id 归并 + 来源标记 + 反向映射融合 + 自定义参数覆盖 + 目录元数据（倍率/能力/上下文）。
+ *  opts.enabledOnly = true 时只合并启用中的上游：关闭渠道的模型与来源行整体不出现，
+ *  行级合并字段（倍率/上限/能力）也只取启用来源；对外出口与管理页的模型目录用这个口径，
+ *  请求路径的模型识别仍用全量（关闭渠道要能报 channel_disabled 而不是 unknown_model）。 */
+function mergedModels(cfg, opts) {
   const c = cfg || proxyConfig();
+  const enabledOnly = !!(opts && opts.enabledOnly);
+  const isOn = (ch) => !enabledOnly || channelOn(ch, c);
   const seen = new Map();
   const catMaps = {};
   const perChanCustom = c.modelCustomByChannel || {};
@@ -4915,6 +4946,7 @@ function mergedModels(cfg) {
   // 各渠道对同一模型的写法不同（WorkBuddy `deepseek-v4.1-flash`、Loomy `DeepSeek-V4.1-Flash`），
   // 按忽略大小写合并会造出路由上并不存在的「共享模型」，前端也拿不到各渠道自己的倍率。
   for (const [channel, ad] of Object.entries(ADAPTERS)) {
+    if (!isOn(channel)) continue;
     for (const m of ad.models()) {
       const id = String(m);
       const cur = seen.get(id);
@@ -4930,7 +4962,7 @@ function mergedModels(cfg) {
   const rev = c.modelReverseAliases || {};
   for (const [unifiedId, chMap] of Object.entries(rev)) {
     if (!unifiedId || !chMap || typeof chMap !== "object") continue;
-    const mappedSources = Object.keys(chMap).filter((ch) => ADAPTERS[ch] && reverseAliasTarget(unifiedId, ch, c));
+    const mappedSources = Object.keys(chMap).filter((ch) => ADAPTERS[ch] && isOn(ch) && reverseAliasTarget(unifiedId, ch, c));
     if (!mappedSources.length) continue;
     const existing = seen.get(unifiedId);
     if (existing) {
@@ -4965,6 +4997,7 @@ function mergedModels(cfg) {
     entry.name = entry.id;
     entry.rate = null;
     entry.capabilities = {};
+    entry.reasoning_effort = [];
     entry.contextLength = 0;
     entry.maxOutputTokens = 0;
     // 多源模型按来源顺序取第一个有值条目（catalog 顺序即渠道优先级）
@@ -4987,6 +5020,7 @@ function mergedModels(cfg) {
         contextLength: Number(meta.contextLength) || 0,
         maxOutputTokens: Number(meta.maxOutputTokens) || 0,
         capabilities: meta.capabilities || {},
+        reasoning_effort: Array.isArray(meta.reasoning_effort) ? meta.reasoning_effort : [],
         // 该渠道自己的自定义参数（键 = 该渠道实际模型 id + 渠道）：界面按渠道分列编辑时直接用
         custom: (perChanCustom[lookupId] || {})[channel] || null,
       });
@@ -4994,11 +5028,13 @@ function mergedModels(cfg) {
       if (entry.rate == null && meta.rate != null && !Number.isNaN(Number(meta.rate))) entry.rate = Number(meta.rate);
       // images 走 OR（任一来源支持即支持），避免单渠道的 false 污染共享模型名；其余能力沿用后者覆盖
       entry.capabilities = mergeCapabilities(entry.capabilities, meta.capabilities);
-      // 数值上限取各来源的**最大声明**：渠道的占位值不得压低另一渠道的真实声明。
-      // 例：Trae 目录曾对所有模型硬编码占位 131072（v1.41.2 起改取目录真实限额 traeLimits），
-      // 而 GLM-5.3 的真实窗口是 1000000（workbuddy / workbuddy_ai / zcode 均如此声明），
-      // 按"先到先得"会被 Trae 顶成 131072。
-      // 这两个字段只用于 /v1/models 展示，请求路径各适配器用自己的 meta 兜底，故取最大值安全。
+      // 多源模型取档位并集：各来源支持不同档位时，读顶层字段的客户端不会漏档
+      if (Array.isArray(meta.reasoning_effort) && meta.reasoning_effort.length) {
+        const union = new Set(Array.isArray(entry.reasoning_effort) ? entry.reasoning_effort : []);
+        for (const v of meta.reasoning_effort) if (v) union.add(String(v));
+        entry.reasoning_effort = [...union];
+      }
+      // 数值上限取各来源的最大声明，避免占位值压低真实值；这两个字段只用于 /v1/models 展示。
       const ctxN = Number(meta.contextLength) || 0;
       if (ctxN > entry.contextLength) entry.contextLength = ctxN;
       const outN = Number(meta.maxOutputTokens) || 0;
@@ -5085,17 +5121,16 @@ function modelOwners(model, cfg) {
 }
 
 /** /v1/models 对外可列模型：合并视图减去 disabledModels（口径与请求路径 400 拦截一致）。
- * 只供对外 HTTP 出口用；管理页 proxy_models 仍走 mergedModels 全量 + enabled 标志，否则停用模型无法恢复。 */
+ * 只供对外 HTTP 出口用；管理页 proxy_models 走同一 enabledOnly 口径（停用模型仍由 enabled 标志控制，
+ * 否则停用模型无法恢复）。 */
 function listableModels(cfg) {
   const c = cfg || proxyConfig();
   const disabled = c.disabledModels || [];
   // 逐字比对（与合并键、modelOwners 同口径）：合并视图已按精确写法分行后，
   // 忽略大小写的过滤会把禁用 `deepseek-v4.1-flash` 顺手抹掉 `DeepSeek-V4.1-Flash` 这条独立模型
   const off = new Set((disabled || []).map((s) => String(s)));
-  const on = (ch) => channelOn(ch, c);
-  return mergedModels(c)
-    .filter((m) => (m.sources || []).some(on)) // 全源渠道都被关闭的模型不对外暴露（客户端不再看到）
-    .filter((m) => !off.has(m.id));
+  // enabledOnly：关闭上游的模型与来源整行不出现，行级字段也不取关闭渠道的值
+  return mergedModels(c, { enabledOnly: true }).filter((m) => !off.has(m.id));
 }
 
 /** 双表一致性报告（CHANNELS ↔ ADAPTERS）：两向差集非空即自测失败（tools/proxy-smoke.cjs 断言）。
@@ -5110,7 +5145,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）
@@ -5122,8 +5157,8 @@ module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAlia
   firstByteBudgetMs, estimateInputTokens, FIRST_BYTE_MS, FIRST_BYTE_MAX_MS,
   // 供自测校验模态识别（通用嗅探 / 能力合并 OR 语义）
   sniffImages, mergeCapabilities,
-  // 供自测校验模型上限归一化（缺失/非法 → 0，绝不编造）与 trae 目录结构解析
-  tokenLimit, traeLimits,
+  // 供自测校验模型上限归一化（缺失/非法 → 0）
+  tokenLimit,
   // 供自测校验「逐包积分」的三条映射（到期日历的数据源）：都是纯函数，喂合成样本即可，不出网
   traeCredits, zcodeCreditPackages, lobsterCreditPackages, parseWbResource,
   // 供自测校验「首个 SSE 事件必须解除首字节预算」（issue #107：漏解除 → 长回答被 30s 掐断）：

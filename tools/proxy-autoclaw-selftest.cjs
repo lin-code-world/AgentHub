@@ -339,6 +339,12 @@ async function e2e() {
     const acc = storeMod.getAccount(accId);
     const secrets = storeMod.accountSecrets(acc);
 
+    // 模型目录不再内置：从测试模型清单取 autoclaw 段，供对话路由解析（首请求 X-Request-Model）使用
+    const catSeed = path.join(rules.rulesDir(), "catalog.json");
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    fs.writeFileSync(catSeed, JSON.stringify({ autoclaw: { syncedAt: Date.now(), models: fixture.autoclaw.models } }, null, 2), "utf8");
+    rules.reload("catalog.json");
+
     // —— 1. 对话（静态表路由）：SSE 事件流 + 上游头/body 断言（在假上游内完成）
     const events = [];
     const r = await ad.chat({
@@ -369,7 +375,7 @@ async function e2e() {
     rules.reload("catalog.json");
     assert(JSON.stringify(ad.models()) === JSON.stringify(["glm-5.3-flash"]), "拉取后只认目录");
     // intl 目录隔离：CN 目录段只有 1 条，intl 若误读也会变 1 条；仍为静态兜底 2 条即证明隔离正确
-    assert(adIntl.models().length === models.STATIC_MODELS.length, "intl 不读 CN 目录段（仍用两地共用静态兜底）");
+    assert(adIntl.models().length === 0, "intl 不读 CN 目录段（无目录时为空）");
 
     // —— 3. 余额聚合
     const credits = await ad.queryCredits(acc, secrets);

@@ -96,10 +96,10 @@ async function main() {
     stream: false,
   }, { id: "acc1", uid: "u1" });
   assert(tb.config_name === "DeepSeek-V4-Flash" && tb.model === "DeepSeek-V4-Flash", "模型映射（config_name/model 同值）");
-  assert(tb.stream === true && tb.function === "solo_work_lite" && tb.workspace_id === "e04cdd" && tb.mode === "FunctionCall", "必填注入");
-  // function 字段按模型分发（实测：部分模型仅在 solo_agent 下可用）
+  assert(tb.stream === true && tb.function === "solo_agent" && tb.workspace_id === "e04cdd" && tb.mode === "FunctionCall", "必填注入");
+  // function 统一 solo_agent
   const tAgent = trae.rewriteBody("glm-5.3-flash", { model: "glm-5.3-flash", messages: [{ role: "user", content: "x" }] }, { id: "acc1", uid: "u1" });
-  assert(tAgent.function === "solo_agent", "function 分发：glm-5.3-flash → solo_agent");
+  assert(tAgent.function === "solo_agent", "function 统一 solo_agent");
   assert(Array.isArray(tb.messages[0].content) && tb.messages[0].content[0].type === "text", "内容数组化");
   assert(tb.messages[1].tool_calls.length === 1 && tb.messages[1].tool_calls[0].function_call.name === "fn", "tool_calls 改写 + 空 name 剔除");
   assert(typeof tb.tools[0].function.parameters === "string", "parameters 序列化");
@@ -108,8 +108,8 @@ async function main() {
   assert(th.authorization === "Cloud-IDE-JWT jwt123" && th["x-ide-token"] === "jwt123" && th["x-device-id"], "Trae 认证头");
 
   const wb = adapters.get("workbuddy");
-  const wbody = wb.rewriteBody("gpt-5", {
-    model: "gpt-5",
+  const wbody = wb.rewriteBody("hy3", {
+    model: "hy3",
     messages: [
       { role: "system", content: "You are Claude Code, Anthropic's official CLI.", cc_trace: "x", "x-anthropic-billing": 1 },
       { role: "user", content: "hi" },
@@ -142,8 +142,8 @@ async function main() {
   const wDeep = wb.rewriteBody("deepseek-v3.2", { model: "deepseek-v3.2", messages: [{ role: "user", content: "hi" }] });
   assert(wDeep.thinking && wDeep.thinking.type === "enabled" && wDeep.reasoning_effort === "high", "deepseek thinking 注入");
   // 连续同角色合并不丢多模态 part（修复：压扁数组会丢 image_url）
-  const wMulti = wb.rewriteBody("gpt-5", {
-    model: "gpt-5",
+  const wMulti = wb.rewriteBody("hy3", {
+    model: "hy3",
     messages: [
       { role: "user", content: [{ type: "text", text: "看图" }, { type: "image_url", image_url: { url: "http://img/x.png" } }] },
       { role: "user", content: "再看这张" },
@@ -151,8 +151,8 @@ async function main() {
   });
   assert(wMulti.messages.length === 2 && Array.isArray(wMulti.messages[0].content) && wMulti.messages[0].content.some((p) => p.type === "image_url"), "合并不丢多模态 part");
   // 工具结果组重排（repackToolResultBlocks）：夹在 tool_calls 与 tool 结果之间的消息挪到组后
-  const wPack = wb.rewriteBody("gpt-5", {
-    model: "gpt-5",
+  const wPack = wb.rewriteBody("hy3", {
+    model: "hy3",
     messages: [
       { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }] },
       { role: "user", content: "夹在中间的通知" },
@@ -232,15 +232,24 @@ async function main() {
   assert(zText.includes("sys-directive") && zText.includes("legacy-result"), "zcode：归一后 developer 并入 system、legacy function 不再被丢弃");
   console.log("role layer ok（developer→system / function→tool|user / 幂等 / 非法输入不抛 / qoder+zcode 静默丢弃已堵）");
 
+  // 模型目录不再内置：从测试模型清单读入，供跨渠道归属 / 零重名 / 路由解析断言使用
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    const cat = {};
+    for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
+
   assert(adapters.mergedModels().length > 5, "合并模型目录");
   const rawCatPawModels = adapters.channelModelIds("catpaw");
   assert(rawCatPawModels.includes("kimi-k3") && !rawCatPawModels.includes("AgentHub-1.0"), "反向映射候选只含 CatPaw 原始模型，不含统一请求名");
   const selfMapCfg = { modelReverseAliases: { "AgentHub-1.0": { catpaw: "AgentHub-1.0", lobster: "glm-5.3" } } };
   assert(adapters.resolveModelTarget("AgentHub-1.0", "catpaw", selfMapCfg) === null, "历史自映射不得被当成 CatPaw 可转发目标");
   assert(!adapters.modelOwners("AgentHub-1.0", selfMapCfg).includes("catpaw"), "自映射渠道不得进入反向映射归属");
-  assert(adapters.modelOwners("gpt-5").length === 1 && adapters.modelOwners("gpt-5")[0] === "workbuddy", "gpt-5 归属 CN workbuddy（AI 区目录已无此型号）");
-  assert(adapters.modelOwners("deepseek-v4.1-flash").length === 1 && adapters.modelOwners("deepseek-v4.1-flash")[0] === "workbuddy_ai", "deepseek-v4.1-flash 归属国际版 workbuddy_ai");
-  assert(adapters.modelOwners("DeepSeek-V4-Flash")[0] === "trae", "单源模型归属（大写写法走 trae）");
+  assert(adapters.modelOwners("hy3").length === 1 && adapters.modelOwners("hy3")[0] === "workbuddy", "hy3 归属 CN workbuddy（独有）");
+  assert(adapters.modelOwners("deepseek-v4.1-flash").includes("workbuddy_ai") && adapters.modelOwners("deepseek-v4.1-flash").includes("trae"), "deepseek-v4.1-flash 归属 trae + 国际版 workbuddy_ai");
+  assert(adapters.modelOwners("DeepSeek-V4-Pro-Official").includes("trae"), "Trae solo_agent 目录模型归属 trae");
   assert(adapters.modelOwners("deepseek-v4-flash")[0] === "lobster", "严格匹配：小写写法归 lobster");
 
   // ===== 商汤小浣熊（raccoon 渠道）离线断言 =====
@@ -269,12 +278,7 @@ async function main() {
     // 不设兜底（模型清单应来自拉取目录）。此前这里对两者都断言 ≥14，等于把「intl 凭空
     // 宣称拥有 CN 专属模型」固化成契约——modelOwners 据此把请求 failover 到无账号的
     // intl 渠道，上游回 400 code=11102（幽灵模型）。
-    if (id === "qoder") {
-      assert(ad.models().length >= 14, `${id} 静态兜底模型表 ≥14`);
-    } else {
-      assert(Array.isArray(ad.models()), `${id} models() 返回数组`);
-      assert(ad.models().length === 0, `${id} 不得继承 CN 静态兜底（无目录时清单为空）`);
-    }
+    assert(Array.isArray(ad.models()), `${id} models() 返回数组`);
     // headers() 必须**不含** Authorization：签名由 chat() 内 wasm 现场产出，
     // 静态头里出现 Authorization 即为「直接套用 WB 静态头组」的错误实现
     const h = ad.headers();
@@ -367,7 +371,7 @@ async function main() {
   assert(lbCfg.chatUrl === "https://lobsterai-server.youdao.com/api/proxy/v1/chat/completions", "lobster 对话端点为原生 OpenAI 路径");
   assert(lbCfg.checkinPlacement === "desktop_sidebar", "lobster 签到活动槽 = desktop_sidebar");
   assert(typeof lbCfg.versionUrl === "string" && lbCfg.versionUrl.includes("api-overmind.youdao.com"), "lobster 版本号来源为官方更新接口");
-  assert(lb.models().length >= 16, `lobster 静态模型表 ≥16（实际 ${lb.models().length}）`);
+  assert(Array.isArray(lb.models()) && lb.models().length >= 2, `lobster 目录非空（实际 ${lb.models().length}）`);
   assert(adapters.modelOwners("deepseek-v4-pro").includes("lobster"), "deepseek-v4-pro 归属含 lobster");
   // 陷阱①：非流式请求必须被改写为 stream=true，否则上游 500
   const lbBody = lb.rewriteBody("deepseek-v4-pro", { model: "deepseek-v4-pro", messages: [{ role: "user", content: "hi" }], stream: false, conversation_id: "x" });
@@ -397,7 +401,7 @@ async function main() {
   assert(adapters.modelOwners("deepseek-ai/DeepSeek-V4.1-Flash")[0] === "modelscope", "deepseek-ai/DeepSeek-V4.1-Flash 归属 modelscope");
   // 模型零重名（无路由歧义）：静态目录全名带 org 前缀，与既有渠道天然不撞
   const msModels = msAd.models();
-  assert(msModels.length >= 20, `modelscope 静态模型表 ≥20（实际 ${msModels.length}）`);
+  assert(msModels.length >= 1, `modelscope 目录非空（实际 ${msModels.length}）`);
   for (const other of ["trae", "workbuddy", "workbuddy_ai", "raccoon", "zcode", "lobster", "qoder"]) {
     const om = adapters.get(other).models();
     const clash = msModels.filter((m) => om.includes(m));
@@ -434,7 +438,7 @@ async function main() {
 
   // 6. 统计链路
   store.insertUsage({ reqId: "r1", keyId: k.id, keyName: "自测", channel: "trae", accountId: aid, accountName: "测试号", model: "deepseek-v4-flash", promptTokens: 10, completionTokens: 20, ttftMs: 100, latencyMs: 500, status: 200 });
-  store.insertUsage({ reqId: "r2", keyId: k.id, keyName: "自测", channel: "workbuddy", model: "gpt-5", promptTokens: 5, completionTokens: 5, ttftMs: 50, latencyMs: 200, status: 429, error: "rate limited" });
+  store.insertUsage({ reqId: "r2", keyId: k.id, keyName: "自测", channel: "workbuddy", model: "hy3", promptTokens: 5, completionTokens: 5, ttftMs: 50, latencyMs: 200, status: 429, error: "rate limited" });
   const today = store.statsToday();
   assert(today.req === 2 && today.tokens === 40 && today.successRate === 50, "今日指标");
   assert(store.statsTrend(7).length === 7, "7 日趋势桶");
@@ -487,7 +491,7 @@ async function main() {
   let r = await fetch(base + "/healthz");
   assert(r.status === 503, "无健康渠道 healthz 503（唯一账号冷却中）— 实际: " + r.status);
   r = await fetch(base + "/v1/models");
-  assert(r.ok && (await r.json()).data.length > 5, "/v1/models");
+  assert(r.ok && (await r.json()).data.length >= 1, "/v1/models 返回已启用渠道的模型");
   r = await fetch(base + "/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert(r.status === 401, "无 Key 401");
   const errBody = await r.json();
@@ -571,8 +575,8 @@ async function main() {
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.end(
-          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"WB"},"finish_reason":null}]}\n\n' +
-          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"content":" ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n' +
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"hy3","choices":[{"index":0,"delta":{"role":"assistant","content":"WB"},"finish_reason":null}]}\n\n' +
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"hy3","choices":[{"index":0,"delta":{"content":" ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n' +
           "data: [DONE]\n\n"
         );
         return;
@@ -584,7 +588,7 @@ async function main() {
   await new Promise((r2) => fake.listen(19530, "127.0.0.1", r2));
   // 规则热加载：把上游指到假服务（同时验证 rules 外置热加载链路）
   const headersPath = path.join(rules.rulesDir(), "headers.json");
-  const headersBackup = fs.readFileSync(headersPath, "utf8");
+  const headersBackup = JSON.stringify(rules.DEFAULTS["headers.json"], null, 2);
   const headersCfg = JSON.parse(headersBackup);
   headersCfg.trae.chatUrl = "http://127.0.0.1:19530/trae/chat";
   headersCfg.trae.mirrorChatUrl = "";
@@ -596,7 +600,7 @@ async function main() {
   const badTrae = store.addAccount({ channel: "trae", uid: "bad", name: "坏号", token: "bad-token", source: "paste", expiresAt: Date.now() + 3600000 });
   const goodTrae = store.addAccount({ channel: "trae", uid: "good", name: "好号", token: "good-token", source: "paste", expiresAt: Date.now() + 7200000 });
   const e2eDisabledFlag = [];
-  const e2eSettings = () => ({ port: 19529, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false, humanizeJitter: false, disabledModels: e2eDisabledFlag, modelFallback: { "not-exist-model": "DeepSeek-V4-Flash" }, channelCooldownMs: 800, channelCooldownCapMs: 3200 });
+  const e2eSettings = () => ({ port: 19529, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false, humanizeJitter: false, disabledModels: e2eDisabledFlag, modelFallback: { "not-exist-model": "qwen3.8-max" }, channelCooldownMs: 800, channelCooldownCapMs: 3200 });
   const sr2 = await server.start(e2eSettings);
   assert(sr2.ok, "E2E 网关启动: " + (sr2.message || ""));
   const base2 = "http://127.0.0.1:19529";
@@ -608,7 +612,7 @@ async function main() {
     });
 
   // 10.1 流式：坏号 1005 → 自动换好号，客户端无感（error chunk 不下发）
-  let rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  let rr = await call({ model: "qwen3.8-max", stream: true, messages: [{ role: "user", content: "hi" }] });
   assert(rr.status === 200, "流式 200: " + rr.status);
   const sseText = await rr.text();
     assert(sseText.includes('"content":"Hello"') && sseText.includes('"content":" world"'), "SSE 内容来自好号");
@@ -620,7 +624,7 @@ async function main() {
   assert(usageRows[0].status === 200 && usageRows[0].accountName === "好号" && usageRows[0].promptTokens === 7, "流水记录好号 + usage");
 
   // 10.2 非流式：本地聚合
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: false, messages: [{ role: "user", content: "hi" }] });
   const aggBody = await rr.json();
   assert(aggBody.object === "chat.completion" && aggBody.choices[0].message.content === "Hello world", "非流式聚合: " + JSON.stringify(aggBody).slice(0, 120));
   assert(aggBody.usage.total_tokens === 12, "非流式 usage");
@@ -637,7 +641,7 @@ async function main() {
   // 10.4 WB：402 → 自动换号 + 头红线（绝不带 X-Refresh-Token）
   const badWb = store.addAccount({ channel: "workbuddy", uid: "wbbad", name: "WB坏号", token: "wb-bad", source: "paste", expiresAt: Date.now() + 3600000 });
   const goodWb = store.addAccount({ channel: "workbuddy", uid: "wbgood", name: "WB好号", token: "wb-good", source: "paste", expiresAt: Date.now() + 7200000 });
-  rr = await call({ model: "gpt-5", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "hy3", stream: true, messages: [{ role: "user", content: "hi" }] });
   const wbText = await rr.text();
   assert(rr.status === 200 && wbText.includes('"content":"WB"') && wbText.includes("data: [DONE]"), "WB 换号后流式输出: " + wbText.slice(0, 100));
   assert(store.getAccount(badWb).status === "exhausted", "402 → WB 坏号标耗尽");
@@ -648,7 +652,7 @@ async function main() {
   // X-Domain 与 X-No-Department-Info 互斥（无 domain 时显式占位，不并存）
   assert(seenHeaders.wb["x-no-department-info"] === "1" && !seenHeaders.wb["x-domain"], "无 domain → X-No-Department-Info 占位");
   store.updateAccount(goodWb, { meta: { domain: "example.corp", enterpriseId: "ent-1" } });
-  rr = await call({ model: "gpt-5", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "hy3", stream: true, messages: [{ role: "user", content: "hi" }] });
   await rr.text();
   assert(seenHeaders.wb["x-domain"] === "example.corp" && !seenHeaders.wb["x-no-department-info"], "有 domain → X-Domain 真值");
   assert(seenHeaders.wb["x-enterprise-id"] === "ent-1", "X-Enterprise-Id 来自 meta");
@@ -660,7 +664,7 @@ async function main() {
   headersCfg.trae.chatUrl = "http://127.0.0.1:19530/trae/broken";
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: true, messages: [{ role: "user", content: "hi" }] });
   const brokenText = await rr.text();
   assert(rr.status === 200 && brokenText.includes('"content":"Hello"'), "断流场景 200（已输出后收尾）");
   assert((brokenText.match(/content":"Hello"/g) || []).length === 1, "已输出内容不重复（不换号重发）: " + brokenText.slice(0, 200));
@@ -672,7 +676,7 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   const misCfg = store.addAccount({ channel: "trae", uid: "mis", name: "配置错号", token: "mis-token", source: "paste", expiresAt: Date.now() + 7200000 });
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: false, messages: [{ role: "user", content: "hi" }] });
   // 状态 404 而非 502：4001 的语义是「该模型在当前 function 通道不可用」（实测
   // trae 的实测映射表 [4008→429, 4001→404, 20101→502] 逐条钉住）。
   // 报 502 会让客户端以为上游故障并盲目重试同一个必死的模型；404 才让客户端换模型。
@@ -684,7 +688,7 @@ async function main() {
   headersCfg.trae.chatUrl = "http://127.0.0.1:19530/trae/toolarge";
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: false, messages: [{ role: "user", content: "hi" }] });
   assert(rr.status === 413, "输入过大按 413 收尾: " + rr.status);
   assert(store.getAccount(misCfg).status === "online", "输入过大不罚号（账号保持 online）");
   // 10.4b 的夹具账号用完即回收：它 creditsAt=0（未知余额）不参与零余额跳过，
@@ -703,13 +707,13 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   for (let i = 1; i <= 2; i++) {
-    rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+    rr = await call({ model: "qwen3.8-max", stream: false, messages: [{ role: "user", content: "hi" }] });
     assert(rr.status >= 500, `第 ${i} 次 5xx 按上游错误收尾（状态码原样透传）: ` + rr.status);
     await rr.text();
     assert(store.getAccount(srvAcc).status === "online", `第 ${i} 次 server 错误不罚号（网络抖动不再打空号池）`);
   }
   await new Promise((r) => setTimeout(r, 1200)); // 等 800ms 渠道降级过期，让第三次真实命中账号
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: false, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: false, messages: [{ role: "user", content: "hi" }] });
   await rr.text();
   assert(store.getAccount(srvAcc).status === "cooling", "连续 3 次 server 错误才熔断");
   assert(store.getAccount(srvAcc).cool_until > Date.now() + 29 * 60000, "熔断档位 30 分钟起（指数封顶 6h）");
@@ -723,7 +727,7 @@ async function main() {
   fs.writeFileSync(headersPath, JSON.stringify(headersCfg, null, 2));
   rules.reload("headers.json");
   flaky429Hits = 0;
-  rr = await call({ model: "DeepSeek-V4-Flash", stream: true, messages: [{ role: "user", content: "hi" }] });
+  rr = await call({ model: "qwen3.8-max", stream: true, messages: [{ role: "user", content: "hi" }] });
   const retryText = await rr.text();
   assert(rr.status === 200 && retryText.includes('"content":"Hello"'), "429 经同号退避重试后成功: " + rr.status);
   assert(flaky429Hits === 2, "上游确实被打了两次（首枪 429 + 退避重放）: " + flaky429Hits);
@@ -758,7 +762,7 @@ async function main() {
   assert(rr.status === 200 && fbText.includes('"content":"Hello"'), "未知模型经回退链成功: " + rr.status);
   assert(fbText.includes('"model":"not-exist-model"'), "响应模型字段保持请求值（契约不变）");
   const fbRow = store.recentRequests(1)[0];
-  assert(fbRow.error === "fallback→DeepSeek-V4-Flash", "流水备注回退命中: " + fbRow.error);
+  assert(fbRow.error === "fallback→qwen3.8-max", "流水备注回退命中: " + fbRow.error);
 
   // 10.9 模型禁用：直接 400 model_disabled（disabledModels 每请求读设置热生效，无需重启）
   e2eDisabledFlag.push("glm-4.6");
