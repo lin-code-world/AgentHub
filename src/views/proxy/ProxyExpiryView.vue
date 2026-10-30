@@ -455,7 +455,7 @@ onUnmounted(() => {
   border-collapse: collapse;
 }
 .expiry-tbl th {
-  text-align: left;
+  text-align: center;
   font-weight: 500;
   color: var(--text-3);
   padding: 6px 10px;
@@ -465,14 +465,15 @@ onUnmounted(() => {
   padding: 6px 10px;
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.15));
   font-size: 13px;
+  text-align: center;
 }
+/* 本页字段值按用户要求全部居中：num 选择器保留是为了显式压过全局 th.num/td.num 的右对齐规范
+   （scoped .expiry-tbl th[data-v] 特异性高于全局，不写会被压回右对齐） */
 .expiry-tbl td.num {
-  text-align: right;
+  text-align: center;
 }
-/* 数值列表头与 td.num 同侧（全站对齐规范）。必须写在本组件里：scoped 的
-   .expiry-tbl th[data-v] 特异性高于全局 th.num，不补这条表头会被压回左对齐 */
 .expiry-tbl th.num {
-  text-align: right;
+  text-align: center;
 }
 .src-ch {
   font-size: 12px;

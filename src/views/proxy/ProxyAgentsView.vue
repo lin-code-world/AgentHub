@@ -1717,6 +1717,9 @@ onUnmounted(() => {
           <!-- 工具栏：只属于当前渠道（调度策略 / 签到或加油包 / 自动签到 / 刷新），与其他渠道互不关联；
                策略与成本档两个下拉已收进「调度策略」小弹窗 -->
           <span class="panel-tools">
+            <el-tooltip content="查看当前渠道的操作日志（跳转后按本渠道筛选）" placement="top">
+              <button class="btn btn-sm btn-log" @click="gotoLog"><i class="ph ph-scroll"></i>日志</button>
+            </el-tooltip>
             <el-tooltip content="渠道账号调度策略与成本档位" placement="top">
               <button class="btn btn-sm" :disabled="!switchableChannels.length" @click="openStrategy(ch)">调度策略</button>
             </el-tooltip>
@@ -1805,9 +1808,6 @@ onUnmounted(() => {
                   @click="zcodeRollback"
                 >切号回滚</button>
               </span>
-            </el-tooltip>
-            <el-tooltip content="查看当前渠道的操作日志（跳转后按本渠道筛选）" placement="top">
-              <button class="btn btn-sm" @click="gotoLog"><i class="ph ph-scroll"></i>日志</button>
             </el-tooltip>
             <button class="btn btn-sm btn-primary" :disabled="refreshingChannel || !switchableChannels.length" @click="refreshCurrentChannel">
               {{ refreshingChannel ? "刷新中…" : "刷新" }}
@@ -3391,6 +3391,12 @@ onUnmounted(() => {
   border-color: var(--accent-line);
   background: var(--accent-dim);
   color: var(--accent-strong);
+}
+/* 日志按钮：签到完成态同款形态（描边浅底），主色用黄（--warn，随主题） */
+.btn-log {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
 }
 .btn-auto-on {
   border-color: var(--accent-line);

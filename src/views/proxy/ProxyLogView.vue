@@ -408,7 +408,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  align-items: flex-end;
+  align-items: center;
   margin-bottom: 14px;
   padding: 12px 14px;
   background: var(--glass-bg);
