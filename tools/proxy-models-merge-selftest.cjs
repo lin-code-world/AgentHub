@@ -38,6 +38,7 @@ function installTsLoader() {
 
 installTsLoader();
 const { hiddenByRate } = require(path.join(ROOT, "src", "views", "proxy", "rateGate.ts"));
+const { mergeAliasRows } = require(path.join(ROOT, "src", "views", "proxy", "channelRows.ts"));
 
 /** 沙箱目录用完即删：sqlite / watcher 句柄可能仍占用目录，删不掉不影响退出码 */
 function cleanup() {
@@ -239,6 +240,21 @@ function main() {
     for (const k of Object.keys(adapters.ADAPTERS)) delete adapters.ADAPTERS[k];
     Object.assign(adapters.ADAPTERS, orig3);
   }
+
+  console.log("\n[9] 渠道页别名合并");
+  const aliasModels = [
+    { id: "deepseek-v4.1-flash", sources: ["trae", "workbuddy", "loomy"] },
+    { id: "DeepSeek-V4.1-Flash", sources: ["loomy"] },
+  ];
+  const revAlias = { "deepseek-v4.1-flash": { loomy: "DeepSeek-V4.1-Flash" } };
+  eq(mergeAliasRows(aliasModels, "loomy", revAlias), { visibleIds: ["DeepSeek-V4.1-Flash"], aliasOf: { "DeepSeek-V4.1-Flash": "deepseek-v4.1-flash" } }, "渠道页合并别名行");
+  eq(mergeAliasRows(aliasModels, "", revAlias), { visibleIds: ["deepseek-v4.1-flash", "DeepSeek-V4.1-Flash"], aliasOf: {} }, "全部视图不合并");
+  eq(
+    mergeAliasRows([aliasModels[0], { id: "DeepSeek-V4.1-Flash", sources: ["trae"] }], "loomy", revAlias),
+    { visibleIds: ["deepseek-v4.1-flash", "DeepSeek-V4.1-Flash"], aliasOf: {} },
+    "目标行不属于当前渠道时不合并"
+  );
+  eq(mergeAliasRows([aliasModels[0]], "loomy", revAlias), { visibleIds: ["deepseek-v4.1-flash"], aliasOf: {} }, "目标行不存在时不合并");
 
   console.log(`\n结果：${pass} 通过，${fail} 失败`);
   if (fail) {
