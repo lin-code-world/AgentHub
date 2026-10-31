@@ -49,6 +49,17 @@ function mapModelRules(list) {
 
 // ===== validateRelease =====
 
+/** 一条映射后的规则是否给出了真实能力值：三选一即可。
+ *  为什么用"至少一条"而不是"每条都要"：官方数据里就有只补单项能力的规则
+ *  （如 .*glm-5\.3-flash.* 只给 inputFormat，窗口/上限沿用它前面那条通用规则），全部要求会被误拒。
+ *  为什么要这条判据：条目有 modelMatch、但缺 config（或上游改了 properties 的层级）时，
+ *  映射后 re 仍在、三项能力全 undefined；这种 release 的 revision 一样可能很大，一旦采纳
+ *  会把内置副本整份压住，所有模型能力退化成默认值——后果与"空数组"完全一样。 */
+function hasAnyCapability(rule) {
+  if (!rule) return false;
+  return rule.contextWindow !== undefined || rule.maxOutputTokens !== undefined || rule.fmt !== null;
+}
+
 /** 校验 release JSON 并映射为统一 ModelRule[] 形状。
  *  规则映射口径通过 mapModelRules() 复用——本模块内唯一映射源。 */
 function validateRelease(json) {
@@ -74,6 +85,10 @@ function validateRelease(json) {
   // 条目全无 modelMatch 时映射结果为空，与空数组同病，拒绝并说清是哪一种
   if (rules.length === 0) {
     return { ok: false, reason: `modelRules 全部无效（${list.length} 条均无可用的 modelMatch）` };
+  }
+  // 映射后一条能力值都没有：与空数组同后果，但与上面两种是不同病，理由单独一条便于诊断
+  if (!rules.some(hasAnyCapability)) {
+    return { ok: false, reason: `modelRules 没有一条规则给出能力值（${rules.length} 条均无 contextWindow / maxOutputTokens / inputFormat）` };
   }
   return {
     ok: true,
@@ -178,9 +193,11 @@ function resolveModelRules(deps) {
   // label 只是 stored / clientDir[i] / clientFile[i] / builtin 这类序号，两处 deps 指向不同文件、
   // 但 mtime 恰好落在同一毫秒时，只拼 label+mtime 会让第二次解析直接吃第一次的结论。
   const cacheKeyParts = [];
+  // 四支（有文件 / 无文件 / stat 成功 / stat 失败）一律按 `label:file:状态:时间戳` 同一形状拼接，
+  // 不写特例：key 只有一种拼法，后人不必判断哪支特殊
   const pushStat = (label, file) => {
     if (!file) {
-      cacheKeyParts.push(`${label}:missing`);
+      cacheKeyParts.push(`${label}:${file}:missing`);
       return;
     }
     try {

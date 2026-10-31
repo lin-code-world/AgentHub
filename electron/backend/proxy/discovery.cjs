@@ -1777,10 +1777,13 @@ async function saveQoderAccount(channel, cred) {
 // ZCode 登录的 provider 口径：只认 zai / bigmodel（Z.ai 与 BigModel 两家的授权页与凭据形态不同，
 // 选错会在兑换环节按错误的一方取值而失败）。调用方（界面二选一）传的值缺失或非法时，
 // 回落配置默认 rules.zcode.oauthProvider，再兜底 zai。
+// 配置里的默认值本身也要过白名单：手上配置文件可能是手改/旧版本留下的脏值，不能原样透传出去。
 const ZCODE_PROVIDERS = ["zai", "bigmodel"];
 function resolveZcodeProvider(value, c) {
   const v = String(value || "");
-  return ZCODE_PROVIDERS.includes(v) ? v : String((c && c.oauthProvider) || "zai");
+  if (ZCODE_PROVIDERS.includes(v)) return v;
+  const fallback = String((c && c.oauthProvider) || "");
+  return ZCODE_PROVIDERS.includes(fallback) ? fallback : "zai";
 }
 
 async function beginZcodeOAuth(channel, onDone, opts) {

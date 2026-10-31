@@ -468,6 +468,50 @@ function testEmptyRulesRejected(t, zb) {
   }
 }
 
+// ===== 规则非空、但没有一条给出能力值时必须拒绝（Critical 同类路径） =====
+// 为什么这条不能省：条目有 modelMatch、缺 config 时映射后 re 仍在、能力字段全 undefined，
+// 这种 release 的 revision 一样能很大，一旦采纳照样把内置副本整份压住，能力全部退化。
+function testNoCapabilityRejected(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-nocap-"));
+  const storedFile = paths.join(dir, "proxy", "zcode-builtin.json");
+  const builtinFile = paths.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+  const deps = { storedFile, clientDirs: [], builtinFile };
+  try {
+    fsSync.mkdirSync(paths.dirname(storedFile), { recursive: true });
+    fsSync.writeFileSync(storedFile, JSON.stringify(rel(43)), "utf8");
+    zb.invalidateModelRules();
+
+    // ① 校验层：只有 match、没有 config 的条目（含"空格 match"这种变体）一律拒绝
+    const noCfgR = zb.validateRelease(relWith(100, [{ modelMatch: " " }]));
+    eq(noCfgR.ok, false, `${t}108 有 modelMatch 但无 config（无能力字段）→ 校验拒绝`);
+    ok(/能力值/.test(noCfgR.reason || ""), `${t}109 拒绝理由指明"没有一条规则给出能力值"`);
+    eq(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*" }])).ok, false, `${t}110 带真实模型名但同样无 config → 校验拒绝`);
+    // 多条目全无能力同样拒绝（不是"只要条数够就放行"）
+    eq(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*" }, { modelMatch: ".*doubao.*" }])).ok, false, `${t}111 多条都无能力字段 → 校验拒绝`);
+
+    // ② 反向：只要有一条规则给出任意一项能力就算有效（官方数据里就有只补单项的规则）
+    ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { properties: { contextWindow: 1000 } } }])).ok === true, `${t}112 仅 contextWindow 一条能力 → 校验通过`);
+    ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { optionSpecs: { maxOutputTokens: { max: 4096 } } } }])).ok === true, `${t}113 仅 maxOutputTokens 一条能力 → 校验通过`);
+    ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { properties: { inputFormat: { supportsImage: true } } } }])).ok === true, `${t}114 仅 inputFormat 一条能力 → 校验通过`);
+    // 混在里面的纯 match 条目不该连累整份 release（只要求"至少一条"）
+    ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*" }, { modelMatch: ".*doubao.*", config: { properties: { contextWindow: 1000 } } }])).ok === true, `${t}115 有一条给能力、另一条只给 match → 整体仍通过`);
+
+    // ③ 落盘层兜底：即便绕过校验，也不写、文件一字未变，原有能力值不变
+    const before = fsSync.readFileSync(storedFile, "utf8");
+    ok(zb.writeStoredRelease(storedFile, relWith(100, [{ modelMatch: ".*glm.*" }]), [43]) === false, `${t}116 revision 很大但规则都不给能力 → 拒绝落盘`);
+    ok(zb.writeStoredRelease(storedFile, relWith(100, [{ modelMatch: " " }]), [43]) === false, `${t}117 空格 match 无 config → 拒绝落盘`);
+    eq(fsSync.readFileSync(storedFile, "utf8"), before, `${t}118 被拒时落盘文件内容一字未变`);
+    const res = zb.resolveModelRules(deps);
+    eq(res && res.revision, 43, `${t}119 被拒后解析仍拿到原 revision 43`);
+    const glm = pickRule(zb.cachedModelRules(), "GLM-5.3");
+    eq(glm && glm.contextWindow, 1000000, `${t}120 兜底缓存 GLM-5.3 contextWindow 仍是 1000000`);
+    eq(glm && glm.maxOutputTokens, 128000, `${t}121 兜底缓存 GLM-5.3 maxOutputTokens 仍是 128000`);
+  } finally {
+    zb.invalidateModelRules();
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // ===== 缓存 key 必须带文件路径（不同来源指向不同文件、mtime 同毫秒不能串味） =====
 function testCacheKeyIncludesPath(t, zb) {
   const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-cachekey-"));
@@ -553,6 +597,7 @@ function testDefaultRulesDeps(t, zb) {
     await testRemoteFetch("fetchRemoteRelease ", zb);
     await testUpdater("updater ", zb);
     await testEmptyRulesRejected("emptyRules ", zb);
+    await testNoCapabilityRejected("noCapability ", zb);
     await testCacheKeyIncludesPath("cacheKey ", zb);
     await testDefaultRulesDeps("defaultRulesDeps ", zb);
   } catch (e) {

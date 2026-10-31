@@ -825,13 +825,14 @@ async function main() {
   await T("T33 三来源优先级：revision 大的赢", () => {
     const storedNewer = path.join(SANDBOX, "stored-newer.json");
     const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
-    // 写一份 revision=99 的假 stored
+    // 写一份 revision=99 的假 stored（规则必须带能力字段：无任何能力值的 release 会被校验层
+    // 当作不可用来源跳过，那是"更新失败不得弄坏已有数据"的判据，见 zcodeBuiltin.validateRelease）
     fs.writeFileSync(
       storedNewer,
       JSON.stringify({
         schemaVersion: 1,
         revision: 99,
-        config: { modelConfigRules: { modelRules: [{ modelMatch: ".*x", config: {} }] } },
+        config: { modelConfigRules: { modelRules: [{ modelMatch: ".*x", config: { properties: { contextWindow: 111111 } } }] } },
       }),
       "utf8"
     );

@@ -136,6 +136,10 @@ async function main() {
   ok("null → 回落配置默认 bigmodel", () => discovery.resolveZcodeProvider(null, { oauthProvider: "bigmodel" }) === "bigmodel");
   ok('配置也缺失 → 兜底 "zai"', () => discovery.resolveZcodeProvider(undefined, undefined) === "zai");
   ok('配置文件段为空对象 → 兜底 "zai"', () => discovery.resolveZcodeProvider("weird", {}) === "zai");
+  // 配置里的默认值本身非法时也不能原样透传（手改配置 / 旧版本脏值），同样回落 zai
+  ok('配置默认值本身非法（weird）→ 回落 "zai"', () => discovery.resolveZcodeProvider("x", { oauthProvider: "weird" }) === "zai");
+  ok('配置默认值大小写变体（ZAI）→ 回落 "zai"', () => discovery.resolveZcodeProvider("x", { oauthProvider: "ZAI" }) === "zai");
+  ok("配置默认值合法（bigmodel）→ 用它", () => discovery.resolveZcodeProvider("x", { oauthProvider: "bigmodel" }) === "bigmodel");
 
   console.log("");
   console.log(`结果：pass=${pass} fail=${fail}`);
