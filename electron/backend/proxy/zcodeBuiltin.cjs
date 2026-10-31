@@ -56,7 +56,7 @@ function validateRelease(json) {
   if (!Number.isInteger(json.revision) || json.revision <= 0) {
     return { ok: false, reason: `revision 非正整数（实际 ${json.revision}）` };
   }
-  const list = ((((json.config || {}).modelConfigRules) || {}).modelRules);
+  const list = ((json.config || {}).modelConfigRules || {}).modelRules;
   if (!Array.isArray(list)) {
     return { ok: false, reason: "modelRules 非数组" };
   }
@@ -96,11 +96,140 @@ function buildClientConfigsUrl(baseUrl, appVersion, platform) {
 
 // ===== resolveModelRules =====
 
-/** 从多来源解析模型规则：deps = { storedFile, clientDirs, builtinFile }。
- *  本任务只暴露签名占位——IO（读 stored / builtin / client 目录）与联网 fetch 留给后续任务填充。
- *  占位实现恒返回 Promise<null>，不做任何副作用。后续任务替换实现时签名必须保持不变。 */
-function resolveModelRules(/* deps */) {
-  return Promise.resolve(null);
+/** 从多来源同步解析模型规则：deps = { storedFile, clientDirs: string[], builtinFile }。
+ *  同步设计理由：zcodeLocal.resolveModelMeta() 是同步调用链（每次模型目录解析都会调），
+ *  若此处返回 Promise，首次同步调用只能拿到空缓存，模型能力退化成默认值正是本任务要修的病。
+ *  读三个来源本来就是 fs.readFileSync，异步只对远端请求有必要（Task 4 才引入联网 fetch）。
+ *
+ *  返回 { rules: ModelRule[], origin, revision } | null。全部来源不可用返回 null。
+ *  任何一份读不出来或 JSON 损坏，只跳过该来源，不抛错。
+ *
+ *  缓存：key 由三个来源文件的存在性 + mtime 组成；任一变化即失效，下一次调用重新读。
+ *  显式失效入口：setCachedModelRules([]) 即可清空（另提供 invalidateModelRules() 别名）。 */
+function resolveModelRules(deps) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const d = deps || {};
+  const storedFile = d.storedFile || "";
+  const builtinFile = d.builtinFile || "";
+  const clientDirs = Array.isArray(d.clientDirs) ? d.clientDirs.filter(Boolean) : [];
+
+  // 收集客户端目录下所有 zcode-builtin.json（深度 4，复用 zcodeLocal.findClientBuiltin 的搜索规则）
+  const clientFiles = [];
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    let ents = [];
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (e.name === "zcode-builtin.json") {
+        try {
+          clientFiles.push(p);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  };
+  for (const root of clientDirs) {
+    if (!root) continue;
+    walk(root, 0);
+  }
+
+  // 读一个来源：返回 { origin, revision, raw: ModelRule[] } 或 null（不可用）
+  const readOne = (origin, file) => {
+    if (!file) return null;
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      return null;
+    }
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    const v = validateRelease(json);
+    if (!v.ok) return null;
+    return { origin, revision: v.release.revision, raw: v.release.modelRules, _mtime: stat.mtimeMs, _exists: true };
+  };
+
+  // 构建缓存 key（任一来源存在性或 mtime 变化即失效）
+  const cacheKeyParts = [];
+  const pushStat = (label, file) => {
+    if (!file) {
+      cacheKeyParts.push(`${label}:missing`);
+      return;
+    }
+    try {
+      const s = fs.statSync(file);
+      cacheKeyParts.push(`${label}:1:${s.mtimeMs}`);
+    } catch {
+      cacheKeyParts.push(`${label}:0`);
+    }
+  };
+  pushStat("stored", storedFile);
+  // clientDirs 可能多个，把每个目录的 stat 都计入
+  clientDirs.forEach((root, i) => pushStat(`clientDir[${i}]`, root));
+  // 客户端找到的文件（按路径排序稳定化）也计入 key——因为 findClientBuiltin 是按目录递归，文件可能随客户端更新
+  clientFiles.sort().forEach((p, i) => pushStat(`clientFile[${i}]`, p));
+  pushStat("builtin", builtinFile);
+  const cacheKey = cacheKeyParts.join("|");
+
+  if (_resolveCache.key === cacheKey && _resolveCache.value) {
+    return _resolveCache.value;
+  }
+
+  // 读各来源
+  const sources = [];
+  const stored = readOne("stored", storedFile);
+  if (stored) sources.push(stored);
+
+  // 客户端可能有多份（runtime/provider 下不同版本目录），按 mtime 最新者作为 client 来源
+  let latestClient = null;
+  for (const p of clientFiles) {
+    const r = readOne("client", p);
+    if (r && (!latestClient || r._mtime > latestClient._mtime)) latestClient = r;
+  }
+  if (latestClient) sources.push(latestClient);
+
+  const builtin = readOne("builtin", builtinFile);
+  if (builtin) sources.push(builtin);
+
+  const picked = pickLatestRelease(sources);
+  const result = picked ? { origin: picked.origin, revision: picked.revision, rules: picked.raw } : null;
+
+  // 写入进程内缓存：供同步的 cachedModelRules() 消费（resolveModelMeta 会读）
+  if (result) {
+    setCachedModelRules(result.rules);
+  }
+  _resolveCache.key = cacheKey;
+  _resolveCache.value = result;
+  return result;
+}
+
+// resolveModelRules 的按来源 mtime 缓存（与 _cachedRules 解耦：一个管"哪个来源胜出"，一个管"规则内容"）
+const _resolveCache = { key: "", value: null };
+
+/** 显式失效 resolveModelRules 缓存（下次调用强制重读） */
+function invalidateModelRules() {
+  _resolveCache.key = "";
+  _resolveCache.value = null;
+  // 同时清空规则缓存
+  _cachedRules = [];
 }
 
 // ===== cachedModelRules =====
@@ -108,7 +237,9 @@ function resolveModelRules(/* deps */) {
 // 进程内缓存：resolveModelRules 后续任务成功解析后调 setCached 写入，
 // 供同步的 resolveModelMeta() 消费。本模块纯函数层只暴露读写器。
 let _cachedRules = [];
-function cachedModelRules() { return _cachedRules; }
+function cachedModelRules() {
+  return _cachedRules;
+}
 function setCachedModelRules(rules) {
   _cachedRules = Array.isArray(rules) ? rules : [];
 }
@@ -121,4 +252,5 @@ module.exports = {
   resolveModelRules,
   cachedModelRules,
   setCachedModelRules,
+  invalidateModelRules,
 };

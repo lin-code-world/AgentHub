@@ -42,7 +42,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execSync, spawn } = require("node:child_process");
 const config = require("../config.cjs");
-const { mapModelRules } = require("./zcodeBuiltin.cjs");
+const { mapModelRules, resolveModelRules, setCachedModelRules, cachedModelRules } = require("./zcodeBuiltin.cjs");
 
 const ENC_PREFIX = "enc:v1:";
 const NONCE_SIZE = 12;
@@ -53,12 +53,19 @@ const NONCE_SIZE = 12;
 function defaultSecret() {
   if (process.env.ZCODE_CREDENTIAL_SECRET) return process.env.ZCODE_CREDENTIAL_SECRET;
   let username = "unknown";
-  try { username = os.userInfo().username; } catch { /* 拿不到用 unknown */ }
+  try {
+    username = os.userInfo().username;
+  } catch {
+    /* 拿不到用 unknown */
+  }
   return `zcode-credential-fallback:${os.platform()}:${os.homedir()}:${username}`;
 }
 
 function deriveKey(secret) {
-  return crypto.createHash("sha256").update(String(secret || defaultSecret())).digest();
+  return crypto
+    .createHash("sha256")
+    .update(String(secret || defaultSecret()))
+    .digest();
 }
 
 function isEnc(value) {
@@ -140,7 +147,9 @@ function atomicWriteJson(file, obj) {
 /** JWT payload 解析（不验签）：zcodejwt 的 uid 取 user_id/sub */
 function jwtPayload(token) {
   try {
-    const parts = String(token || "").trim().split(".");
+    const parts = String(token || "")
+      .trim()
+      .split(".");
     if (parts.length < 2) return {};
     const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
     return payload && typeof payload === "object" ? payload : {};
@@ -177,8 +186,16 @@ function parseCodingPlanKeyName(keyName) {
  */
 function parseCredentials(json) {
   const out = {
-    provider: "", jwt: "", accessToken: "", refreshToken: "", userInfo: null,
-    codingPlanKeys: [], relayPassHashEnc: "", relayKeys: {}, unknownKeys: [], decryptOk: false,
+    provider: "",
+    jwt: "",
+    accessToken: "",
+    refreshToken: "",
+    userInfo: null,
+    codingPlanKeys: [],
+    relayPassHashEnc: "",
+    relayKeys: {},
+    unknownKeys: [],
+    decryptOk: false,
   };
   if (!json || typeof json !== "object") return out;
   const secret = defaultSecret();
@@ -198,13 +215,23 @@ function parseCredentials(json) {
       continue;
     }
     let m = /^oauth:(zai|bigmodel):access_token$/.exec(key);
-    if (m) { out.accessToken = tryDecrypt(value, secret); continue; }
+    if (m) {
+      out.accessToken = tryDecrypt(value, secret);
+      continue;
+    }
     m = /^oauth:(zai|bigmodel):refresh_token$/.exec(key);
-    if (m) { out.refreshToken = tryDecrypt(value, secret); continue; }
+    if (m) {
+      out.refreshToken = tryDecrypt(value, secret);
+      continue;
+    }
     m = /^oauth:(zai|bigmodel):user_info$/.exec(key);
     if (m) {
       const plain = tryDecrypt(value, secret);
-      try { out.userInfo = plain ? JSON.parse(plain) : null; } catch { out.userInfo = null; }
+      try {
+        out.userInfo = plain ? JSON.parse(plain) : null;
+      } catch {
+        out.userInfo = null;
+      }
       out.userInfoRaw = plain;
       continue;
     }
@@ -372,7 +399,9 @@ function accountRecord(parsed, extra) {
         heldByOther = require("./store.cjs")
           .listAccounts("zcode")
           .some((a) => a.uid !== uid && String((a.meta && a.meta.deviceMid) || "") === telemetryMid);
-      } catch { /* 库未开按无撞车处理 */ }
+      } catch {
+        /* 库未开按无撞车处理 */
+      }
       if (!heldByOther) return telemetryMid;
     }
     if (uid) return derivedDeviceMid(uid);
@@ -397,7 +426,11 @@ function accountRecord(parsed, extra) {
 function readSwitchSnapshot(acc) {
   let meta = (acc && acc.meta) || {};
   if (typeof meta === "string") {
-    try { meta = JSON.parse(meta || "{}"); } catch { meta = {}; }
+    try {
+      meta = JSON.parse(meta || "{}");
+    } catch {
+      meta = {};
+    }
   }
   const sw = meta && meta.sw && typeof meta.sw === "object" ? meta.sw : null;
   if (!sw) return null;
@@ -408,7 +441,9 @@ function readSwitchSnapshot(acc) {
   try {
     const arr = JSON.parse(unseal(sw.codingPlanKeys) || "[]");
     if (Array.isArray(arr)) codingPlanKeys = arr.filter((k) => k && k.keyName && k.plain);
-  } catch { /* 空按无 key 处理 */ }
+  } catch {
+    /* 空按无 key 处理 */
+  }
   return {
     provider: String(meta.provider || sw.provider || "zai"),
     jwt,
@@ -473,7 +508,10 @@ function findLatestBackupDeviceSid() {
   try {
     const root = path.join(config.dataDir(), "proxy", "zcode-switch-backup");
     if (!fs.existsSync(root)) return "";
-    const dirs = fs.readdirSync(root).filter((n) => /^\d+$/.test(n)).sort((a, b) => Number(b) - Number(a));
+    const dirs = fs
+      .readdirSync(root)
+      .filter((n) => /^\d+$/.test(n))
+      .sort((a, b) => Number(b) - Number(a));
     for (const d of dirs) {
       const sf = path.join(root, d, "setting.json");
       if (fs.existsSync(sf)) {
@@ -493,7 +531,10 @@ function findLatestBackupPassHashEnc() {
   try {
     const root = path.join(config.dataDir(), "proxy", "zcode-switch-backup");
     if (!fs.existsSync(root)) return "";
-    const dirs = fs.readdirSync(root).filter((n) => /^\d+$/.test(n)).sort((a, b) => Number(b) - Number(a));
+    const dirs = fs
+      .readdirSync(root)
+      .filter((n) => /^\d+$/.test(n))
+      .sort((a, b) => Number(b) - Number(a));
     for (const d of dirs) {
       const cf = path.join(root, d, "credentials.json");
       if (fs.existsSync(cf)) {
@@ -517,7 +558,10 @@ function findOriginalMidFromBackups() {
   try {
     const root = path.join(config.dataDir(), "proxy", "zcode-switch-backup");
     if (!fs.existsSync(root)) return "";
-    const dirs = fs.readdirSync(root).filter((n) => /^\d+$/.test(n)).sort((a, b) => Number(a) - Number(b));
+    const dirs = fs
+      .readdirSync(root)
+      .filter((n) => /^\d+$/.test(n))
+      .sort((a, b) => Number(a) - Number(b));
     for (const d of dirs) {
       const tf = path.join(root, d, "telemetry-state.json");
       if (fs.existsSync(tf)) {
@@ -541,19 +585,12 @@ function getOrCreateAnchor() {
 
   // 1. deviceSid 提取：live setting -> setting.bak -> 历史切号备份自愈（无硬编码，自适应宿主真实值）
   if (!anchor.deviceSid) {
-    anchor.deviceSid =
-      (liveSetting.webRemoteControlExternalRelayDevice && String(liveSetting.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) ||
-      (bakSetting.webRemoteControlExternalRelayDevice && String(bakSetting.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) ||
-      findLatestBackupDeviceSid() ||
-      "";
+    anchor.deviceSid = (liveSetting.webRemoteControlExternalRelayDevice && String(liveSetting.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) || (bakSetting.webRemoteControlExternalRelayDevice && String(bakSetting.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) || findLatestBackupDeviceSid() || "";
   }
 
   // 2. passHashEnc 提取：live credentials -> 历史切号备份自愈（无硬编码，自适应宿主真实值）
   if (!anchor.passHashEnc) {
-    anchor.passHashEnc =
-      (liveCred["web-remote-control:external-relay:pass_hash"] && String(liveCred["web-remote-control:external-relay:pass_hash"]).trim()) ||
-      findLatestBackupPassHashEnc() ||
-      "";
+    anchor.passHashEnc = (liveCred["web-remote-control:external-relay:pass_hash"] && String(liveCred["web-remote-control:external-relay:pass_hash"]).trim()) || findLatestBackupPassHashEnc() || "";
   }
 
   // 3. 项目列表合并（动态自适应当前机器的全部已有项目路径）
@@ -578,10 +615,7 @@ function getOrCreateAnchor() {
 
   // 5. 远程上下文（动态自适应当前机器已有上下文，若无则留空）
   if (!anchor.remoteContext) {
-    anchor.remoteContext =
-      liveSetting.webRemoteControlLastEnabledContext ||
-      bakSetting.webRemoteControlLastEnabledContext ||
-      null;
+    anchor.remoteContext = liveSetting.webRemoteControlLastEnabledContext || bakSetting.webRemoteControlLastEnabledContext || null;
   }
 
   // 6. 本机远程锚定指纹（remoteMid）：relay 把 deviceMid 当设备身份（远程链接 mid 参数 +
@@ -662,10 +696,7 @@ function verifyCredentialsWritten(file, target, beforeJson) {
   }
 
   // 原有键保留校验：凭据白名单之外的键一个不许丢
-  const WHITELIST = new Set([
-    "oauth:active_provider", "oauth:zai:access_token", "oauth:zai:refresh_token", "oauth:zai:user_info",
-    "oauth:bigmodel:access_token", "oauth:bigmodel:refresh_token", "oauth:bigmodel:user_info", "zcodejwttoken",
-  ]);
+  const WHITELIST = new Set(["oauth:active_provider", "oauth:zai:access_token", "oauth:zai:refresh_token", "oauth:zai:user_info", "oauth:bigmodel:access_token", "oauth:bigmodel:refresh_token", "oauth:bigmodel:user_info", "zcodejwttoken"]);
   for (const k of Object.keys(beforeJson || {})) {
     if (WHITELIST.has(k) || k.startsWith("account-provider:coding-plan:")) continue;
     if (!(k in json)) return { ok: false, message: `原有键丢失：${k}` };
@@ -680,7 +711,9 @@ function alignFamilyDomain(provider) {
   const json = readJson(file) || {};
   let bakJson = {};
   if (fs.existsSync(bakFile)) {
-    try { bakJson = JSON.parse(fs.readFileSync(bakFile, "utf8")) || {}; } catch {}
+    try {
+      bakJson = JSON.parse(fs.readFileSync(bakFile, "utf8")) || {};
+    } catch {}
   }
   const anchor = getOrCreateAnchor();
 
@@ -691,9 +724,7 @@ function alignFamilyDomain(provider) {
   // ② 全账号共享并合并全部项目列表（recentProjects 永不丢失）
   const projectSet = new Set();
   const mergedProjects = [];
-  const candidateProjects = (json.recentProjects || [])
-    .concat(bakJson.recentProjects || [])
-    .concat(anchor.projects || []);
+  const candidateProjects = (json.recentProjects || []).concat(bakJson.recentProjects || []).concat(anchor.projects || []);
   for (const item of candidateProjects) {
     if (item && typeof item === "string" && !projectSet.has(item)) {
       projectSet.add(item);
@@ -712,11 +743,7 @@ function alignFamilyDomain(provider) {
   }
 
   // ④ 手机远程连接设备标识强力固化（杜绝 partial state，手机链接永远不换）
-  const targetSid =
-    anchor.deviceSid ||
-    (json.webRemoteControlExternalRelayDevice && String(json.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) ||
-    (bakJson.webRemoteControlExternalRelayDevice && String(bakJson.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) ||
-    "";
+  const targetSid = anchor.deviceSid || (json.webRemoteControlExternalRelayDevice && String(json.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) || (bakJson.webRemoteControlExternalRelayDevice && String(bakJson.webRemoteControlExternalRelayDevice.deviceSid || "").trim()) || "";
   if (targetSid) {
     json.webRemoteControlExternalRelayDevice = { deviceSid: targetSid };
   }
@@ -766,7 +793,9 @@ function verifySettingWritten() {
 function resetPlanCache() {
   try {
     fs.rmSync(paths().planCache, { force: true });
-  } catch { /* 不存在即目的达成 */ }
+  } catch {
+    /* 不存在即目的达成 */
+  }
 }
 
 /**
@@ -792,7 +821,16 @@ function applyDeviceMid(target) {
         const store = require("./store.cjs");
         const row = store.getAccount(target.accountId);
         if (row) {
-          const meta = typeof row.meta === "string" ? (() => { try { return JSON.parse(row.meta); } catch { return {}; } })() : { ...(row.meta || {}) };
+          const meta =
+            typeof row.meta === "string"
+              ? (() => {
+                  try {
+                    return JSON.parse(row.meta);
+                  } catch {
+                    return {};
+                  }
+                })()
+              : { ...(row.meta || {}) };
           if (!meta.deviceMid) {
             meta.deviceMid = mid;
             store.updateAccount(row.id, { meta });
@@ -800,7 +838,9 @@ function applyDeviceMid(target) {
           }
         }
       }
-    } catch { /* 回存失败不阻断切号 */ }
+    } catch {
+      /* 回存失败不阻断切号 */
+    }
   }
   if (oldMid === mid) return { ok: true, unchanged: true, from: oldMid, to: mid, persisted };
   const next = { ...cur, deviceMid: mid };
@@ -847,7 +887,9 @@ function syncSleep(ms) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(1, ms));
   } catch {
     const end = Date.now() + ms;
-    while (Date.now() < end) { /* 降级兜底 */ }
+    while (Date.now() < end) {
+      /* 降级兜底 */
+    }
   }
 }
 
@@ -874,7 +916,9 @@ function killZcode(timeoutMs = 8000) {
     } else {
       execSync("pkill -9 -x ZCode || pkill -9 -x zcode || pkill -9 -i zcode", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
     }
-  } catch { /* 进程可能刚退出 */ }
+  } catch {
+    /* 进程可能刚退出 */
+  }
   const deadline = Date.now() + Math.max(1000, timeoutMs);
   while (Date.now() < deadline) {
     if (!isZcodeRunning()) return true;
@@ -906,7 +950,9 @@ function findZcodeExe() {
   for (const p of candidates) {
     try {
       if (fs.existsSync(p)) return p;
-    } catch { /* 下一个 */ }
+    } catch {
+      /* 下一个 */
+    }
   }
   // Windows 下运行中进程反查（PowerShell 一次调用）
   if (process.platform === "win32") {
@@ -917,13 +963,17 @@ function findZcodeExe() {
         timeout: 8000,
       }).trim();
       if (out && fs.existsSync(out)) return out;
-    } catch { /* 反查失败按未找到处理 */ }
+    } catch {
+      /* 反查失败按未找到处理 */
+    }
   } else {
     // Unix 平台 which 探测
     try {
       const out = execSync("which zcode || which ZCode", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
       if (out && fs.existsSync(out)) return out;
-    } catch { /* 未找到 */ }
+    } catch {
+      /* 未找到 */
+    }
   }
   return "";
 }
@@ -952,40 +1002,56 @@ function launchZcode(exe) {
  */
 let _capCache = { file: "", mtimeMs: 0, rules: [] };
 
+/** 构建 resolveModelRules 需要的 deps 三来源：
+ *  storedFile = config.dataDir()/proxy/zcode-builtin.json（本机落盘副本，Task 4 联网更新后优先从这里读）
+ *  clientDirs = [~/.zcode/v2/runtime/provider]（客户端自带副本所在目录，按深度 4 递归找最新 zcode-builtin.json）
+ *  builtinFile = 仓库内置 assets/zcode-builtin.json（权威最低但永远存在，保证"全新机器"不退化） */
+function _modelRulesDeps() {
+  const storedFile = path.join(config.dataDir(), "proxy", "zcode-builtin.json");
+  const clientDirs = [path.join(v2Dir(), "runtime", "provider")];
+  const builtinFile = path.join(__dirname, "assets", "zcode-builtin.json");
+  return { storedFile, clientDirs, builtinFile };
+}
+
 /** 找最新的 zcode-builtin.json（runtime/provider/<平台>/<版本>/endpoint-XXXX/，层级名含版本与 endpoint 哈希，故扫描） */
 function findClientBuiltin() {
-  const root = path.join(v2Dir(), "runtime", "provider");
+  const deps = _modelRulesDeps();
+  const clientDirs = deps.clientDirs;
   const hits = [];
   const walk = (dir, depth) => {
     if (depth > 4) return;
     let ents = [];
-    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     for (const e of ents) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p, depth + 1);
       else if (e.name === "zcode-builtin.json") {
-        try { hits.push({ p, m: fs.statSync(p).mtimeMs }); } catch { /* 忽略 */ }
+        try {
+          hits.push({ p, m: fs.statSync(p).mtimeMs });
+        } catch {
+          /* 忽略 */
+        }
       }
     }
   };
-  walk(root, 0);
+  for (const root of clientDirs) walk(root, 0);
   hits.sort((a, b) => b.m - a.m);
   return hits[0] || null;
 }
 
-/** 读取客户端能力规则（按文件 mtime 缓存）；无文件或结构变化时返回 [] */
+/** 读取模型能力规则：三来源取最新（resolveModelRules 内部有按 mtime 的缓存）。
+ *  返回 ModelRule[]；全部来源不可用时从 setCachedModelRules 留下的进程内缓存兜底，
+ *  再不行返回 [] 让 resolveModelMeta 退化回默认值。 */
 function readClientModelRules() {
-  const hit = findClientBuiltin();
-  if (!hit) return [];
-  if (_capCache.file === hit.p && _capCache.mtimeMs === hit.m) return _capCache.rules;
-  let rules = [];
-  try {
-    const j = JSON.parse(fs.readFileSync(hit.p, "utf8"));
-    const list = ((((j || {}).config || {}).modelConfigRules) || {}).modelRules || [];
-    rules = mapModelRules(list);
-  } catch { rules = []; }
-  _capCache = { file: hit.p, mtimeMs: hit.m, rules };
-  return rules;
+  const deps = _modelRulesDeps();
+  const res = resolveModelRules(deps);
+  if (res && Array.isArray(res.rules)) return res.rules;
+  // 三来源全挂，退回进程内缓存（启动时可能有上一次成功解析留下的结果）
+  return cachedModelRules();
 }
 
 /**
@@ -1001,12 +1067,16 @@ function resolveModelMeta(modelId) {
   let hit = null;
   for (const r of readClientModelRules()) {
     let re;
-    try { re = new RegExp("^(?:" + r.re + ")$", "i"); } catch { continue; }
+    try {
+      re = new RegExp("^(?:" + r.re + ")$", "i");
+    } catch {
+      continue;
+    }
     if (!re.test(id)) continue;
     hit = {
       inputFormat: r.fmt || (hit && hit.inputFormat) || null,
-      contextWindow: r.contextWindow !== undefined ? r.contextWindow : (hit && hit.contextWindow),
-      maxOutputTokens: r.maxOutputTokens !== undefined ? r.maxOutputTokens : (hit && hit.maxOutputTokens),
+      contextWindow: r.contextWindow !== undefined ? r.contextWindow : hit && hit.contextWindow,
+      maxOutputTokens: r.maxOutputTokens !== undefined ? r.maxOutputTokens : hit && hit.maxOutputTokens,
     };
   }
   return hit;
@@ -1033,20 +1103,58 @@ function prepareMetaForExport(meta, channel) {
         relayPassHash: unseal(cloned.sw.relayPassHash),
         _plain: true,
       };
-    } catch { /* 解密异常保留原样 */ }
+    } catch {
+      /* 解密异常保留原样 */
+    }
   }
   return cloned;
 }
 
 module.exports = {
-  ENC_PREFIX, isEnc, defaultSecret, encDecrypt, encEncrypt, tryDecrypt,
-  v2Dir, paths, isNewGen, readJson, atomicWriteJson,
-  jwtPayload, uidFromJwt, parseCodingPlanKeyName, parseCredentials, readLive, readProfiles,
-  extractConfigApiKeys, pickPlanKey, accountRecord,
-  readSwitchSnapshot, buildSwitchSnapshot, seal, unseal, prepareMetaForExport,
-  anchorPath, readAnchor, saveAnchor, getOrCreateAnchor, findOriginalMidFromBackups,
-  mergeWriteCredentials, verifyCredentialsWritten, verifySettingWritten, alignFamilyDomain, resetPlanCache,
-  derivedDeviceMid, applyDeviceMid, restoreRemoteMid, remoteMidState,
-  isZcodeRunning, killZcode, findZcodeExe, launchZcode,
-  readClientModelRules, resolveModelInputFormat, resolveModelMeta,
+  ENC_PREFIX,
+  isEnc,
+  defaultSecret,
+  encDecrypt,
+  encEncrypt,
+  tryDecrypt,
+  v2Dir,
+  paths,
+  isNewGen,
+  readJson,
+  atomicWriteJson,
+  jwtPayload,
+  uidFromJwt,
+  parseCodingPlanKeyName,
+  parseCredentials,
+  readLive,
+  readProfiles,
+  extractConfigApiKeys,
+  pickPlanKey,
+  accountRecord,
+  readSwitchSnapshot,
+  buildSwitchSnapshot,
+  seal,
+  unseal,
+  prepareMetaForExport,
+  anchorPath,
+  readAnchor,
+  saveAnchor,
+  getOrCreateAnchor,
+  findOriginalMidFromBackups,
+  mergeWriteCredentials,
+  verifyCredentialsWritten,
+  verifySettingWritten,
+  alignFamilyDomain,
+  resetPlanCache,
+  derivedDeviceMid,
+  applyDeviceMid,
+  restoreRemoteMid,
+  remoteMidState,
+  isZcodeRunning,
+  killZcode,
+  findZcodeExe,
+  launchZcode,
+  readClientModelRules,
+  resolveModelInputFormat,
+  resolveModelMeta,
 };

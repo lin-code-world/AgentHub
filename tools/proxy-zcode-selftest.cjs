@@ -31,6 +31,7 @@ process.env.ZCODE_V2_DIR = SANDBOX;
 process.env.APPDATA = SANDBOX;
 
 const zcodeLocal = require("../electron/backend/proxy/zcodeLocal.cjs");
+const zcodeBuiltin = require("../electron/backend/proxy/zcodeBuiltin.cjs");
 const zcodeAnthropic = require("../electron/backend/proxy/zcodeAnthropic.cjs");
 const zcodeSwitch = require("../electron/backend/proxy/zcodeSwitch.cjs");
 const adapters = require("../electron/backend/proxy/adapters.cjs");
@@ -74,7 +75,7 @@ async function main() {
   await T("T2 parseCredentials 键分类（relay/oauth/coding-plan/unknown）", () => {
     const secret = undefined; // 默认公式
     const json = {
-      "zcodejwttoken": zl.encEncrypt("header.eyJ1c2VyX2lkIjoidXVpZC0xMjM0In0.sig", secret),
+      zcodejwttoken: zl.encEncrypt("header.eyJ1c2VyX2lkIjoidXVpZC0xMjM0In0.sig", secret),
       "oauth:active_provider": zl.encEncrypt("zai", secret),
       "oauth:zai:access_token": zl.encEncrypt("at-123", secret),
       "oauth:zai:refresh_token": zl.encEncrypt("rt-456", secret),
@@ -103,7 +104,7 @@ async function main() {
     const b64u = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
     const uid = "79231753711524355"; // 实测 BigModel 免费号的 uid 是 17 位数字，不是 UUID
     const json = {
-      "zcodejwttoken": zl.encEncrypt(`h.${b64u({ user_id: uid })}.s`),
+      zcodejwttoken: zl.encEncrypt(`h.${b64u({ user_id: uid })}.s`),
       "oauth:active_provider": zl.encEncrypt("bigmodel"),
       [`account-provider:coding-plan:account:bigmodel-individual-coding-plan:account:${uid}:api-key`]: zl.encEncrypt("apiKey.secretValue"),
     };
@@ -122,7 +123,7 @@ async function main() {
   // ===== T3 合并写回不变量（切号红线） =====
   await T("T3 合并写回：relay 键逐字节保留 / deviceMid 不碰 / 凭据键替换 / 未知键保留", () => {
     const live = {
-      "zcodejwttoken": zl.encEncrypt("old.jwt.here"),
+      zcodejwttoken: zl.encEncrypt("old.jwt.here"),
       "oauth:active_provider": zl.encEncrypt("zai"),
       "oauth:zai:access_token": zl.encEncrypt("old-at"),
       "oauth:zai:user_info": zl.encEncrypt(JSON.stringify({ user_id: "old", email: "old@x" })),
@@ -157,7 +158,7 @@ async function main() {
     assert.strictEqual(merged["unknown-future"].nested, 1);
     assert.strictEqual(merged["oauth:login_attribution"], "enc:v1:attr");
     // 快照兜底注入：live 完全没有 relay 键时用快照的 enc 原样值
-    const noRelay = { "zcodejwttoken": zl.encEncrypt("x") };
+    const noRelay = { zcodejwttoken: zl.encEncrypt("x") };
     const merged2 = zl.mergeWriteCredentials({ ...target, relayPassHashEnc: "enc:v1:SNAP-RELAY" }, noRelay);
     assert.strictEqual(merged2["web-remote-control:external-relay:pass_hash"], "enc:v1:SNAP-RELAY");
     // live 有 relay 时快照值绝不覆盖 live
@@ -169,7 +170,7 @@ async function main() {
   await T("T4 verifyCredentialsWritten：通过 / relay 被改 / 未知键丢失 三种结局", () => {
     const p = zl.paths();
     const before = {
-      "zcodejwttoken": zl.encEncrypt("old.jwt"),
+      zcodejwttoken: zl.encEncrypt("old.jwt"),
       "web-remote-control:external-relay:pass_hash": "enc:v1:RELAY-A",
       "keep-me": "yes",
     };
@@ -218,10 +219,13 @@ async function main() {
     const bridge = zcodeAnthropic.createSseBridge((ev) => events.push(ev));
     // 复刻 zcode/GLM 的真实流：message_start 的 input_tokens 是占位 0，真值只在 message_delta
     bridge.onEvent("message_start", JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 0, output_tokens: 0 } } }));
-    bridge.onEvent("message_delta", JSON.stringify({
-      type: "message_delta",
-      usage: { input_tokens: 23, output_tokens: 16, cache_read_input_tokens: 7360, cache_creation_input_tokens: 0 },
-    }));
+    bridge.onEvent(
+      "message_delta",
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 23, output_tokens: 16, cache_read_input_tokens: 7360, cache_creation_input_tokens: 0 },
+      })
+    );
     bridge.onEvent("message_stop", JSON.stringify({ type: "message_stop" }));
     const usageEv = events.find((e) => e.type === "usage");
     assert.ok(usageEv, "应发出 usage 事件");
@@ -253,7 +257,7 @@ async function main() {
         { role: "system", content: "你是助手" },
         { role: "assistant", content: "你好", reasoning_content: "想了一下" },
         { role: "user", content: "调用工具" },
-        { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{\"a\":1}" } }] },
+        { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: '{"a":1}' } }] },
         { role: "tool", tool_call_id: "call_1", content: "文件内容" },
       ],
       tools: [{ type: "function", function: { name: "read", description: "读文件", parameters: { type: "object" } } }],
@@ -285,12 +289,18 @@ async function main() {
     bridge.onEvent("content_block_delta", JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "想" } }));
     bridge.onEvent("content_block_delta", JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "你好" } }));
     bridge.onEvent("content_block_start", JSON.stringify({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "t1", name: "read" } }));
-    bridge.onEvent("content_block_delta", JSON.stringify({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{\"a\":" } }));
+    bridge.onEvent("content_block_delta", JSON.stringify({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"a":' } }));
     bridge.onEvent("content_block_delta", JSON.stringify({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "1}" } }));
     bridge.onEvent("message_delta", JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 30 } }));
     bridge.onEvent("message_stop", JSON.stringify({ type: "message_stop" }));
-    const contents = events.filter((e) => e.type === "delta" && e.delta.content).map((e) => e.delta.content).join("");
-    const thinks = events.filter((e) => e.type === "delta" && e.delta.reasoning_content).map((e) => e.delta.reasoning_content).join("");
+    const contents = events
+      .filter((e) => e.type === "delta" && e.delta.content)
+      .map((e) => e.delta.content)
+      .join("");
+    const thinks = events
+      .filter((e) => e.type === "delta" && e.delta.reasoning_content)
+      .map((e) => e.delta.reasoning_content)
+      .join("");
     const usage = events.find((e) => e.type === "usage");
     const finish = events.find((e) => e.type === "finish");
     const toolDeltas = events.filter((e) => e.type === "delta" && e.delta.tool_calls);
@@ -331,11 +341,14 @@ async function main() {
     const parsed = {
       provider: "zai",
       jwt: "a.eyJ1c2VyX2lkIjoiand0LXVpZCJ9.c",
-      accessToken: "at", refreshToken: "rt", userInfoRaw: JSON.stringify({ user_id: "jwt-uid" }),
+      accessToken: "at",
+      refreshToken: "rt",
+      userInfoRaw: JSON.stringify({ user_id: "jwt-uid" }),
       userInfo: { user_id: "jwt-uid", email: "x@y.z" },
       // 该 key 属于另一个账号（cccccccc）——真实 live 文件里多账号 key 累积的常态
       codingPlanKeys: [{ keyName: "account-provider:coding-plan:account:zai-individual-coding-plan:account:cccccccc-2222-2222-2222-222222222222:api-key", family: "zai-individual-coding-plan", uid: "cccccccc-2222-2222-2222-222222222222", plain: "k.s" }],
-      relayKeys: {}, relayPassHashEnc: "enc:v1:relay",
+      relayKeys: {},
+      relayPassHashEnc: "enc:v1:relay",
     };
     const rec = zl.accountRecord(parsed, {});
     assert.strictEqual(rec.uid, "jwt-uid", "uid 应取 JWT 权威身份（coding-plan 键名是他号凭据）");
@@ -442,10 +455,7 @@ async function main() {
     assert.strictEqual(sniffImages({ a: { vision: false }, b: { supportsImage: true } }), true, "true 优先于 false");
 
     // 合并 OR：单渠道的 false 不得覆盖别的来源的 true（glm-5.3-flash 曾因此被整条链当纯文本）
-    assert.deepStrictEqual(
-      mergeCapabilities({ images: false, reasoning: true }, { images: true, tools: true }),
-      { images: true, reasoning: true, tools: true }
-    );
+    assert.deepStrictEqual(mergeCapabilities({ images: false, reasoning: true }, { images: true, tools: true }), { images: true, reasoning: true, tools: true });
     assert.deepStrictEqual(mergeCapabilities({ images: true }, { images: false }), { images: true }, "false 不覆盖 true");
     assert.deepStrictEqual(mergeCapabilities({}, { images: undefined, reasoning: true }), { reasoning: true }, "未声明不落键");
     assert.deepStrictEqual(mergeCapabilities({ images: undefined }, { images: false }), { images: false }, "未声明可被 false 填充");
@@ -493,11 +503,7 @@ async function main() {
     // 不带 opts：保持旧行为（8192），避免影响其它调用方
     assert.strictEqual(zcodeAnthropic.toAnthropic("GLM-5.3-Flash", user).max_tokens, 8192, "无 opts 时仍是 8192");
     // 官方元数据兜底：GLM-5.3-Flash 上限 128000
-    assert.strictEqual(
-      zcodeAnthropic.toAnthropic("GLM-5.3-Flash", user, { defaultMaxTokens: 128000 }).max_tokens,
-      128000,
-      "客户端未传时应取元数据上限"
-    );
+    assert.strictEqual(zcodeAnthropic.toAnthropic("GLM-5.3-Flash", user, { defaultMaxTokens: 128000 }).max_tokens, 128000, "客户端未传时应取元数据上限");
     // 客户端传了就尊重客户端（三个别名都认）
     assert.strictEqual(zcodeAnthropic.toAnthropic("GLM-5.3-Flash", { ...user, max_tokens: 10000 }).max_tokens, 10000);
     assert.strictEqual(zcodeAnthropic.toAnthropic("GLM-5.3-Flash", { ...user, max_completion_tokens: 20000 }).max_tokens, 20000);
@@ -508,10 +514,7 @@ async function main() {
     // 真·元数据链路：拿客户端能力表解析出的上限喂进去
     const zmeta = zcodeLocal.resolveModelMeta("GLM-5.3-Flash");
     if (zmeta && zmeta.maxOutputTokens) {
-      assert.strictEqual(
-        zcodeAnthropic.toAnthropic("GLM-5.3-Flash", user, { defaultMaxTokens: zmeta.maxOutputTokens }).max_tokens,
-        zmeta.maxOutputTokens
-      );
+      assert.strictEqual(zcodeAnthropic.toAnthropic("GLM-5.3-Flash", user, { defaultMaxTokens: zmeta.maxOutputTokens }).max_tokens, zmeta.maxOutputTokens);
       console.log(`    客户端能力表给出 GLM-5.3-Flash maxOutputTokens=${zmeta.maxOutputTokens}`);
     } else {
       console.log("    （未检测到 zcode 客户端能力表，跳过元数据链路断言）");
@@ -542,7 +545,10 @@ async function main() {
     const accB = { id: "acc-2", uid: "uid-bbbb", meta: {} };
     // 派生指纹函数逻辑复测
     const genMid = (acc) => {
-      const h = require("node:crypto").createHash("sha256").update(`zcode-device:${acc.uid || acc.id}`).digest("hex");
+      const h = require("node:crypto")
+        .createHash("sha256")
+        .update(`zcode-device:${acc.uid || acc.id}`)
+        .digest("hex");
       return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
     };
     const midA = genMid(accA);
@@ -563,10 +569,7 @@ async function main() {
   await T("T19 官方前缀：内置常量有效 / 注入语义（补前缀·保留下游·不重复·数组块）", () => {
     const zos = require("../electron/backend/proxy/zcodeOfficialSystem.cjs");
     const prefix = zos.FALLBACK_PREFIX;
-    assert.ok(
-      typeof prefix === "string" && prefix.length >= zos.MIN_VALID_LENGTH,
-      `内置兜底常量应可用（实测门禁要求官方正文前 1257 字），实际 ${prefix ? prefix.length : 0}`
-    );
+    assert.ok(typeof prefix === "string" && prefix.length >= zos.MIN_VALID_LENGTH, `内置兜底常量应可用（实测门禁要求官方正文前 1257 字），实际 ${prefix ? prefix.length : 0}`);
     assert.ok(prefix.startsWith("You are ZCode, an interactive coding agent"), "必须以官方 CLI Prefix 开头");
     // 无 system → 直接得到前缀
     assert.strictEqual(zos.injectOfficialZcodeSystem(""), prefix);
@@ -593,12 +596,7 @@ async function main() {
     const sent = "You are an interactive ZCode agent that helps users with software engineering tasks.";
     const notice = "IMPORTANT: Assist with authorized security testing, defensive security.";
     // 合成 bundle：模拟官方结构——字面量 + 含中括号/单引号的 Harness 数组
-    const sample = [
-      'var IJs,gdt=Y(()=>{"use strict";IJs="' + b1 + '"});',
-      'function Xmn(){return["# Harness","- a line with [label](http://x) inside",\'— single quoted\'].join(`\n`)}',
-      'var mno,_dt=Y(()=>{"use strict";mno="' + notice + '"});',
-      'var s2="' + sent + '";',
-    ].join("\n");
+    const sample = ['var IJs,gdt=Y(()=>{"use strict";IJs="' + b1 + '"});', 'function Xmn(){return["# Harness","- a line with [label](http://x) inside",\'— single quoted\'].join(`\n`)}', 'var mno,_dt=Y(()=>{"use strict";mno="' + notice + '"});', 'var s2="' + sent + '";'].join("\n");
     const got = zos.extractFromBundle(sample);
     const expected = b1 + [["", sent, "", notice].join("\n"), "", ["# Harness", "- a line with [label](http://x) inside", "— single quoted"].join("\n")].join("\n");
     assert.strictEqual(got, expected, "应按官方 CJs() 规则复原为 块1 + Agent Identity");
@@ -637,7 +635,9 @@ async function main() {
     const feedSse = (events) => {
       const bytes = events.map((ev) => `event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`).join("");
       globalThis.fetch = async () => ({
-        ok: true, status: 200, headers: new Map([["content-type", "text/event-stream"]]),
+        ok: true,
+        status: 200,
+        headers: new Map([["content-type", "text/event-stream"]]),
         body: {
           getReader: () => {
             let done = false;
@@ -657,14 +657,22 @@ async function main() {
     try {
       await T("T25a zcode 零帧（静默空流）→ 抛 emptyStream，不得记 200", async () => {
         feedSse([]);
-        await assert.rejects(() => adapters.get("zcode").chat(zcArgs), (e) => isEmptyStream(e), "应抛 emptyStream 502");
+        await assert.rejects(
+          () => adapters.get("zcode").chat(zcArgs),
+          (e) => isEmptyStream(e),
+          "应抛 emptyStream 502"
+        );
       });
       await T("T25b zcode 有帧但无可用内容（message_start+message_stop 空内容）→ 抛 emptyStream", async () => {
         feedSse([
           { event: "message_start", data: { type: "message_start", message: { usage: { input_tokens: 5 } } } },
           { event: "message_stop", data: { type: "message_stop" } },
         ]);
-        await assert.rejects(() => adapters.get("zcode").chat(zcArgs), (e) => isEmptyStream(e), "应抛 emptyStream 502");
+        await assert.rejects(
+          () => adapters.get("zcode").chat(zcArgs),
+          (e) => isEmptyStream(e),
+          "应抛 emptyStream 502"
+        );
       });
       await T("T25c zcode 正常流（content_block_delta 带文本）→ 正常返回，不得误伤", async () => {
         feedSse([
@@ -697,9 +705,17 @@ async function main() {
       });
       await T("T25e trae 零帧 → 抛 emptyStream；有帧但空占位 → 抛 emptyStream", async () => {
         feedSse([]);
-        await assert.rejects(() => adapters.get("trae").chat(trArgs), (e) => isEmptyStream(e), "零帧应抛 emptyStream 502");
+        await assert.rejects(
+          () => adapters.get("trae").chat(trArgs),
+          (e) => isEmptyStream(e),
+          "零帧应抛 emptyStream 502"
+        );
         feedSse([{ event: "output", data: { content: "", tool_calls: [] } }]);
-        await assert.rejects(() => adapters.get("trae").chat(trArgs), (e) => isEmptyStream(e), "空占位帧应抛 emptyStream 502");
+        await assert.rejects(
+          () => adapters.get("trae").chat(trArgs),
+          (e) => isEmptyStream(e),
+          "空占位帧应抛 emptyStream 502"
+        );
       });
       await T("T25f trae 正常流与思考链 → 正常返回，不得误伤", async () => {
         feedSse([{ event: "output", data: { response: "你好" } }]);
@@ -714,6 +730,86 @@ async function main() {
     }
   }
 
+  // ===== T31 全新机器（无客户端目录 / 无落盘副本）必须用仓库内置副本拿到真实模型能力 =====
+  // 沙箱里既没有 ZCODE_V2_DIR/runtime/provider（客户端目录），也没有 storedFile（落盘副本），
+  // 只剩 builtinFile = assets/zcode-builtin.json。这正是"全新机器"场景——resolveModelMeta 必须
+  // 走到 resolveModelRules（builtinFile 来源），而不是退回写死的默认值。
+  await T("T31 全新机器：resolveModelMeta 从仓库内置副本拿到真实能力（GLM-5.3 窗口 1000000 / 输出 128000）", () => {
+    const meta = zl.resolveModelMeta("GLM-5.3");
+    assert.ok(meta, "应有匹配到的元数据，不得返回 null");
+    assert.strictEqual(meta.contextWindow, 1000000, `GLM-5.3 上下文应来自内置副本（1000000），实得 ${meta.contextWindow}`);
+    assert.strictEqual(meta.maxOutputTokens, 128000, `GLM-5.3 输出上限应来自内置副本（128000），实得 ${meta.maxOutputTokens}`);
+    assert.ok(meta.inputFormat && meta.inputFormat.supportsImage === false, `GLM-5.3 不应支持图片，实得 ${JSON.stringify(meta.inputFormat)}`);
+  });
+
+  await T("T31b 全新机器：GLM-5.3-Flash 通过逐属性覆盖拿到图片能力（窗口/上限沿用通用规则）", () => {
+    const flash = zl.resolveModelMeta("GLM-5.3-Flash");
+    assert.ok(flash, "应有匹配到的元数据");
+    assert.strictEqual(flash.contextWindow, 1000000, "Flash 窗口应沿用通用规则（1000000）");
+    assert.strictEqual(flash.maxOutputTokens, 128000, "Flash 输出上限应沿用通用规则（128000）");
+    assert.ok(flash.inputFormat && flash.inputFormat.supportsImage === true, `GLM-5.3-Flash 应支持图片，实得 ${JSON.stringify(flash.inputFormat)}`);
+  });
+
+  // ===== T32 resolveModelRules 错误源宽容：读不出来 / JSON 损坏都只跳过该来源 =====
+  await T("T32 resolveModelRules：三个来源都读不出来时返回 null（不抛错）", () => {
+    // 用沙箱里不存在的路径当三个来源
+    const res = zcodeBuiltin.resolveModelRules({
+      storedFile: path.join(SANDBOX, "no-such-stored.json"),
+      clientDirs: [path.join(SANDBOX, "no-such-client")],
+      builtinFile: path.join(SANDBOX, "no-such-builtin.json"),
+    });
+    assert.strictEqual(res, null, "全部来源都不可用应返回 null");
+  });
+
+  await T("T32b resolveModelRules：损坏的 JSON 来源被跳过（其余有效来源照常胜出）", () => {
+    const brokenFile = path.join(SANDBOX, "broken.json");
+    fs.writeFileSync(brokenFile, "{ 不是合法 JSON", "utf8");
+    // builtinFile 指向真实内置副本 → 应胜出（brokenFile 被跳过）
+    const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+    const res = zcodeBuiltin.resolveModelRules({
+      storedFile: brokenFile,
+      clientDirs: [],
+      builtinFile: builtinAsset,
+    });
+    assert.ok(res, "损坏来源被跳过后仍应拿到有效结果");
+    assert.strictEqual(res.origin, "builtin", "唯一有效来源应胜出");
+    assert.ok(res.revision >= 43, `builtin revision 应 ≥ 43，实得 ${res.revision}`);
+    assert.ok(Array.isArray(res.rules) && res.rules.length > 0, "应有解析出的规则");
+  });
+
+  // ===== T33 三来源优先级：revision 大的赢，同 revision 按 stored > client > builtin =====
+  await T("T33 三来源优先级：revision 大的赢", () => {
+    const storedNewer = path.join(SANDBOX, "stored-newer.json");
+    const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+    // 写一份 revision=99 的假 stored
+    fs.writeFileSync(
+      storedNewer,
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 99,
+        config: { modelConfigRules: { modelRules: [{ modelMatch: ".*x", config: {} }] } },
+      }),
+      "utf8"
+    );
+    const res = zcodeBuiltin.resolveModelRules({
+      storedFile: storedNewer,
+      clientDirs: [],
+      builtinFile: builtinAsset,
+    });
+    assert.ok(res && res.origin === "stored", `revision=99 的 stored 应胜出，实得 ${res && res.origin}`);
+    assert.strictEqual(res.revision, 99);
+  });
+
+  // ===== T34 缓存失效：任一来源文件 mtime 变化 → 下次调用重新读 =====
+  await T("T34 缓存：同一组来源第二次调用不重复解析（同 mtime 命中缓存），文件改动后缓存失效", () => {
+    const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+    const res1 = zcodeBuiltin.resolveModelRules({ storedFile: "", clientDirs: [], builtinFile: builtinAsset });
+    assert.ok(res1, "第一次应命中 builtin");
+    const res2 = zcodeBuiltin.resolveModelRules({ storedFile: "", clientDirs: [], builtinFile: builtinAsset });
+    assert.ok(res2, "第二次同来源也应有结果");
+    assert.strictEqual(res1.revision, res2.revision, "同 mtime 应给出相同 revision");
+  });
+
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   fs.rmSync(SANDBOX, { recursive: true, force: true });
   if (fail) {
@@ -724,6 +820,10 @@ async function main() {
 
 main().catch((e) => {
   console.error(e);
-  try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch { /* 清理失败无碍 */ }
+  try {
+    fs.rmSync(SANDBOX, { recursive: true, force: true });
+  } catch {
+    /* 清理失败无碍 */
+  }
   process.exit(1);
 });
