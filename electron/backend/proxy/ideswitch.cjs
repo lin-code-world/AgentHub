@@ -984,9 +984,11 @@ function verifyWritten(file, token, uid, beforeKeys) {
  *  切号确认框里的「正在运行」取自 precheckSwitch 的实时探测（那里必须实时，不能缓存）。
  *  将来若确有需要，请在切号流程内按需探测，不要加回这个高频接口。 */
 function ideSwitchStatus() {
+  // zcodeHasAnchor / zcodeHasBackup 刻意不进默认值：它们只在 zcode 段探测成功时才赋值。
+  //  这两个字段缺省即 undefined，前端一律按「可用」处理；若这里预置 false，一旦 zcode 段整体
+  //  进 catch，前端就会读到 false 并把「恢复本机指纹」「切号回滚」误禁用——方向与设计相反。
   const out = {
     traeInstalled: false, workbuddyInstalled: false, workbuddyAiInstalled: false, raccoonInstalled: false, zcodeInstalled: false,
-    zcodeHasAnchor: false, zcodeHasBackup: false,
     qoderInstalled: false, qoderIntlInstalled: false, lobsterInstalled: false, modelscopeInstalled: false,
     currentUid: "", channels: {},
   };
@@ -1048,8 +1050,9 @@ function ideSwitchStatus() {
   try {
     const zs = zcodeSwitch.zcodeIdeStatus();
     out.zcodeInstalled = zs.installed;
-    out.zcodeHasAnchor = zs.hasAnchor;
-    out.zcodeHasBackup = zs.hasBackup;
+    // 只透传「真的探测到了」的值：undefined 一律不落键，让前端按可用处理（见函数头注释）
+    if (typeof zs.hasAnchor === "boolean") out.zcodeHasAnchor = zs.hasAnchor;
+    if (typeof zs.hasBackup === "boolean") out.zcodeHasBackup = zs.hasBackup;
     out.channels.zcode = { file: zs.file, installed: zs.installed, uid: zs.uid, newGen: zs.newGen, hasAnchor: zs.hasAnchor, hasBackup: zs.hasBackup };
   } catch { /* 未安装 / 未登录 */ }
   // LobsterAI：登录走应用内回环 OAuth，**不需要本机安装官方客户端**。这里如实上报

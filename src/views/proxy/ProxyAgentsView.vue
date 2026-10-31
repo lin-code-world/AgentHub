@@ -895,6 +895,10 @@ async function enterClaimMode(acc: ProxyAccount) {
     toast(String((e as Error).message || e), "err");
   } finally {
     ideSwitching.value = "";
+    // 必须重拉 ideStatus：锚点是在后端执行领取模式时才落盘的（getOrCreateAnchor），而这里刷新的
+    // devClaimMode 会让工具栏的「恢复本机指纹」首次渲染。若不重拉，按钮会拿本轮旧值（锚点此前不存在）
+    // 判成「没有锚点」而置灰，与实际（刚锚定、点恢复必然成功）相反，要手动刷新或切页才恢复。
+    ideStatus.value = await api.proxyIdeStatus().catch(() => ideStatus.value);
     await refreshDevState();
   }
 }
@@ -1765,7 +1769,7 @@ onUnmounted(() => {
                 <i class="ph ph-clock"></i>{{ labelsOf(ch.id).auto }}
               </button>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || (zcodeNoLogin ? '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹。指纹是号池自己的数据，本机没装 ZCode 客户端也能诊断与修复' : '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹')" placement="top">
+            <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || (zcodeNoLogin ? '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹。指纹是号池自己的数据，本机没有登录态也能诊断与修复' : '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹')" placement="top">
               <span>
                 <button
                   class="btn btn-sm"

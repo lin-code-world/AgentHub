@@ -34,6 +34,7 @@ const zcodeLocal = require("../electron/backend/proxy/zcodeLocal.cjs");
 const zcodeBuiltin = require("../electron/backend/proxy/zcodeBuiltin.cjs");
 const zcodeAnthropic = require("../electron/backend/proxy/zcodeAnthropic.cjs");
 const zcodeSwitch = require("../electron/backend/proxy/zcodeSwitch.cjs");
+const config = require("../electron/backend/config.cjs");
 const adapters = require("../electron/backend/proxy/adapters.cjs");
 
 let pass = 0;
@@ -211,6 +212,49 @@ async function main() {
     assert.ok(restored.includes("credentials.json"));
     assert.strictEqual(JSON.parse(fs.readFileSync(p.credentials, "utf8")).marker, marker, "回滚应逐字节还原");
     fs.rmSync(bak, { recursive: true, force: true }); // 不污染真实回滚链
+  });
+
+  // ===== T5b 能力判定：hasAnchor / hasBackup 与登录态解耦，且判定无副作用 =====
+  // 背景：号池页靠这两个字段决定「恢复本机指纹」「切号回滚」是否置灰。它们必须看各自的前提
+  // （有锚点 / 有备份），而不是看本机有没有 ZCode 登录文件——否则用户在本机点一次「退出登录」，
+  // 这两个入口就会被误报成「没装客户端」而禁用。
+  await T("T5b 能力判定：无锚点无备份 → 两者皆 false，且判定不在沙箱造出备份目录", () => {
+    const anchorFile = zl.anchorPath();
+    // 与 zcodeSwitch.backupRoot() 同一路径；这里自己拼是为了不触发它的 mkdirSync（那样断言就没意义了）
+    const backupRoot = path.join(config.dataDir(), "proxy", "zcode-switch-backup");
+    fs.rmSync(anchorFile, { force: true });
+    fs.rmSync(backupRoot, { recursive: true, force: true });
+
+    const st = zcodeSwitch.zcodeIdeStatus();
+    assert.strictEqual(st.hasAnchor, false, "没有锚点文件时应报 hasAnchor=false");
+    assert.strictEqual(st.hasBackup, false, "没有备份目录时应报 hasBackup=false");
+
+    // 连续调用两次也不得凭空造出目录（判定挂在高频的 proxy_ide_status 上，不能有副作用）
+    zcodeSwitch.zcodeIdeStatus();
+    zcodeSwitch.zcodeIdeStatus();
+    assert.ok(!fs.existsSync(backupRoot), "判定函数不得创建备份目录（backupRoot() 内含 mkdirSync，不能直接用它）");
+    assert.ok(!fs.existsSync(anchorFile), "判定函数不得创建锚点文件（不能用会自愈落盘的 getOrCreateAnchor）");
+  });
+
+  await T("T5c 能力判定：造出锚点后 hasAnchor=true 而 installed 仍为 false（两者解耦）", () => {
+    const anchorFile = zl.anchorPath();
+    const p = zl.paths();
+    fs.rmSync(anchorFile, { force: true });
+    // 按真实语义造锚点：getOrCreateAnchor() 会停在 live telemetry 的 deviceMid 上并落盘
+    fs.mkdirSync(p.dir, { recursive: true });
+    fs.writeFileSync(p.telemetry, JSON.stringify({ deviceMid: "mid-anchor-selftest" }), "utf8");
+    const anchor = zl.getOrCreateAnchor();
+    assert.strictEqual(anchor.remoteMid, "mid-anchor-selftest", "锚点应落到 live 指纹");
+
+    // 没有 credentials.json = 本机没有登录态，这正是「装了客户端但退出登录」的真实场景
+    fs.rmSync(p.credentials, { force: true });
+    const st = zcodeSwitch.zcodeIdeStatus();
+    assert.strictEqual(st.hasAnchor, true, "有锚点应报 hasAnchor=true");
+    assert.strictEqual(st.installed, false, "没有 credentials.json 时 installed 必须仍是 false（锚点与登录态解耦）");
+
+    // 收尾还原成进入本用例前的状态，不把锚点 / 改过的 telemetry 留给后续用例
+    fs.rmSync(anchorFile, { force: true });
+    fs.writeFileSync(p.telemetry, JSON.stringify({ deviceMid: "mid-1" }), "utf8");
   });
 
   // ===== T20 代理 usage：Anthropic SSE 的 input/cache token 解析与透传 =====
