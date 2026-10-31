@@ -32,6 +32,7 @@ const ideswitch = require("./ideswitch.cjs");
 const oplog = require("./oplog.cjs");
 const xlsx = require("./xlsx.cjs"); // xlsx 写入器在本目录（v1.57.0 误写 ../xlsx.cjs，顶层 require 抛错 → 启动即崩）
 const zcodeLocal = require("./zcodeLocal.cjs");
+const zcodeBuiltin = require("./zcodeBuiltin.cjs");
 const zip = require("../zip.cjs");
 // 休眠唤醒守卫：避免唤醒瞬间逾期定时任务集中爆发（见 backend/wakeGuard.cjs 的实测说明）
 const wakeGuard = require("../wakeGuard.cjs");
@@ -531,6 +532,9 @@ async function boot() {
   } catch { /* 迁移失败不阻断启动，号池页仍可手动修复 */ }
   credits.startScheduler(() => settings().creditsRefreshMin);
   startCheckinAuto();
+  // ZCode 模型能力数据联网自动更新：软件自带一份兜底（assets），联网时按 revision 更新到官方最新，
+  // 失败一律静默保留现有数据。只写落盘副本，不碰调度、不产生 UI 事件
+  zcodeBuiltin.startUpdater({ getConfig: () => rules.get("headers.json").zcode });
   // 网关随应用启动：设置页已移除「记住网关开关」选项，打开应用即监听配置里的端口。
   // 启动失败（端口被占等）必须留痕：此前 `.catch(() => {})` 连失败原因一起丢掉，
   // 用户只会看到「网关没起来」而日志里没有任何线索
@@ -549,6 +553,7 @@ function stopTimers() {
   credits.stopScheduler();
   stopCheckinAuto();
   discovery.cancelOAuth();
+  zcodeBuiltin.stopUpdater();
 }
 
 function shutdown() {
@@ -569,12 +574,14 @@ function setRuntime(on) {
     if (!booted) return boot();
     credits.startScheduler(() => settings().creditsRefreshMin);
     startCheckinAuto();
+    zcodeBuiltin.startUpdater({ getConfig: () => rules.get("headers.json").zcode });
     events.emit({ type: "status" });
     return Promise.resolve();
   }
   credits.stopScheduler();
   stopCheckinAuto();
   discovery.cancelOAuth();
+  zcodeBuiltin.stopUpdater();
   server.stop();
   try { store.close(); } catch { /* 关闭失败无碍，句柄随进程退出 */ }
   events.emit({ type: "status" }); // 侧栏网关卡片立即回到已停止态，不等下一次轮询

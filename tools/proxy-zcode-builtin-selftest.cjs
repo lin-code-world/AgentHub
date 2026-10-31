@@ -180,5 +180,172 @@ function rel(rev) {
   ok(builtin.revision >= 43, "内置副本 revision 不低于实测基线 43");
 })();
 
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
-process.exit(fail ? 1 : 0);
+// ===== Task 4：远端拉取 / 落盘 / 定时更新（全集假 fetch，不联网、不打真上游） =====
+const os = require("node:os");
+const paths = require("node:path");
+const fsSync = require("node:fs");
+
+const INNER_URL = "https://cdn.zcode.z.ai/configs/builtin.json";
+const CONFIG = { clientConfigsUrl: "https://zcode.z.ai/api/v1/client/configs", appVersion: "4.1.10", platform: "win32-x64" };
+
+/** 合成 Response（真实 Response 对象，数据全在内存） */
+function jsonResponse(obj, status) {
+  return new Response(JSON.stringify(obj), { status: status || 200, headers: { "content-type": "application/json" } });
+}
+
+/** 两跳假 fetch：第一跳（client/configs）回 firstBody，其余 URL 回 innerBody；记录每次请求 URL */
+function twoHopFetch(firstBody, innerBody) {
+  const calls = [];
+  const fn = async (url) => {
+    calls.push(String(url));
+    return String(url).includes("client/configs") ? firstBody : innerBody;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+const okFirstHop = () => jsonResponse({ code: 0, data: { configs: { builtin_provider_config_json: INNER_URL } } });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** ⑥⑦ 落盘拒绝/采纳（临时目录，不碰用户数据） */
+function testWriteStored(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-write-"));
+  const file = paths.join(dir, "proxy", "zcode-builtin.json");
+  try {
+    ok(zb.writeStoredRelease(file, rel(44), [45]) === false, `${t}60 不比现有来源新 → false`);
+    ok(!fsSync.existsSync(file), `${t}61 被拒时连文件都不该建`);
+    ok(zb.writeStoredRelease(file, rel(45), [45]) === false, `${t}62 与现有来源同 revision 也不写`);
+    ok(zb.writeStoredRelease(file, rel(45), [43]) === true, `${t}63 比现有来源新 → true`);
+    const before = fsSync.readFileSync(file, "utf8");
+    ok(zb.writeStoredRelease(file, rel(44), [45]) === false, `${t}64 更旧 revision → false`);
+    eq(fsSync.readFileSync(file, "utf8"), before, `${t}65 被拒时文件内容一字未变`);
+    ok(zb.writeStoredRelease(file, rel(46), [45]) === true, `${t}66 更新 → true`);
+    eq(JSON.parse(fsSync.readFileSync(file, "utf8")).revision, 46, `${t}67 文件内容为新 revision`);
+    ok(zb.validateRelease(JSON.parse(fsSync.readFileSync(file, "utf8"))).ok, `${t}68 落盘内容仍是上游原始形状（stored 来源可直接读）`);
+  } finally {
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** ④①②③⑤ 远端拉取的两跳请求与畸形拒绝 */
+async function testRemoteFetch(t, zb) {
+  {
+    const f = twoHopFetch(jsonResponse({ code: 7, data: {} }), jsonResponse(rel(44)));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f }), null, `${t}40 业务码非 0 → null`);
+    eq(f.calls.length, 1, `${t}41 业务码非 0 时不发第二跳`);
+  }
+  {
+    const f = twoHopFetch(jsonResponse({ code: 0, data: { configs: {} } }), jsonResponse(rel(44)));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f }), null, `${t}42 缺内置配置字段 → null`);
+  }
+  {
+    const bad = rel(44);
+    bad.schemaVersion = 2;
+    const f = twoHopFetch(okFirstHop(), jsonResponse(bad));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f }), null, `${t}43 下载体 schemaVersion 非 1 → null`);
+    eq(f.calls.length, 2, `${t}44 畸形体在校验下载体时才被拒（走了两跳）`);
+  }
+  {
+    const f = twoHopFetch(okFirstHop(), jsonResponse(rel(44)));
+    const out = await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f });
+    ok(out && out.revision === 44, `${t}45 正常两跳返回 revision 44 的 release`);
+    eq(f.calls.length, 2, `${t}46 正常路径正好两跳`);
+    ok(f.calls[0].includes("app_version=4.1.10") && f.calls[0].includes("platform=win32-x64"), `${t}47 第一跳带版本与平台参数`);
+    eq(f.calls[1], INNER_URL, `${t}48 第二跳取内置配置 URL`);
+  }
+  {
+    const f = twoHopFetch(okFirstHop(), jsonResponse(rel(44)));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, clientConfigsUrl: "https://u:p@zcode.z.ai/api/v1/client/configs", fetchImpl: f }), null, `${t}49 带用户名密码的 URL → null`);
+    eq(f.calls.length, 0, `${t}50 带用户名密码时一次请求都不发`);
+  }
+  {
+    // 网络异常（非 abort）一律转 null 且不外泄：更新循环绝不能因一次抖动中断
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      const boom = async () => {
+        throw new Error("boom");
+      };
+      eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: boom }), null, `${t}51 fetch 抛异常 → null（不抛给调用方）`);
+    } finally {
+      console.warn = orig;
+    }
+  }
+  {
+    // 超大响应体：content-length 超限时不读正文
+    const big = new Response("x", { status: 200, headers: { "content-length": String(11 * 1024 * 1024) } });
+    const f = twoHopFetch(big, jsonResponse(rel(44)));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f }), null, `${t}52 第一跳超 10MB → null`);
+  }
+}
+
+/** ⑧⑨⑩ 定时更新：延迟首拉、成功后失效缓存、失败保留旧数据、stopUpdater 彻底停 */
+async function testUpdater(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-updater-"));
+  const deps = {
+    storedFile: paths.join(dir, "proxy", "zcode-builtin.json"),
+    clientDirs: [],
+    builtinFile: paths.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json"),
+  };
+  try {
+    const f = twoHopFetch(okFirstHop(), jsonResponse(rel(44)));
+    zb.startUpdater({ getConfig: () => CONFIG, fetchImpl: f, deps, initialDelayMs: 10, successMs: 40 });
+    await sleep(150);
+    eq(JSON.parse(fsSync.readFileSync(deps.storedFile, "utf8")).revision, 44, `${t}70 启动延迟后拉取并落盘 revision 44`);
+    const resolved = zb.resolveModelRules(deps);
+    eq(resolved.origin, "stored", `${t}71 落盘后解析命中 stored 来源`);
+    eq(resolved.revision, 44, `${t}72 落盘后解析拿到新数据（成功即失效缓存）`);
+    ok(f.calls.length >= 2, `${t}73 成功后按成功间隔继续调度下一轮`);
+    zb.stopUpdater();
+    const after = f.calls.length;
+    await sleep(120);
+    eq(f.calls.length, after, `${t}74 stopUpdater 后定时器与在途流程全停，不再发请求`);
+
+    // 失败退避：静默保留旧数据、不抛错、不改落盘副本
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      const boom = async () => {
+        throw new Error("boom");
+      };
+      zb.startUpdater({ getConfig: () => CONFIG, fetchImpl: boom, deps, initialDelayMs: 5, failBaseMs: 10, failMaxMs: 20 });
+      await sleep(80);
+      zb.stopUpdater();
+    } finally {
+      console.warn = orig;
+    }
+    eq(JSON.parse(fsSync.readFileSync(deps.storedFile, "utf8")).revision, 44, `${t}75 持续失败不回退落盘副本（仍是 44）`);
+
+    // 无配置时不发请求（配置热加载后自然恢复）
+    const f2 = twoHopFetch(okFirstHop(), jsonResponse(rel(45)));
+    zb.startUpdater({ getConfig: () => ({}), fetchImpl: f2, deps, initialDelayMs: 5, failBaseMs: 10 });
+    await sleep(60);
+    zb.stopUpdater();
+    eq(f2.calls.length, 0, `${t}76 未配置 clientConfigsUrl 时不发请求`);
+  } finally {
+    zb.stopUpdater();
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+(async () => {
+  try {
+    // RED 阶段：函数不存在时给出可读的失败信息，而不是 TypeError 直接崩掉
+    ok(typeof zb.fetchRemoteRelease === "function", "应导出 fetchRemoteRelease");
+    ok(typeof zb.writeStoredRelease === "function", "应导出 writeStoredRelease");
+    ok(typeof zb.startUpdater === "function", "应导出 startUpdater");
+    ok(typeof zb.stopUpdater === "function", "应导出 stopUpdater");
+    if (fail) {
+      console.log(`\n结果：${pass} 通过 / ${fail} 失败（前置断言未通过，跳过后续用例）`);
+      process.exit(1);
+    }
+    await testWriteStored("writeStoredRelease ", zb);
+    await testRemoteFetch("fetchRemoteRelease ", zb);
+    await testUpdater("updater ", zb);
+  } catch (e) {
+    fail++;
+    console.log(`  ✗ 测试脚本异常：${(e && e.stack) || e}`);
+  }
+  console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
+  process.exit(fail ? 1 : 0);
+})();

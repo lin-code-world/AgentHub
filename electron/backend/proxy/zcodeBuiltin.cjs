@@ -16,6 +16,9 @@
 // 独立出来，后续任务再在它里面加文件 IO 与联网更新，供 zcodeLocal.resolveModelMeta()
 // 消费——测试也就能在纯函数层完成，不依赖真客户端。
 "use strict";
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 // ===== mapModelRules =====
 
@@ -250,6 +253,277 @@ function cachedModelRules() {
   return _lastGoodRules;
 }
 
+// ===== 落盘副本路径与来源 deps（与 zcodeLocal._modelRulesDeps 的三来源口径一致） =====
+
+/** 落盘副本路径：本机数据目录下的 proxy/zcode-builtin.json（resolveModelRules 的 stored 来源） */
+function storedReleasePath() {
+  return path.join(require("../config.cjs").dataDir(), "proxy", "zcode-builtin.json");
+}
+
+/** 三来源 deps：与 zcodeLocal._modelRulesDeps 同口径（客户端副本目录走 ZCODE_V2_DIR 沙箱钩子）。
+ *  放在本模块是为了让更新器自己就能算出"全部现有来源的最大 revision"，不必反向依赖 zcodeLocal
+ *  （zcodeLocal 依赖本模块，反向 require 会成环）。 */
+function defaultRulesDeps() {
+  const v2 = process.env.ZCODE_V2_DIR || path.join(os.homedir(), ".zcode", "v2");
+  return {
+    storedFile: storedReleasePath(),
+    clientDirs: [path.join(v2, "runtime", "provider")],
+    builtinFile: path.join(__dirname, "assets", "zcode-builtin.json"),
+  };
+}
+
+// ===== 远端拉取（联网自动更新） =====
+
+// 单跳超时 20s；正文上限 10MB（官方内置配置体实测远小于此，纯防畸形/超大响应）
+const REMOTE_TIMEOUT_MS = 20000;
+const REMOTE_BODY_LIMIT = 10 * 1024 * 1024;
+
+/** URL 允许性：只放行 http(s)，且绝不允许带用户名密码——凭据会随请求行/日志外泄给第三方域 */
+function isSafeRemoteUrl(raw) {
+  try {
+    const u = new URL(String(raw));
+    if (u.username || u.password) return false;
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/** 单跳信号：自身超时，可选叠加外部中止信号（stopUpdater 能立刻掐断在途请求） */
+function deadlineSignal(ms, outer) {
+  const timeout = AbortSignal.timeout(ms);
+  return outer ? AbortSignal.any([timeout, outer]) : timeout;
+}
+
+/** 读取响应正文并限体积：先看 content-length（有就早退），再流式累计（无该头也不至于被撑爆内存） */
+async function readBodyLimited(resp, limit) {
+  try {
+    const len = Number(resp.headers && typeof resp.headers.get === "function" ? resp.headers.get("content-length") : NaN);
+    if (Number.isFinite(len) && len > limit) return null;
+    if (resp.body && typeof resp.body.getReader === "function") {
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value && value.byteLength ? value.byteLength : 0;
+        if (total > limit) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* 取消失败无碍 */
+          }
+          return null;
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    }
+    const text = await resp.text();
+    return Buffer.byteLength(text, "utf8") > limit ? null : text;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 官方两跳拉取：GET {clientConfigsUrl}?app_version=..&platform=.. → data.configs.builtin_provider_config_json
+ * （一个 URL 字符串）→ GET 它拿最终配置 JSON。
+ * 一切失败（网络、超时、业务码非 0、字段缺失、畸形、超限）统一返回 null，绝不抛：
+ * 更新循环靠"拿到 null 就沿用现有数据"兜底，一次抖动不能让模型能力退化。
+ * 返回的是**上游原始形状**的 JSON（与 assets/zcode-builtin.json 同形状），
+ * 这样落盘副本能被 resolveModelRules 的 stored 来源直接读。
+ */
+async function fetchRemoteRelease(opts) {
+  const o = opts || {};
+  const fetchImpl = o.fetchImpl || globalThis.fetch;
+  const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : REMOTE_TIMEOUT_MS;
+  const outer = o.signal || null;
+  const init = (signal) => ({ method: "GET", redirect: "error", credentials: "omit", signal });
+  try {
+    if (typeof fetchImpl !== "function") return null;
+    const base = String(o.clientConfigsUrl || "");
+    if (!base || !isSafeRemoteUrl(base)) return null;
+
+    const first = await fetchImpl(buildClientConfigsUrl(base, o.appVersion, o.platform), init(deadlineSignal(timeoutMs, outer)));
+    if (!first || !first.ok) return null;
+    const firstText = await readBodyLimited(first, REMOTE_BODY_LIMIT);
+    if (!firstText) return null;
+    let firstJson = null;
+    try {
+      firstJson = JSON.parse(firstText);
+    } catch {
+      return null;
+    }
+    if (!firstJson || firstJson.code !== 0) return null;
+    const inner = ((firstJson.data || {}).configs || {}).builtin_provider_config_json;
+    if (typeof inner !== "string" || !inner.trim() || !isSafeRemoteUrl(inner)) return null;
+
+    const second = await fetchImpl(inner, init(deadlineSignal(timeoutMs, outer)));
+    if (!second || !second.ok) return null;
+    const secondText = await readBodyLimited(second, REMOTE_BODY_LIMIT);
+    if (!secondText) return null;
+    let json = null;
+    try {
+      json = JSON.parse(secondText);
+    } catch {
+      return null;
+    }
+    return validateRelease(json).ok ? json : null;
+  } catch (e) {
+    // 主动中止（stopUpdater）静默；其余异常留一条诊断线索，但一律按"本次没拿到"处理
+    if (!(e && e.name === "AbortError")) console.warn("[zcode] 远端模型配置拉取失败，沿用现有数据：" + ((e && e.message) || e));
+    return null;
+  }
+}
+
+/**
+ * 采纳远端 release 落盘：**仅当 release.revision 大于全部现有来源（落盘副本 / 客户端副本 / 内置副本）
+ * 的最大 revision** 时写入，返回是否写入。
+ * 为什么比"全部来源"而不是只比落盘副本：外部来源已经更新、而远端落后时写入会把整体能力写退
+ * （stored 一份较旧数据仍可能因其它来源不可用而胜出）——这是本方案要防的第一号风险。
+ * 落盘口径复用 zcodeLocal.atomicWriteJson（临时文件 + rename），避免半截文件被下次解析读到。
+ */
+function writeStoredRelease(file, release, otherRevisions) {
+  try {
+    const rev = Number((release || {}).revision);
+    if (!file || !Number.isInteger(rev) || rev <= 0) return false;
+    const others = Array.isArray(otherRevisions) ? otherRevisions : [];
+    let maxOther = 0;
+    for (const r of others) {
+      const n = Number(r);
+      if (Number.isFinite(n) && n > maxOther) maxOther = n;
+    }
+    if (rev <= maxOther) return false;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // 延迟 require：zcodeLocal 依赖本模块，顶部 require 会成环取到未完成的导出
+    require("./zcodeLocal.cjs").atomicWriteJson(file, release);
+    return true;
+  } catch (e) {
+    console.warn("[zcode] 模型配置落盘失败，沿用现有数据：" + ((e && e.message) || e));
+    return false;
+  }
+}
+
+// ===== 定时更新 =====
+
+// 首拉延迟 10s：启动阶段不与网关初始化/库迁移抢 IO，也不至于让新机器等太久
+// 成功间隔 1h：官方 revision 变更不频繁，一小时一次足够及时
+// 失败退避 15min 起、每次翻倍、上限 6h：上游异常时降低打点频率，又不至于长时间不重试
+const UPDATER_FIRST_DELAY_MS = 10 * 1000;
+const UPDATER_SUCCESS_MS = 60 * 60 * 1000;
+const UPDATER_FAIL_BASE_MS = 15 * 60 * 1000;
+const UPDATER_FAIL_MAX_MS = 6 * 60 * 60 * 1000;
+
+// 当前更新器状态（单例）。null = 未启动/已停止。
+let _updater = null;
+
+/** 退避时长：首次失败取基值，之后每次翻倍、封顶上限 */
+function nextFailDelay(st) {
+  st.failMs = st.failMs ? Math.min(st.failMs * 2, st.failMaxMs) : st.failBaseMs;
+  return st.failMs;
+}
+
+/** 用 setTimeout 链调度（而非固定 setInterval）：间隔要随成败动态变化。
+ *  定时器 unref：退出流程 await shutdown 时不必等下一次拉取。 */
+function scheduleUpdater(st, ms) {
+  if (st.stopped || _updater !== st) return;
+  st.timer = setTimeout(() => {
+    st.timer = null;
+    void updaterTick(st);
+  }, ms);
+  if (st.timer && typeof st.timer.unref === "function") st.timer.unref();
+}
+
+/** 单轮：拉取 → 比 revision → 落盘 → 失效缓存。成败只影响下一轮间隔，绝不外抛。 */
+async function updaterTick(st) {
+  if (st.stopped || _updater !== st) return;
+  let nextMs = st.successMs;
+  try {
+    const cfg = st.opts.getConfig() || {};
+    const url = String(cfg.clientConfigsUrl || "");
+    if (!url) {
+      // 还没配（或配置被临时清空）：按失败退避等下一轮，配置热加载后自然拿到
+      nextMs = nextFailDelay(st);
+      return;
+    }
+    const controller = new AbortController();
+    st.controller = controller;
+    const release = await fetchRemoteRelease({
+      clientConfigsUrl: url,
+      appVersion: cfg.appVersion,
+      platform: cfg.platform,
+      fetchImpl: st.opts.fetchImpl,
+      signal: controller.signal,
+    });
+    if (st.controller === controller) st.controller = null;
+    if (st.stopped || _updater !== st) return;
+    if (!release) {
+      nextMs = nextFailDelay(st);
+      return;
+    }
+    st.failMs = 0;
+    const deps = st.opts.deps || defaultRulesDeps();
+    // 现有来源最大 revision：resolveModelRules 的结论本身就是三来源取最大（pickLatestRelease 语义），
+    // 直接复用它，不另写一遍比较逻辑
+    const current = resolveModelRules(deps);
+    const others = current && Number.isFinite(Number(current.revision)) ? [Number(current.revision)] : [];
+    if (writeStoredRelease(deps.storedFile, release, others)) {
+      invalidateModelRules(); // 唯一显式失效入口：下次解析重读落盘副本
+      console.log(`[zcode] 模型能力数据已更新到 revision ${release.revision}`);
+    }
+    nextMs = st.successMs;
+  } catch (e) {
+    nextMs = nextFailDelay(st);
+    console.warn("[zcode] 模型配置更新轮次异常，沿用现有数据：" + ((e && e.message) || e));
+  } finally {
+    scheduleUpdater(st, nextMs);
+  }
+}
+
+/** 启动联网更新（幂等：重复调用先停旧的）。getConfig 返回 zcode 渠道配置段
+ *  （含 clientConfigsUrl / appVersion / platform，直接读 rules.get("headers.json").zcode）；
+ *  fetchImpl / deps / 各类间隔仅作自测注入用，生产走默认值。 */
+function startUpdater(opts) {
+  stopUpdater();
+  const o = opts || {};
+  if (typeof o.getConfig !== "function") return;
+  const st = {
+    opts: o,
+    stopped: false,
+    timer: null,
+    controller: null,
+    failMs: 0,
+    firstDelayMs: Number(o.initialDelayMs) > 0 ? Number(o.initialDelayMs) : UPDATER_FIRST_DELAY_MS,
+    successMs: Number(o.successMs) > 0 ? Number(o.successMs) : UPDATER_SUCCESS_MS,
+    failBaseMs: Number(o.failBaseMs) > 0 ? Number(o.failBaseMs) : UPDATER_FAIL_BASE_MS,
+    failMaxMs: Number(o.failMaxMs) > 0 ? Number(o.failMaxMs) : UPDATER_FAIL_MAX_MS,
+  };
+  _updater = st;
+  scheduleUpdater(st, st.firstDelayMs);
+}
+
+/** 停掉定时器与在途请求（幂等）。停掉后不再有任何拉取动作，定时器不残留。 */
+function stopUpdater() {
+  const st = _updater;
+  if (!st) return;
+  st.stopped = true;
+  _updater = null;
+  if (st.timer) {
+    clearTimeout(st.timer);
+    st.timer = null;
+  }
+  if (st.controller) {
+    try {
+      st.controller.abort();
+    } catch {
+      /* 请求可能刚结束 */
+    }
+    st.controller = null;
+  }
+}
+
 module.exports = {
   mapModelRules,
   validateRelease,
@@ -258,4 +532,8 @@ module.exports = {
   resolveModelRules,
   cachedModelRules,
   invalidateModelRules,
+  fetchRemoteRelease,
+  writeStoredRelease,
+  startUpdater,
+  stopUpdater,
 };
