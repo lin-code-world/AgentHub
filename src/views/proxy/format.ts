@@ -223,14 +223,6 @@ export const ACCOUNT_STATUS: Record<string, { text: string; cls: string }> = {
   disabled: { text: "已停用", cls: "tag-dim" },
 };
 
-/** 账号来源 → 文案 */
-export const SOURCE_NAMES: Record<string, string> = {
-  scan: "本机导入",
-  oauth: "OAuth 登录",
-  paste: "手动粘贴",
-  json: "文件导入",
-};
-
 /** HTTP 状态 → 标签类 */
 export const statusCls = (s: number) => (s >= 200 && s < 300 ? "tag-ok" : s >= 500 ? "tag-err" : s >= 400 ? "tag-warn" : "tag-dim");
 

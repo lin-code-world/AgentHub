@@ -16,7 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import type { ProxyChannelView, ProxyAccount, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier, ProxyScanCandidate, ProxyCheckinRow, ZcodeDeviceRow } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, SOURCE_NAMES, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr, fmtDetailNum } from "./format";
+import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr, fmtDetailNum } from "./format";
 // 顶部渠道切换（收起态方块）与「上游启闭」弹窗共用同一份渠道图标映射
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
@@ -38,12 +38,12 @@ function togglePkg(id: string) {
   expandedIds.value = next;
 }
 /** 整行点击切换展开：有套餐明细的账号行，点行内任意空白（副行 / 余额 / 到期等）即展开收起，不必点中箭头。
- *  行内交互元素（按钮 / 输入框 / 重命名 / UID / 备注 / 状态标签）经 closest 统一豁免，
+ *  行内交互元素（按钮 / 输入框 / 重命名 / 备注 / 状态标签）经 closest 统一豁免，
  *  新增按钮无需逐个 .stop，天然不误触 */
 function onRowClick(e: MouseEvent, acc: ProxyAccount) {
   if (!acc.packages || !acc.packages.length) return;
   const t = e.target as HTMLElement | null;
-  if (t && t.closest("button, input, .acc-name, .status-tag, .acc-uid, .acc-note")) return;
+  if (t && t.closest("button, input, .acc-name, .status-tag, .acc-note")) return;
   togglePkg(acc.id);
 }
 /** 已用占比（进度条宽度 %）：total<=0 或「不限」时不画条（模板那端已用 v-if 拦住） */
@@ -142,6 +142,10 @@ const oauthMsg = ref("");
 const oauthMode = ref("");
 // Cline 设备授权返回的用户码（浏览器授权页已预填；显示出来供用户改用普通授权页时手动输码）
 const oauthUserCode = ref("");
+// ZCode 登录账号来源二选一（Z.ai 国际站 / BigModel 开放平台），默认 Z.ai。
+// 该值随「打开登录页」与「粘贴兜底提交」一起送到主进程：选错会在兑换凭据时按错误的一方取值而失败。
+// 其余渠道不使用它（主进程按渠道自行决定，传了也被忽略）。
+const zcodeProvider = ref<"zai" | "bigmodel">("zai");
 // 浏览器没跳回回环地址时的兜底：把地址栏整段粘回来
 const callbackInput = ref("");
 const callbackBusy = ref(false);
@@ -224,6 +228,10 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // ModelScope（魔搭）凭据形态特殊：不是 JSON 快照，而是 ms- 访问令牌。
   // 故它的「粘贴」页签改为专用令牌输入（见 tokenPane），并隐藏不适用的两种 JSON 方式。
   if (channel === "modelscope" && (key === "file" || key === "local")) return false;
+  // ZCode 的「从本机软件导入」已下线（凭据只能走 OAuth 登录或粘贴凭据导入）：
+  // 后端同样拒绝（见 discovery.isScanImportAllowed / index.cjs 的 proxy_scan_import），
+  // 这里隐藏页签只挡正常操作，绕过界面直接调接口那一路由后端兜底。
+  if (channel === "zcode" && key === "local") return false;
   // MonkeyCode：只保留「OAuth 登录」（应用内弹窗登录）。凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态，
   // 本机也没有可扫描的客户端登录态 —— 其余三种途径全部隐藏，后端也一并关掉了导入（见 index.cjs 的 OAUTH_ONLY）
   if (channel === "monkeycode" || channel === "monkeycode_intl") return key === "oauth";
@@ -291,8 +299,8 @@ const OAUTH_HELP: Record<string, { title: string; desc: string }> = {
     desc: "跳转官方登录页（lobsterai.youdao.com），登录完成后回调本机回环地址自动入池——<b>无需本机安装 LobsterAI 客户端</b>，也无需手动粘贴回调。<br />每账号独立执行一次，可反复添加多账号；3 分钟无响应即超时。<br />入池后可「每日签到」领 100 积分（常驻活动，桌面端侧边栏同款）。",
   },
   zcode: {
-    title: "用 Z.ai 官方授权页登录 ZCode（智谱）",
-    desc: "跳转 Z.ai 授权页完成登录后，本机按服务端轮询自动完成入池（无需粘贴回调）。<br />登录后后台自动初始化套餐并解析编码套餐 API Key（约几十秒），期间账号已可用于 Start 套餐对话。<br />若浏览器停在 zcode:// 回调页，可把地址栏整段粘到下方兜底。",
+    title: "用 Z.ai / BigModel 官方授权页登录 ZCode（智谱）",
+    desc: "先选好登录账号来源：<b>Z.ai</b>（智谱国际站）或 <b>BigModel</b>（智谱开放平台）——BigModel 的账号请选 BigModel，选错会在兑换凭据时失败。<br />跳转对应授权页完成登录后，本机按服务端轮询自动完成入池（无需粘贴回调）。<br />登录后后台自动初始化套餐并解析编码套餐 API Key（约几十秒），期间账号已可用于 Start 套餐对话。<br />若浏览器停在 zcode:// 回调页，可把地址栏整段粘到下方兜底。",
   },
   qoder: {
     title: "用 Qoder 官方登录页登录",
@@ -1184,7 +1192,7 @@ async function beginOauth() {
   oauthUserCode.value = "";
   callbackMsg.value = "";
   try {
-    const r = await api.proxyOauthBegin(addChannel.value);
+    const r = await api.proxyOauthBegin(addChannel.value, addChannel.value === "zcode" ? zcodeProvider.value : undefined);
     if (r.ok === false) {
       oauthMsg.value = r.message || "无法启动登录";
       oauthWaiting.value = false;
@@ -1341,7 +1349,7 @@ async function submitCallback() {
   callbackBusy.value = true;
   callbackMsg.value = "";
   try {
-    const r = await api.proxyOauthSubmitCallback(addChannel.value, callbackInput.value.trim());
+    const r = await api.proxyOauthSubmitCallback(addChannel.value, callbackInput.value.trim(), addChannel.value === "zcode" ? zcodeProvider.value : undefined);
     callbackMsg.value = r.ok ? "已提交，正在换取凭据…" : r.message || "提交失败";
     if (r.ok) callbackInput.value = "";
   } catch (e) {
@@ -1588,20 +1596,6 @@ function modelCoolTitle(acc: ProxyAccount): string {
 /** 气泡里展示的绝对时间点（HH:mm:ss） */
 function fmtClock(ts: number): string {
   return new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
-}
-
-// ===== UID 查看（列表副行只显示「UID」小按钮，点击弹小窗看全文 + 复制） =====
-const uidRow = ref<ProxyAccount | null>(null);
-const uidCopied = ref(false);
-async function copyUid() {
-  if (!uidRow.value?.uid) return;
-  try {
-    await navigator.clipboard.writeText(uidRow.value.uid);
-    uidCopied.value = true;
-    setTimeout(() => (uidCopied.value = false), 1600);
-  } catch {
-    toast("复制失败，请手动选择复制", "err");
-  }
 }
 
 // ===== 最近错误小窗（点击状态标签弹出）：只展示错误全文本身，液态玻璃小卡 =====
@@ -1911,21 +1905,13 @@ onUnmounted(() => {
                       @keydown.esc="renamingId = ''"
                     />
                       <span class="acc-sub">
-                      <span class="acc-src">{{ SOURCE_NAMES[acc.source] || acc.source }}</span>
-                      <i>·</i>
-                      <el-tooltip :content="acc.uid ? '点击查看完整 UID' : ''" :disabled="!acc.uid" placement="top">
-                        <button class="acc-uid mono" :disabled="!acc.uid" @click="uidRow = acc">
-                          {{ acc.uid ? "UID" : "无 UID" }}
-                        </button>
-                      </el-tooltip>
                       <template v-if="acc.note">
-                        <i>·</i>
                         <el-tooltip :content="`${acc.note}（点击编辑备注）`" placement="top">
                           <span class="acc-note" @click="openNote(acc)">{{ acc.note }}</span>
                         </el-tooltip>
                       </template>
                       <template v-if="acc.liveHere">
-                        <i>·</i>
+                        <i v-if="acc.note">·</i>
                         <el-tooltip :content="`${ch.display} 客户端在本机当前登录的就是这个账号`" placement="top">
                           <span class="tag tag-info acc-live"><i class="ph ph-desktop-tower"></i>本机登录</span>
                         </el-tooltip>
@@ -2141,6 +2127,15 @@ onUnmounted(() => {
               <div class="add-pane-icon"><i class="ph ph-key"></i></div>
               <div class="add-pane-title">{{ OAUTH_HELP[addChannel]?.title || "用官方登录页登录" }}</div>
               <div class="add-pane-desc" v-html="OAUTH_HELP[addChannel]?.desc || ''"></div>
+              <!-- ZCode：登录账号来源二选一（Z.ai / BigModel）——两家授权页与凭据字段不同，必须由用户指明；
+                   该选择随「打开登录页」与下方「粘贴兜底提交」一起送主进程 -->
+              <div v-if="addChannel === 'zcode'" class="cb-row" style="justify-content: center; margin-top: 12px">
+                <span class="paste-label" style="margin: 0 8px 0 0">登录账号来源</span>
+                <el-select v-model="zcodeProvider" class="f-el-select" popper-class="glass-popper" :disabled="oauthWaiting" style="width: 200px" aria-label="选择 ZCode 登录账号来源">
+                  <el-option label="Z.ai（智谱国际站）" value="zai" />
+                  <el-option label="BigModel（智谱开放平台）" value="bigmodel" />
+                </el-select>
+              </div>
               <!-- 回环/内嵌窗口模式兜底：浏览器（或授权窗）没自动完成时，整段粘贴回调地址 -->
               <div v-if="(oauthMode === 'loopback' || oauthMode === 'manual' || oauthMode === 'window' || addChannel === 'zcode') && oauthWaiting" class="cb-row">
                 <input
@@ -2596,19 +2591,6 @@ onUnmounted(() => {
             <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
               <span><button class="btn btn-primary" :disabled="devBusy || !devHasIssue || deviceGate.disabled" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button></span>
             </el-tooltip>
-          </div>
-        </div>
-      </div>
-
-      <!-- UID 查看弹窗：全文展示 + 一键复制（列表副行显示缩略，点击看全文） -->
-      <div v-if="uidRow" class="p-mask" @click.self="uidRow = null">
-        <div class="p-dlg glass uid-dlg">
-          <div class="p-title">账号 UID</div>
-          <div class="set-desc">{{ uidRow.name }}（{{ channelName(uidRow.channel) }}）</div>
-          <div class="uid-text mono">{{ uidRow.uid || "-" }}</div>
-          <div class="p-actions">
-            <button class="btn" @click="uidRow = null">关闭</button>
-            <button class="btn btn-primary" :disabled="!uidRow.uid" @click="copyUid">{{ uidCopied ? "已复制" : "复制 UID" }}</button>
           </div>
         </div>
       </div>
@@ -3501,10 +3483,6 @@ onUnmounted(() => {
   line-height: 1.7;
   color: var(--text-3);
 }
-/* ===== UID 查看弹窗 ===== */
-.uid-dlg {
-  width: 400px;
-}
 /* ===== 备注弹窗 ===== */
 .note-dlg {
   width: 420px;
@@ -3512,17 +3490,6 @@ onUnmounted(() => {
 .note-input {
   margin-top: 10px;
   width: 100%;
-}
-.uid-text {
-  margin-top: 10px;
-  padding: 11px 12px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-soft);
-  font-size: 12.5px;
-  letter-spacing: 0.4px;
-  word-break: break-all;
-  user-select: all;
 }
 
 /* ===== 列表布局：账号两行式 + 列值居中 ===== */
@@ -3705,10 +3672,6 @@ onUnmounted(() => {
   opacity: 0.6;
   flex-shrink: 0;
 }
-.acc-src {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
 /* 「本机登录」徽标：本机 agent 客户端当前登录的就是这个账号（与全局 tag 同构，自带小图标） */
 .acc-live {
   display: inline-flex;
@@ -3719,24 +3682,6 @@ onUnmounted(() => {
 }
 .acc-live .ph {
   font-size: 11px;
-}
-/* UID 小按钮：只显示「UID」二字，全文点击弹窗看 */
-.acc-uid {
-  flex-shrink: 0;
-  border: 1px solid var(--line-strong);
-  background: none;
-  padding: 0 6px;
-  border-radius: var(--r-pill);
-  color: var(--text-3);
-  font-size: 10px;
-  line-height: 16px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s, border-color 0.15s;
-}
-.acc-uid:hover:not(:disabled) {
-  color: var(--accent-strong);
-  border-color: var(--accent-line);
 }
 /* 备注缩略（有则显示）：副行剩余空间内收缩出省略号，全文由 tooltip 与备注弹窗展示 */
 .acc-note {
