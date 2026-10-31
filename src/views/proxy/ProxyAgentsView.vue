@@ -559,8 +559,8 @@ function gotoLog() {
 }
 
 // ===== 每日签到（各渠道形态不同：Trae ug 签到 / WB 中国区 daily-checkin /
-//        国际版走「trial 加油包 + 每日活跃保活三件事」—— 上游没有签到体系，
-//        每日奖励的判定挂在活跃上报/免费模型对话/网页会话上，见 server 侧 dailyActivity） =====
+//        国际版走「trial 加油包」—— 上游没有签到体系。原「每日活跃保活三件事」
+//        （活跃上报 / 免费模型对话 / 网页会话）已于 2026-10-31 移除，见 server 侧注释） =====
 
 function checkinTagCls(r: ProxyCheckinRow) {
   if (!r.ok) return r.needCaptcha || r.deviceBurned ? "tag-warn" : "tag-err";
