@@ -1013,12 +1013,13 @@ function _modelRulesDeps() {
 }
 
 /** 读取模型能力规则：三来源取最新（resolveModelRules 内部有按来源 mtime 的缓存，失败只跳过来源）。
- *  返回 ModelRule[]；全部来源不可用时退回缓存兜底，再不行返回 [] 让 resolveModelMeta 退化回默认值。 */
+ *  返回 ModelRule[]；本次三来源全不可用时退回**最近一次成功解析**的规则兜底，
+ *  从未成功过再返回 [] 让 resolveModelMeta 退化回默认值。 */
 function readClientModelRules() {
   const deps = _modelRulesDeps();
   const res = resolveModelRules(deps);
   if (res && Array.isArray(res.rules)) return res.rules;
-  // 三来源全挂，退回进程内缓存（可能是上一次成功解析留下的结果）
+  // 本次读盘失败，退回 cachedModelRules()（最近一次成功解析留下的规则，不是"刚被置空的本次实况"）
   return cachedModelRules();
 }
 

@@ -22,8 +22,8 @@
 /** 把上游 modelRules 数组映射成统一 ModelRule[] 形状：
  *  输入（上游 JSON）：[{ modelMatch, config: { properties: { contextWindow?, inputFormat? }, optionSpecs: { maxOutputTokens: { max }? } } }]
  *  输出：[{ re, fmt, contextWindow, maxOutputTokens }] —— 只保留有 re 的规则，过滤无效条目。
- *  这份函数是 zcodeBuiltin（校验）与 zcodeLocal（读客户端文件）两处对同一份上游数据的唯一映射口径。
- *  语义逐字等价于 zcodeLocal 既有实现，不改 "contextWindow 为 0 被 Number()||undefined 吞掉" 的既有行为。 */
+ *  这是全仓对上游 modelRules 的唯一映射口径（zcodeLocal 已不再持有映射逻辑，一律经本模块）。
+ *  不改 "contextWindow 为 0 被 Number()||undefined 吞掉" 的既有行为。 */
 function mapModelRules(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -45,7 +45,7 @@ function mapModelRules(list) {
 // ===== validateRelease =====
 
 /** 校验 release JSON 并映射为统一 ModelRule[] 形状。
- *  规则映射口径通过 mapModelRules() 复用——与 zcodeLocal.readClientModelRules() 唯一映射源。 */
+ *  规则映射口径通过 mapModelRules() 复用——本模块内唯一映射源。 */
 function validateRelease(json) {
   if (!json || typeof json !== "object" || Array.isArray(json)) {
     return { ok: false, reason: "release 不是对象" };
@@ -114,7 +114,7 @@ function resolveModelRules(deps) {
   const builtinFile = d.builtinFile || "";
   const clientDirs = Array.isArray(d.clientDirs) ? d.clientDirs.filter(Boolean) : [];
 
-  // 收集客户端目录下所有 zcode-builtin.json（深度 4，复用 zcodeLocal.findClientBuiltin 的搜索规则）
+  // 收集客户端目录下所有 zcode-builtin.json（深度 4 递归；这是全仓唯一一份该扫描逻辑）
   const clientFiles = [];
   const walk = (dir, depth) => {
     if (depth > 4) return;
@@ -184,12 +184,14 @@ function resolveModelRules(deps) {
   pushStat("stored", storedFile);
   // clientDirs 可能多个，把每个目录的 stat 都计入
   clientDirs.forEach((root, i) => pushStat(`clientDir[${i}]`, root));
-  // 客户端找到的文件（按路径排序稳定化）也计入 key——因为 findClientBuiltin 是按目录递归，文件可能随客户端更新
+  // 客户端找到的文件（按路径排序稳定化）也计入 key——客户端可能在 runtime/provider 下留多份副本，随更新增减
   clientFiles.sort().forEach((p, i) => pushStat(`clientFile[${i}]`, p));
   pushStat("builtin", builtinFile);
   const cacheKey = cacheKeyParts.join("|");
 
-  if (_resolveCache.key === cacheKey && _resolveCache.value) {
+  // 命中缓存：key 未变说明三个来源自上次读盘以来没动过，直接复用上次读盘的结论
+  // （结论可能为 null——即"上次读时三来源都不可用"，此时也确实没有重新读盘的必要）。
+  if (_resolveCache.hasValue && _resolveCache.key === cacheKey) {
     return _resolveCache.value;
   }
 
@@ -212,28 +214,40 @@ function resolveModelRules(deps) {
   const picked = pickLatestRelease(sources);
   const result = picked ? { origin: picked.origin, revision: picked.revision, rules: picked.raw } : null;
 
+  // 记录"本次读盘的结论"（可能为 null）。key 照记，所以来源被写坏（mtime 变）后下次仍会重新读盘，
+  // 不会永远吃旧 key。
   _resolveCache.key = cacheKey;
   _resolveCache.value = result;
+  _resolveCache.hasValue = true;
+  // 最近一次**成功**解析的规则单独保留：本次失败（result 为 null）时不覆盖，
+  // 保证三来源暂时读不出来时，调用方仍能沿用已经拿到的规则（见 cachedModelRules()）。
+  if (result) _lastGoodRules = result.rules;
   return result;
 }
 
-// resolveModelRules 的按来源 mtime 缓存。value 同时承载"哪个来源胜出"与"规则内容"，
-// 命中缓存提前 return 时读的也是同一对象——两层状态合一，不会出现"命中缓存却读到空规则"的分裂。
-const _resolveCache = { key: "", value: null };
+// resolveModelRules 的按来源 mtime 缓存。key/value 描述"最近一次读盘的实况"：
+// value 可能为 null（那次三来源都不可用）。hasValue 区分"读过但结论是 null"与"从未读过"。
+const _resolveCache = { key: "", value: null, hasValue: false };
 
-/** 唯一显式失效入口：清空缓存（含规则内容），下次 resolveModelRules 重新读三个来源。
+// 最近一次成功解析出的规则（cachedModelRules() 的唯一来源）：只在解析成功时更新，
+// 与本函数返回的"本次实况"解耦——后者可能为 null，前者始终是上一次的好数据。
+let _lastGoodRules = [];
+
+/** 唯一显式失效入口：清空"本次实况"缓存与"最近成功规则"，下次 resolveModelRules 重新读三个来源。
  *  Task 4 更新落盘副本成功后调用它即可让新规则生效。 */
 function invalidateModelRules() {
   _resolveCache.key = "";
   _resolveCache.value = null;
+  _resolveCache.hasValue = false;
+  _lastGoodRules = [];
 }
 
 // ===== cachedModelRules =====
 
-// 供同步的 resolveModelMeta() 消费：直接暴露缓存里胜出来源的规则；
-// 缓存为空（从未解析过或已失效）返回空数组，调用方退回保守默认值。
+// 供同步的 resolveModelMeta() 消费：返回**最近一次成功解析**的规则；
+// 从未成功过（或已显式失效）返回空数组，调用方退回保守默认值。
 function cachedModelRules() {
-  return _resolveCache.value && Array.isArray(_resolveCache.value.rules) ? _resolveCache.value.rules : [];
+  return _lastGoodRules;
 }
 
 module.exports = {

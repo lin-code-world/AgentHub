@@ -854,6 +854,33 @@ async function main() {
     assert.strictEqual(zcodeBuiltin.cachedModelRules(), res2.rules, "重读后 cachedModelRules 与新结果同源");
   });
 
+  // ===== T36 来源损坏后沿用上次成功规则（回归锁：修复曾把这条兜底路径变成恒空） =====
+  // 语义：resolveModelRules() 反映"本次三来源实况"（可能 null）；cachedModelRules() 是"最近一次
+  // 成功解析的结果"，供 zcodeLocal.readClientModelRules() 在三来源全挂时兜底。
+  await T("T36 来源损坏后：resolveModelRules 返回 null（重新读盘），cachedModelRules 仍保留上次成功规则", () => {
+    const sandboxBuiltin = path.join(SANDBOX, "keep-last-good.json");
+    const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+    const body = JSON.parse(fs.readFileSync(builtinAsset, "utf8"));
+    body.revision = 70;
+    fs.writeFileSync(sandboxBuiltin, JSON.stringify(body), "utf8");
+    const deps = { storedFile: "", clientDirs: [], builtinFile: sandboxBuiltin };
+
+    const res1 = zcodeBuiltin.resolveModelRules(deps);
+    assert.ok(res1 && res1.revision === 70, `首次解析应成功（revision=70），实得 ${res1 && res1.revision}`);
+    const goodRules = zcodeBuiltin.cachedModelRules();
+    assert.ok(goodRules.length > 0, "成功后 cachedModelRules 应有规则");
+
+    // 写坏来源 + 推进 mtime → 下次必须重新读盘（不是永远吃旧 key），本次结论为 null
+    fs.writeFileSync(sandboxBuiltin, "{ 坏掉的 JSON", "utf8");
+    const future = Date.now() / 1000 + 90;
+    fs.utimesSync(sandboxBuiltin, future, future);
+    const res2 = zcodeBuiltin.resolveModelRules(deps);
+    assert.strictEqual(res2, null, "来源损坏后本次应返回 null（如实反映实况）");
+    // 关键回归锁：兜底必须仍是上次成功的那批规则，不能被本次的 null 覆盖成空
+    assert.deepStrictEqual(zcodeBuiltin.cachedModelRules(), goodRules, "cachedModelRules 必须保留上次成功规则");
+    assert.ok(zcodeBuiltin.cachedModelRules().length > 0, "兜底规则不得变空");
+  });
+
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   fs.rmSync(SANDBOX, { recursive: true, force: true });
   if (fail) {
