@@ -85,15 +85,21 @@ const DEFAULTS = {
       // chat 出站 Origin/Referer 基域（originRefererFor 实证 CN=codebuddy.cn）
       origin: "https://www.codebuddy.cn",
       // 官方桌面端指纹（逆向实证）：三段式 UA 与 IDE 归属头组，少一项都可能被风控判为网关
-      clientVersion: "5.5.4",
+      // 版本取值（2026-10-31 本机实测）：X-IDE-Version / UA 首段都取客户端自身版本，
+      // 客户端源码里就是 `WorkBuddy/${WORKBUDDY_CLIENT_VERSION}`、`WORKBUDDY_CLIENT_VERSION =
+      // process.env.WORKBUDDY_APP_VERSION`（= app.getVersion()），没有第二个取值来源。
+      // 本机 D:\work\WorkBuddy\WorkBuddy.exe 实测 5.9.3（原 5.5.4 已过期）。
+      clientVersion: "5.9.3",
+      // cliVersion 客户端取 resources/cli/package.json 的 version（本机未解出，保留原值待核）。
+      // 三段式 UA 的第三段就取它，别按 clientVersion 一起改。
       cliVersion: "2.137.1",
-      userAgent: "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1",
-      billingUA: "WorkBuddy/5.5.4",
+      userAgent: "WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.137.1",
+      billingUA: "WorkBuddy/5.9.3",
       ideName: "WorkBuddy",
       modelsUrl: "https://copilot.tencent.com/console/enterprises/personal/models",
       // v3 客户端权威目录（主路，含倍率/能力/上下文元数据）：必须用三段式 CLI UA，否则 400 code 12403
       modelsV3Url: "https://copilot.tencent.com/v3/config",
-      catalogUA: "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1",
+      catalogUA: "WorkBuddy/5.9.3 WorkBuddy/5.9.3 CLI/2.137.1",
       // 登录/账号类插件端点的上游域（与计费域不同，必须单独给）
       pluginBase: "https://copilot.tencent.com",
       // 刷新渠道标识（两处口径不一致："plugin" 与 "workbuddy"，实测后固化）
@@ -107,15 +113,17 @@ const DEFAULTS = {
       consoleChatUrl: "https://www.workbuddy.ai/console/chat/completions",
       billingBase: "https://www.workbuddy.ai",
       origin: "https://www.workbuddy.ai",
-      clientVersion: "5.5.4",
+      // 版本取值同国内版（X-IDE-Version = 客户端自身版本）。**5.8.4 未在本机核实**：
+      // 本机没装国际版客户端（main 分支按其作者机器上的 5.8.4 填），沿用该值待核实后再改。
+      clientVersion: "5.8.4",
       cliVersion: "2.137.1",
       // 平台段必须 WorkBuddy AI，送错触发 403 code 11140 request illegal
-      userAgent: "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1",
-      billingUA: "WorkBuddy/5.5.4",
+      userAgent: "WorkBuddy/5.8.4 WorkBuddy AI/5.8.4 CLI/2.137.1",
+      billingUA: "WorkBuddy/5.8.4",
       ideName: "WorkBuddy",
       modelsUrl: "https://www.workbuddy.ai/console/enterprises/personal/models",
       modelsV3Url: "https://www.workbuddy.ai/v3/config",
-      catalogUA: "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1",
+      catalogUA: "WorkBuddy/5.8.4 WorkBuddy AI/5.8.4 CLI/2.137.1",
       pluginBase: "https://www.workbuddy.ai",
       refreshSource: "plugin",
       deviceToken: "",
@@ -398,16 +406,18 @@ const DEFAULTS = {
     },
     // ===== AutoClaw 双区（国内版 / 国际版）=====
     // 两地同协议同签名指纹（appId/appKey 逐字相同），仅 userapiBase 与订阅端点不同。
-    // 两域版本号**不同**（实测）：llmVersion 进对话头 X-Version；apiVersion 进 userapi 域
-    // X-Version 且是版本门控——不带它时模型目录只下发部分条目。客户端升级后改这里即热生效。
+    // 两域版本号：旧注释称「不同（llmVersion 进对话头 X-Version；apiVersion 进 userapi 域 X-Version
+    // 且是版本门控）」——客户端实测口径是**两个域共用同一个头构造器**，X-Version 恒等于客户端自身
+    // 版本，故两键取值应保持一致。该值同时是上游的版本门控：带旧值会让模型目录只下发部分条目。
     // X-Auth-Sign 仅 userapi 域发：MD5(`${authAppId}&${秒级时间戳}&${authAppKey}`) 小写十六进制。
     autoclaw: {
       userapiBase: "https://autoglm-acceleration-api.zhipuai.cn",
       llmProxyPath: "/autoclaw-proxy/proxy/autoclaw",
       authAppId: "100003",
       authAppKey: "38d2391985e2369a5fb8227d8e6cd5e5",
-      llmVersion: "1.17.8",
-      apiVersion: "1.18.5",
+      // 2.3.0 由维护者指定（原 1.17.8 / 1.18.5 已过期）；两域同值，勿再拆成两个版本
+      llmVersion: "2.3.0",
+      apiVersion: "2.3.0",
       catalogPath: "/autoclaw-proxy/proxy/autoclaw-model-config",
       taskCompletePath: "/autoclaw-proxy/proxy/autoclaw-task-complete",
       taskListPath: "/autoclaw-proxy/proxy/autoclaw-task-list",
@@ -437,8 +447,10 @@ const DEFAULTS = {
       llmProxyPath: "/autoclaw-proxy/proxy/autoclaw",
       authAppId: "100003",
       authAppKey: "38d2391985e2369a5fb8227d8e6cd5e5",
-      llmVersion: "1.17.8",
-      apiVersion: "1.18.5",
+      // 国际版客户端本机**未安装**：2.3.0 按国内版同值填（两区共用一个客户端、只换域名），
+      // 若实测发现国际版有独立版本号，再单独改这里。
+      llmVersion: "2.3.0",
+      apiVersion: "2.3.0",
       catalogPath: "/autoclaw-proxy/proxy/autoclaw-model-config",
       taskCompletePath: "/autoclaw-proxy/proxy/autoclaw-task-complete",
       taskListPath: "/autoclaw-proxy/proxy/autoclaw-task-list",

@@ -91,7 +91,10 @@ async function refreshAccount(id) {
     const rr = await adapters.refreshTokenLocked(acc.channel, acc, secrets).catch(() => ({ ok: false }));
     if (rr.ok) {
       if (!rr.noPersist) store.updateAccount(acc.id, { token: rr.token, refreshToken: rr.refreshToken });
-      secrets = { token: rr.token, refreshToken: rr.refreshToken };
+      // 换新凭据时保留 meta（Cookie / deviceId 等会话元数据）：只重建 token/refreshToken 会把它们
+      // 丢掉，与 ensureFreshSecrets / 签到链路的 `{...secrets, ...}` 口径分叉——凡 queryCredits 里
+      // 读 secrets.meta 的渠道（如魔搭的 Cookie 族、AutoClaw 的 deviceId）都会在 401 重试那次静默降级
+      secrets = { ...secrets, token: rr.token, refreshToken: rr.refreshToken };
       r = await adapter.queryCredits(acc, secrets).catch((e) => ({ error: String((e && e.message) || e) }));
     }
     if (r.authError) {
@@ -195,6 +198,10 @@ async function refreshAll() {
     const byChannel = new Map();
     for (const acc of store.listAccounts()) {
       if (acc.status === "disabled" || !acc.hasToken) continue;
+      // relogin = 凭证已判废（上游吊销 / 刷新失败，需人工重新登录或导入）：定时刷新它只会
+      // 得到注定失败的 401 余额查询 + 凭证刷新重试，每轮 2 次无效请求永续循环——从上游视角
+      // 正是「失效凭证反复试探」的机器行为特征。等用户重新登录（状态回 online）后自然恢复。
+      if (acc.status === "relogin") continue;
       if (!creditsCapable(acc.channel)) continue; // 提供商不参与额度刷新（见 creditsCapable 注释）
       // 关闭的渠道不刷（上游启闭：定时全量刷新不碰它，避免无谓的上游请求）
       if (!adapters.channelOn(acc.channel)) continue;

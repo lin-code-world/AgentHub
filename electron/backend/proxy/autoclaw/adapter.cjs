@@ -151,7 +151,7 @@ function makeAutoClaw(channel, deps) {
         accept: "*/*",
         "x-product": "autoclaw",
         "x-client-type": "pc",
-        "x-version": c.llmVersion || "1.17.8",
+        "x-version": c.llmVersion || "2.3.0",
       };
     },
 

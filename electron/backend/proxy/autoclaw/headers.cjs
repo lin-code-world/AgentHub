@@ -42,7 +42,7 @@ function llmHeaders(cfg, token, routeModelId, sessionHeaders) {
     "x-product": "autoclaw",
     "x-client-type": "pc",
     "x-tm": llmPlatformTm(),
-    "x-version": cfg.llmVersion || "1.17.8",
+    "x-version": cfg.llmVersion || "2.3.0",
     "x-lang": "zh-CN",
     "x-channel": "official",
     // brandHeaders 的原样字面量：小写 x + 下划线，值固定
@@ -60,7 +60,7 @@ function signedAuthHeaders(cfg, token) {
   return {
     "content-type": "application/json",
     accept: "*/*",
-    "x-version": cfg.apiVersion || "1.18.5",
+    "x-version": cfg.apiVersion || "2.3.0",
     "x-product": "autoclaw",
     "x-client-type": "pc",
     "x-harness-type": "zcode",
