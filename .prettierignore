@@ -3,5 +3,6 @@ release/
 dist/
 build/
 scripts/fixtures/
+electron/backend/proxy/assets/
 package-lock.json
 *.md

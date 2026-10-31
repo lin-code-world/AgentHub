@@ -169,5 +169,12 @@ function rel(rev) {
   eq(zb.cachedModelRules(), [], "初始缓存为空数组");
 })();
 
+// ===== 仓库内置副本可用 =====
+(function testBuiltinAsset() {
+  const builtin = JSON.parse(require("fs").readFileSync(require("path").join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json"), "utf8"));
+  eq(zb.validateRelease(builtin).ok, true, "仓库内置副本通过校验");
+  ok(builtin.revision >= 43, "内置副本 revision 不低于实测基线 43");
+})();
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
