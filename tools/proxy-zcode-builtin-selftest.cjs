@@ -493,6 +493,10 @@ function testNoCapabilityRejected(t, zb) {
     ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { properties: { contextWindow: 1000 } } }])).ok === true, `${t}112 仅 contextWindow 一条能力 → 校验通过`);
     ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { optionSpecs: { maxOutputTokens: { max: 4096 } } } }])).ok === true, `${t}113 仅 maxOutputTokens 一条能力 → 校验通过`);
     ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*", config: { properties: { inputFormat: { supportsImage: true } } } }])).ok === true, `${t}114 仅 inputFormat 一条能力 → 校验通过`);
+    // 反向的另一半：inputFormat 是空对象/非对象真值时，映射后 fmt 有值但里面没有任何能力项——
+    // 放过它会重现"非空却无能力"把内置副本压住的老问题，必须与"缺 config"同样拒绝
+    eq(zb.validateRelease(relWith(100, [{ modelMatch: ".*", config: { properties: { inputFormat: {} } } }])).ok, false, `${t}114b inputFormat 为空对象 → 视为无能力、拒绝`);
+    eq(zb.validateRelease(relWith(100, [{ modelMatch: ".*", config: { properties: { inputFormat: true } } }])).ok, false, `${t}114c inputFormat 为非对象真值 → 视为无能力、拒绝`);
     // 混在里面的纯 match 条目不该连累整份 release（只要求"至少一条"）
     ok(zb.validateRelease(relWith(100, [{ modelMatch: ".*glm.*" }, { modelMatch: ".*doubao.*", config: { properties: { contextWindow: 1000 } } }])).ok === true, `${t}115 有一条给能力、另一条只给 match → 整体仍通过`);
 

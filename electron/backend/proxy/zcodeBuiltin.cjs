@@ -57,7 +57,10 @@ function mapModelRules(list) {
  *  会把内置副本整份压住，所有模型能力退化成默认值——后果与"空数组"完全一样。 */
 function hasAnyCapability(rule) {
   if (!rule) return false;
-  return rule.contextWindow !== undefined || rule.maxOutputTokens !== undefined || rule.fmt !== null;
+  // fmt 必须是「有内容的对象」才算给出能力：上游把 inputFormat 写成空对象或非对象真值时，
+  // 映射后 fmt 仍是真值，但里面一项能力都没有——放过它会重现"非空却无能力"把内置副本压住的老问题。
+  const fmtOk = !!rule.fmt && typeof rule.fmt === "object" && Object.keys(rule.fmt).length > 0;
+  return rule.contextWindow !== undefined || rule.maxOutputTokens !== undefined || fmtOk;
 }
 
 /** 校验 release JSON 并映射为统一 ModelRule[] 形状。
