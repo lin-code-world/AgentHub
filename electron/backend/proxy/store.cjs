@@ -826,8 +826,6 @@ function accountView(r) {
     creditsDetail: Array.isArray(meta.creditsDetail) ? meta.creditsDetail : null,
     /** 首登奖励结算台账（小浣熊一次性新手福利；key → 结算时刻，落了即「已领取」） */
     onboardingGrants: meta.onboardingGrants && typeof meta.onboardingGrants === "object" ? meta.onboardingGrants : null,
-    /** 账号备注（号池列表副行展示 + 备注弹窗；落 meta.note，随明文凭据导出带走） */
-    note: typeof meta.note === "string" ? meta.note : "",
     source: r.source,
     lastUsed: r.last_used,
     todayReq: r.today_day === dayStr() ? r.today_req : 0,
@@ -1034,23 +1032,6 @@ function clearError(id) {
   updateAccount(id, { meta });
 }
 
-/** 设置账号备注（号池列表「备注」按钮）：落 meta.note（合并进现有 meta，不整包替换） */
-function noteAccount(id, note) {
-  if (!id) return false;
-  open();
-  const cur = getAccount(id);
-  if (!cur) return false;
-  const meta = { ...parseMeta(cur.meta) };
-  const text = String(note || "").trim().slice(0, 200);
-  // 内容没变就成功返回，不推进任何时钟（与 updateAccount 的改名同口径）
-  if ((typeof meta.note === "string" ? meta.note : "") === text) return true;
-  // 清除写空串并**保留键**：读侧按「非空 note」判断有没有备注，删键会让「删掉备注」与「没设过」不可区分。
-  meta.note = text;
-  // 备注的编辑时刻独立记一条：updated_at 会被额度刷新/请求扣减推着走，拿它比备注同样会输。
-  meta.noteAt = Date.now();
-  updateAccount(id, { meta });
-  return true;
-}
 
 /** 记录账号今日签到结果（meta.checkin）：号池行内按钮「已签到 / 签到失败 + 详情弹窗」的数据源。
  *  只留当天最新一条（同日重跑即覆盖）；跨天不做清理，由前端按 day 判为过期。
@@ -1787,7 +1768,7 @@ module.exports = {
   createKey, importKey, listKeys, findKeyBySecret, updateKey, deleteKey, keyTodayReq,
   validateKeyParams,
   listAgents, setPoolStrategy, setAgentCostTier,
-  listAccounts, getAccount, accountSecrets, addAccount, updateAccount, bumpAccountUsage, removeAccount, noteError, clearError, noteCheckin, noteCheckinCooldown, noteOnboardingGrant, noteAccount,
+  listAccounts, getAccount, accountSecrets, addAccount, updateAccount, bumpAccountUsage, removeAccount, noteError, clearError, noteCheckin, noteCheckinCooldown, noteOnboardingGrant,
   setCreditPackages, listCreditPackages, listAllCreditPackages, setCreditsDetail,
   insertOpLog, listOpLogs, listOpLogOps, exportOpLogRows,
   listModelCooldowns, upsertModelCooldown, deleteModelCooldowns,

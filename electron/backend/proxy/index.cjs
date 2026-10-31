@@ -1070,16 +1070,6 @@ function register(ipcMain) {
     emitPool();
     return ok({});
   }));
-  // 账号备注（号池列表「备注」弹窗）：落 meta.note
-  ipcMain.handle("proxy_account_note", handle(({ id, note }) => {
-    const acc = store.getAccount(id);
-    if (!acc) return fail("账号不存在");
-    if (!store.noteAccount(id, note)) return fail("账号不存在");
-    const text = String(note || "").trim();
-    oplog.log("info", "号池账号", `${text ? "设置备注" : "清除备注"}「${acc.name}」${text ? `：${text.slice(0, 50)}${text.length > 50 ? "…" : ""}` : ""}`, { channel: acc.channel, target: acc.name });
-    emitPool();
-    return ok({});
-  }));
   // 手动解除冷却：cooling 账号立即回 online，同时豁免该账号的模型级负缓存
   ipcMain.handle("proxy_account_cool_off", handle(({ id }) => {
     const r = pool.releaseCool(String(id || ""));

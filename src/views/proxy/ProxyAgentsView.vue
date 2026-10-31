@@ -38,12 +38,12 @@ function togglePkg(id: string) {
   expandedIds.value = next;
 }
 /** 整行点击切换展开：有套餐明细的账号行，点行内任意空白（副行 / 余额 / 到期等）即展开收起，不必点中箭头。
- *  行内交互元素（按钮 / 输入框 / 重命名 / 备注 / 状态标签）经 closest 统一豁免，
+ *  行内交互元素（按钮 / 输入框 / 重命名 / 状态标签）经 closest 统一豁免，
  *  新增按钮无需逐个 .stop，天然不误触 */
 function onRowClick(e: MouseEvent, acc: ProxyAccount) {
   if (!acc.packages || !acc.packages.length) return;
   const t = e.target as HTMLElement | null;
-  if (t && t.closest("button, input, .acc-name, .status-tag, .acc-note")) return;
+  if (t && t.closest("button, input, .acc-name, .status-tag")) return;
   togglePkg(acc.id);
 }
 /** 已用占比（进度条宽度 %）：total<=0 或「不限」时不画条（模板那端已用 v-if 拦住） */
@@ -1048,39 +1048,6 @@ async function commitRename(acc: ProxyAccount) {
   }
 }
 
-// ===== 账号备注弹窗（一个输入框，保存落 meta.note；随明文凭据导出带走） =====
-const noteOpen = ref(false);
-const noteRow = ref<ProxyAccount | null>(null);
-const noteText = ref("");
-const noteBusy = ref(false);
-
-function openNote(acc: ProxyAccount) {
-  noteRow.value = acc;
-  noteText.value = acc.note || "";
-  noteOpen.value = true;
-}
-
-async function saveNote() {
-  const acc = noteRow.value;
-  if (!acc || noteBusy.value) return;
-  const text = noteText.value.trim();
-  noteBusy.value = true;
-  try {
-    const r = await api.proxyAccountNote(acc.id, text);
-    if (r.ok === false) {
-      toast(r.message || "保存失败", "err");
-      return;
-    }
-    noteOpen.value = false;
-    toast(text ? "备注已保存（仅本机）" : "备注已清除");
-  } catch (e) {
-    toast(String((e as Error).message || e), "err");
-  } finally {
-    noteBusy.value = false;
-    await refresh();
-  }
-}
-
 async function releaseCool(acc: ProxyAccount) {
   if (coolOffId.value) return;
   coolOffId.value = acc.id;
@@ -1905,13 +1872,7 @@ onUnmounted(() => {
                       @keydown.esc="renamingId = ''"
                     />
                       <span class="acc-sub">
-                      <template v-if="acc.note">
-                        <el-tooltip :content="`${acc.note}（点击编辑备注）`" placement="top">
-                          <span class="acc-note" @click="openNote(acc)">{{ acc.note }}</span>
-                        </el-tooltip>
-                      </template>
                       <template v-if="acc.liveHere">
-                        <i v-if="acc.note">·</i>
                         <el-tooltip :content="`${ch.display} 客户端在本机当前登录的就是这个账号`" placement="top">
                           <span class="tag tag-info acc-live"><i class="ph ph-desktop-tower"></i>本机登录</span>
                         </el-tooltip>
@@ -2034,9 +1995,6 @@ onUnmounted(() => {
                       </button>
                     </el-tooltip>
                     <button class="btn-link btn-sm" @click="toggleAccount(acc)">{{ acc.status === "disabled" ? "启用" : "停用" }}</button>
-                    <el-tooltip content="添加 / 编辑备注（仅保存在本机）" placement="top">
-                      <button class="btn-link btn-sm" @click="openNote(acc)">备注</button>
-                    </el-tooltip>
                     <button class="btn-link btn-sm danger" @click="delRow = acc; delOpen = true">删除</button>
                   </td>
                 </tr>
@@ -2591,26 +2549,6 @@ onUnmounted(() => {
             <el-tooltip :content="deviceGate.reason || ''" :disabled="!deviceGate.disabled" placement="top">
               <span><button class="btn btn-primary" :disabled="devBusy || !devHasIssue || deviceGate.disabled" @click="runDeviceRepair(false)">{{ devBusy ? "修复中…" : "修复异常指纹" }}</button></span>
             </el-tooltip>
-          </div>
-        </div>
-      </div>
-
-      <!-- 备注弹窗：一个输入框，保存落 meta.note（清空即清除） -->
-      <div v-if="noteOpen" class="p-mask" @click.self="noteOpen = false">
-        <div class="p-dlg glass note-dlg">
-          <div class="p-title">账号备注</div>
-          <div class="set-desc">{{ noteRow?.name }}（{{ noteRow ? channelName(noteRow.channel) : "" }}）</div>
-          <input
-            v-model="noteText"
-            class="input note-input"
-            placeholder="输入备注（留空保存即清除）"
-            maxlength="200"
-            @keydown.enter="saveNote"
-            @keydown.esc="noteOpen = false"
-          />
-          <div class="p-actions">
-            <button class="btn" @click="noteOpen = false">取消</button>
-            <button class="btn btn-primary" :disabled="noteBusy" @click="saveNote">{{ noteBusy ? "保存中…" : "保存" }}</button>
           </div>
         </div>
       </div>
@@ -3483,15 +3421,6 @@ onUnmounted(() => {
   line-height: 1.7;
   color: var(--text-3);
 }
-/* ===== 备注弹窗 ===== */
-.note-dlg {
-  width: 420px;
-}
-.note-input {
-  margin-top: 10px;
-  width: 100%;
-}
-
 /* ===== 列表布局：账号两行式 + 列值居中 ===== */
 /* th 全站已强制居中（global.css），这里覆盖 td 默认左对齐；td.num 单列保持同优先级，
    压过全局 .table td.num 的右对齐（对齐用量统计页 .tbl-c 的配方）。
@@ -3682,21 +3611,6 @@ onUnmounted(() => {
 }
 .acc-live .ph {
   font-size: 11px;
-}
-/* 备注缩略（有则显示）：副行剩余空间内收缩出省略号，全文由 tooltip 与备注弹窗展示 */
-.acc-note {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  color: var(--text-2);
-  transition: color 0.15s;
-}
-.acc-note:hover {
-  color: var(--accent-strong);
 }
 /* ===== 状态列：冷却剩余 + 点击弹最近错误小窗 ===== */
 .cool-left {
