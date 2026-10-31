@@ -4312,9 +4312,9 @@ const zcode = {
   },
 
   /** zcodejwt 无 exp（长期有效）、coding-plan key 不过期：没有可刷新的东西，诚实返回。
-   *  401 语义由 credits/server 落入 relogin 计数，引导用户重新 OAuth 登录或本机导入 */
+   *  401 语义由 credits/server 落入 relogin 计数，引导用户重新 OAuth 登录或粘贴凭据导入 */
   async refreshToken() {
-    return { ok: false, expired: true, message: "ZCode 凭据长期有效（无自动刷新端点）；凭证失效时请重新 OAuth 登录或从本机软件导入" };
+    return { ok: false, expired: true, message: "ZCode 凭据长期有效（无自动刷新端点）；凭证失效时请重新 OAuth 登录或粘贴凭据导入" };
   },
 
   /** 账号信息（导入/OAuth 后补全 uid/昵称）：jwt 本地解 payload，user_info 由调用方从凭证快照补 */

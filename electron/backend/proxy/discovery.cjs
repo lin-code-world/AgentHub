@@ -592,9 +592,22 @@ function scanCatpaw() {
   return out;
 }
 
-/** 全量扫描（本机全渠道候选） */
+/** 全量扫描（本机全渠道候选）。
+ *  注意 ZCode 不在此列：它已下线「从本机软件导入」，见 isScanImportAllowed。
+ *  scanZcode 本身保留（LIVE 探针与单渠道排查仍要用），只是不再挂进汇总。 */
 function scanAll() {
-  return [...scanTrae(), ...scanWorkBuddy(), ...scanRaccoon(), ...scanZcode(), ...scanQoder(), ...scanCatpaw(), ...scanAutoclaw(), ...scanCline()];
+  return [...scanTrae(), ...scanWorkBuddy(), ...scanRaccoon(), ...scanQoder(), ...scanCatpaw(), ...scanAutoclaw(), ...scanCline()];
+}
+
+/**
+ * 「从本机软件导入」的能力开关（本机已登录客户端的登录态扫描）。
+ *
+ * ZCode 已下线该入口：凭据只能走「OAuth 登录」（可选 Z.ai / BigModel）或「粘贴凭据导入」。
+ * 这是**后端闸**，与界面隐藏页签是两道独立的门：绕过界面直接调 proxy_scan_import 也必须被拒
+ * （只关界面会留下"藏了入口但接口还能灌"的绕过）。
+ */
+function isScanImportAllowed(channel) {
+  return String(channel || "") !== "zcode";
 }
 
 /** AutoClaw 本机登录态扫描：新版两个官方目录按地区归属；旧版共享来源仍同时产出双区候选。 */
@@ -1761,9 +1774,18 @@ async function saveQoderAccount(channel, cred) {
   return { id, uid, updated: false };
 }
 
-async function beginZcodeOAuth(channel, onDone) {
+// ZCode 登录的 provider 口径：只认 zai / bigmodel（Z.ai 与 BigModel 两家的授权页与凭据形态不同，
+// 选错会在兑换环节按错误的一方取值而失败）。调用方（界面二选一）传的值缺失或非法时，
+// 回落配置默认 rules.zcode.oauthProvider，再兜底 zai。
+const ZCODE_PROVIDERS = ["zai", "bigmodel"];
+function resolveZcodeProvider(value, c) {
+  const v = String(value || "");
+  return ZCODE_PROVIDERS.includes(v) ? v : String((c && c.oauthProvider) || "zai");
+}
+
+async function beginZcodeOAuth(channel, onDone, opts) {
   const c = zcodeCfg();
-  const provider = String(c.oauthProvider || "zai");
+  const provider = resolveZcodeProvider(opts && opts.zcodeProvider, c);
   const pollToken = crypto.randomBytes(32).toString("hex");
   const initR = await adapters
     .httpJson(c.oauthInitUrl, {
@@ -1802,14 +1824,16 @@ async function beginZcodeOAuth(channel, onDone) {
     onDone,
     timer: null,
     deadline: Math.min(Date.now() + OAUTH_TIMEOUT_MS, expiresAt || Date.now() + OAUTH_TIMEOUT_MS),
-    // 手动兜底：粘贴 zcode:// 深链回调（授权码换 token）
-    submit: async (rawInput) => {
+    // 手动兜底：粘贴 zcode:// 深链回调（授权码换 token）。
+    // provider 优先用本次补交传入的，其次用发起登录时记下的（会话里那份），最后回落配置默认——
+    // BigModel 的深链必须按 bigmodel 兑换，按 zai 兑换会直接失败。
+    submit: async (rawInput, providerOverride) => {
       const text = String(rawInput || "").trim();
       const m = /[?&]code=([^&#]+)/.exec(text);
       if (!m) return { ok: false, message: "无法从粘贴内容提取授权码：请复制形如 zcode://zai-auth/callback?code=… 的整段链接" };
       const state = (/[?&]state=([^&#]+)/.exec(text) || [])[1] || "";
       try {
-        const cred = await exchangeZcodeAuthCode(decodeURIComponent(m[1]), decodeURIComponent(state));
+        const cred = await exchangeZcodeAuthCode(decodeURIComponent(m[1]), decodeURIComponent(state), resolveZcodeProvider(providerOverride || provider, c));
         if (!cred.ok) {
           finishOAuth({ ok: false, message: cred.message });
           return { ok: false, message: cred.message };
@@ -1889,10 +1913,10 @@ function pollZcodeToken() {
   session.timer = setTimeout(tick, session.intervalMs);
 }
 
-/** 授权码兑换（手动粘贴 zcode:// 深链的兜底路径） */
-async function exchangeZcodeAuthCode(code, state) {
+/** 授权码兑换（手动粘贴 zcode:// 深链的兜底路径；provider 由调用方给出，缺省回落配置默认） */
+async function exchangeZcodeAuthCode(code, state, providerInput) {
   const c = zcodeCfg();
-  const provider = String(c.oauthProvider || "zai");
+  const provider = resolveZcodeProvider(providerInput, c);
   const r = await adapters
     .httpJson(c.oauthTokenUrl, {
       method: "POST",
@@ -3348,7 +3372,8 @@ async function beginOAuth(channel, onDone, helpers, opts) {
   if (ch === "monkeycode" || ch === "monkeycode_intl") return beginMonkeyCodeOAuth(ch, onDone, helpers);
   if (ch === "lobster") return beginLobsterOAuth(ch, onDone);
   if (ch === "trae") return beginTraeOAuth(ch, onDone);
-  if (ch === "zcode") return beginZcodeOAuth(ch, onDone);
+  // ZCode：登录可选 Z.ai / BigModel，provider 由前端二选一（opts.zcodeProvider）透传
+  if (ch === "zcode") return beginZcodeOAuth(ch, onDone, opts);
   if (ch === "qoder" || ch === "qoder_intl") return beginQoderOAuth(ch, onDone);
   // Cline 双池：WorkOS 设备授权（显示用户码 + 浏览器确认，无本地回调端口，少一处失败面）
   if (ch === "cline_free" || ch === "cline_pass") return beginClineOAuth(ch, onDone);
@@ -3404,8 +3429,10 @@ async function submitLobsterCallback(input) {
   return { ok: true, uid: r.uid, id: r.id, message: "已补交回调，账号已入池" };
 }
 
-/** 手动提交回调地址（浏览器没跳回回环地址时的兜底路径） */
-async function submitCallbackUrl(input, channel) {
+/** 手动提交回调地址（浏览器没跳回回环地址时的兜底路径）。
+ *  zcodeProvider 只对 ZCode 有效：深链补交要按当初选的那一方（Z.ai / BigModel）兑换，
+ *  否则 BigModel 的深链会被按 Z.ai 兑换而失败。 */
+async function submitCallbackUrl(input, channel, zcodeProvider) {
   const session = oauthSession;
   // LobsterAI 特例：允许无活动会话时凭 state 宽限表补交（会话超时后回调才到的场景）
   if (!session) {
@@ -3414,7 +3441,7 @@ async function submitCallbackUrl(input, channel) {
   }
   if (channel && session.channel !== channel) return { ok: false, message: "进行中的登录属于其他渠道" };
   if (typeof session.submit !== "function") return { ok: false, message: "该渠道不支持手动提交回调地址" };
-  return session.submit(input);
+  return session.submit(input, zcodeProvider);
 }
 
 function cancelOAuth() {
@@ -3772,6 +3799,7 @@ module.exports = {
   scanWorkBuddy,
   scanTrae,
   scanZcode,
+  isScanImportAllowed,
   currentLocalLogins,
   importCandidate,
   beginOAuth,

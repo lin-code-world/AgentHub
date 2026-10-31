@@ -171,6 +171,9 @@ const METADATA_ONLY_MESSAGE =
 // MonkeyCode 双站只保留应用内「OAuth 登录」添加账号（凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态）
 const OAUTH_ONLY_MESSAGE =
   "MonkeyCode 只支持用「OAuth 登录」添加账号：请在号池页点该渠道的「OAuth 登录」，在弹出的窗口里登录即可（不支持粘贴 / 导入凭据）。";
+// ZCode 已下线「从本机软件导入」：凭据只能走「OAuth 登录」（可选 Z.ai / BigModel）或「粘贴凭据导入」。
+// 这是后端闸（界面同时隐藏该页签），绕过界面直接调 proxy_scan_import 也必须被拒。
+const SCAN_IMPORT_DISABLED_MESSAGE = (channel) => `${store.channelDisplay(channel)} 不支持「从本机软件导入」：请在号池页点该渠道的「OAuth 登录」完成登录（可选 Z.ai / BigModel），或改用「粘贴凭据」导入。`;
 
 /** 批量入池：同渠道同 uid 已存在则跳过；入池即后台查一次额度 */
 function importAccounts(list) {
@@ -1128,6 +1131,9 @@ function register(ipcMain) {
   // 同时带上 channel/file 做一次身份核对 —— 两次扫描之间文件可能增减，只认下标会导错账号
   ipcMain.handle("proxy_scan_import", handle(({ index, channel, file, uid }) => {
     const found = discovery.scanAll();
+    // 渠道闸先于候选核对：已下线本机导入的渠道（zcode）无论候选是否存在都必须给出
+    // 「不支持本机导入」的诚实理由，否则会被下面的"候选已变化"掩盖（候选本就不在清单里）
+    if (channel && !discovery.isScanImportAllowed(channel)) return fail(SCAN_IMPORT_DISABLED_MESSAGE(channel));
     let c = found[Number(index)];
     if (file || uid) {
       // 身份核对：以 file/uid 为准回查，防止两次扫描之间候选增减导致按下标导错账号
@@ -1136,12 +1142,14 @@ function register(ipcMain) {
       c = hit;
     }
     if (!c) return fail("候选不存在，请重新扫描");
+    // 未传 channel 的旧调用形态：按候选自身渠道再判一次（与上面同一道闸）
+    if (!discovery.isScanImportAllowed(c.channel)) return fail(SCAN_IMPORT_DISABLED_MESSAGE(c.channel));
     const r = discovery.importCandidate(c, channel || undefined);
     credits.refreshAccount(r.id).catch(() => {});
     emitPool();
     return ok({ id: r.id, updated: r.updated });
   }));
-  ipcMain.handle("proxy_oauth_begin", handle(async ({ channel, captchaVerifyParam, vendor }) => {
+  ipcMain.handle("proxy_oauth_begin", handle(async ({ channel, captchaVerifyParam, vendor, zcodeProvider }) => {
     const ch = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
     const r = await discovery.beginOAuth(ch, (result) => {
       if (result.ok) {
@@ -1152,7 +1160,7 @@ function register(ipcMain) {
       oplog.log(result.ok ? "info" : "error", "OAuth 登录", result.ok ? `${store.channelDisplay(ch)} 授权登录成功` : result.message || `${store.channelDisplay(ch)} 授权登录失败`, { channel: ch });
       if (result.ok) emitPool(); // OAuth 成功后账号已入池：号池结构变化
       events.emit({ type: "oauth-done", channel: ch, ...result });
-    }, { openAuthWindow }, { captchaVerifyParam, vendor });
+    }, { openAuthWindow }, { captchaVerifyParam, vendor, zcodeProvider });
     // 带授权地址的渠道在系统浏览器打开（小浣熊走内嵌授权窗，不回 url——深链回调绝不能进浏览器
     // 再被系统交给官方客户端：授权码是一次性的，官方客户端消费掉 AgentHub 就永远收不到回调）
     if (r.ok && r.url) await platform.openExternal(r.url);
@@ -1235,8 +1243,8 @@ function register(ipcMain) {
     return ok({ rows, message: rows.map((r) => `${r.name}：${r.message}`).join("；") });
   }));
   // 浏览器没跳回回环地址时的兜底：把地址栏内容整段粘回来完成登录
-  ipcMain.handle("proxy_oauth_submit_callback", handle(async ({ channel, url }) => {
-    const r = await discovery.submitCallbackUrl(url, channel);
+  ipcMain.handle("proxy_oauth_submit_callback", handle(async ({ channel, url, zcodeProvider }) => {
+    const r = await discovery.submitCallbackUrl(url, channel, zcodeProvider);
     // LobsterAI 的「晚到回调」补交路径不经过 beginOAuth 的 onDone（会话可能已超时关闭），
     // 故这里自行补跑「刷新余额 + 自动签到」——否则新入池账号停在 credits=0 / creditsAt=0，
     // 会被 credit_first 策略误判为最末位（与 onDone 路径行为对齐）。

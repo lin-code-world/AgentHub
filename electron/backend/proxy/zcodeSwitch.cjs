@@ -141,14 +141,14 @@ async function doSwitch(accountId, opts) {
     return {
       ok: false,
       channel: "zcode",
-      message: "该账号没有切号快照（缺少 oauth 凭据组），仅支持反代调用。请用「从本机软件导入」或「OAuth 登录」补全快照后再切号。",
+      message: "该账号没有切号快照（缺少 oauth 凭据组），仅支持反代调用。请用「OAuth 登录」（可选 Z.ai / BigModel）或「粘贴凭据」补全快照后再切号。",
     };
   }
 
   // live 文件检查
   const p = zcodeLocal.paths();
   if (!fs.existsSync(p.credentials)) {
-    return { ok: false, channel: "zcode", message: "未找到本机 ZCode 登录文件（~/.zcode/v2/credentials.json），请先安装并登录一次 ZCode 客户端" };
+    return { ok: false, channel: "zcode", message: "未找到本机 ZCode 登录文件（~/.zcode/v2/credentials.json），本机暂无 ZCode 登录态，无法执行本机切换" };
   }
 
   // 进程检查：官方客户端运行中会回写覆盖——先请用户确认关闭（热切换留口：默认关，求证后另行开放）。
