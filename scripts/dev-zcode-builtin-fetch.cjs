@@ -25,10 +25,6 @@ const APP_VERSION = "4.1.10";
 const PLATFORM = "win32-x64";
 const TIMEOUT_MS = 20000;
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function fetchJson(url) {
   // Node 18+ 内置 fetch，走系统 node 即可。
   const controller = new AbortController();
@@ -58,7 +54,7 @@ async function main() {
   if (!entry || entry.code !== 0) {
     throw new Error(`入口响应 code 非 0：code=${entry && entry.code} msg=${entry && entry.msg}`);
   }
-  const cdnUrl = (((entry.data || {}).configs || {}).builtin_provider_config_json);
+  const cdnUrl = ((entry.data || {}).configs || {}).builtin_provider_config_json;
   if (!cdnUrl || typeof cdnUrl !== "string") {
     throw new Error(`入口响应缺少 builtin_provider_config_json 字段`);
   }

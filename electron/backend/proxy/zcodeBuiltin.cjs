@@ -65,9 +65,19 @@ function validateRelease(json) {
   if (!Array.isArray(list)) {
     return { ok: false, reason: "modelRules 非数组" };
   }
+  // 空数组同样拒绝：这种 release 的 revision 可以很大，一旦被采纳会永久压住内置副本，
+  // 把全部模型能力写成默认值（且要等官方更大的 revision 才自愈），属"更新失败却弄坏已有数据"。
+  if (list.length === 0) {
+    return { ok: false, reason: "modelRules 为空数组（没有任何模型能力规则）" };
+  }
+  const rules = mapModelRules(list);
+  // 条目全无 modelMatch 时映射结果为空，与空数组同病，拒绝并说清是哪一种
+  if (rules.length === 0) {
+    return { ok: false, reason: `modelRules 全部无效（${list.length} 条均无可用的 modelMatch）` };
+  }
   return {
     ok: true,
-    release: { revision: json.revision, schemaVersion: 1, modelRules: mapModelRules(list) },
+    release: { revision: json.revision, schemaVersion: 1, modelRules: rules },
   };
 }
 
@@ -112,8 +122,6 @@ function buildClientConfigsUrl(baseUrl, appVersion, platform) {
  *  缓存：key 由三个来源文件的存在性 + mtime 组成；任一变化即失效，下一次调用重新读。
  *  显式失效入口只有一个，见 invalidateModelRules()。 */
 function resolveModelRules(deps) {
-  const fs = require("node:fs");
-  const path = require("node:path");
   const d = deps || {};
   const storedFile = d.storedFile || "";
   const builtinFile = d.builtinFile || "";
@@ -132,13 +140,7 @@ function resolveModelRules(deps) {
     for (const e of ents) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p, depth + 1);
-      else if (e.name === "zcode-builtin.json") {
-        try {
-          clientFiles.push(p);
-        } catch {
-          /* 忽略 */
-        }
-      }
+      else if (e.name === "zcode-builtin.json") clientFiles.push(p);
     }
   };
   for (const root of clientDirs) {
@@ -172,7 +174,9 @@ function resolveModelRules(deps) {
     return { origin, revision: v.release.revision, raw: v.release.modelRules, _mtime: stat.mtimeMs };
   };
 
-  // 构建缓存 key（任一来源存在性或 mtime 变化即失效）
+  // 构建缓存 key（任一来源存在性或 mtime 变化即失效）。key 里必须带**文件路径**：
+  // label 只是 stored / clientDir[i] / clientFile[i] / builtin 这类序号，两处 deps 指向不同文件、
+  // 但 mtime 恰好落在同一毫秒时，只拼 label+mtime 会让第二次解析直接吃第一次的结论。
   const cacheKeyParts = [];
   const pushStat = (label, file) => {
     if (!file) {
@@ -181,9 +185,9 @@ function resolveModelRules(deps) {
     }
     try {
       const s = fs.statSync(file);
-      cacheKeyParts.push(`${label}:1:${s.mtimeMs}`);
+      cacheKeyParts.push(`${label}:${file}:1:${s.mtimeMs}`);
     } catch {
-      cacheKeyParts.push(`${label}:0`);
+      cacheKeyParts.push(`${label}:${file}:0`);
     }
   };
   pushStat("stored", storedFile);
@@ -396,6 +400,13 @@ function writeStoredRelease(file, release, otherRevisions) {
   try {
     const rev = Number((release || {}).revision);
     if (!file || !Number.isInteger(rev) || rev <= 0) return false;
+    // 落盘前再校验一次（对任何调用方兜底）：revision 合法不够，release 必须是结构完整、
+    // 且映射后至少有一条规则的配置，否则会把"空能力"永久写进 stored 来源
+    const checked = validateRelease(release);
+    if (!checked.ok || checked.release.modelRules.length === 0) {
+      console.warn("[zcode] 模型配置未通过校验，拒绝落盘，沿用现有数据：" + (checked.reason || "映射后无有效规则"));
+      return false;
+    }
     const others = Array.isArray(otherRevisions) ? otherRevisions : [];
     let maxOther = 0;
     for (const r of others) {
@@ -541,6 +552,7 @@ module.exports = {
   invalidateModelRules,
   fetchRemoteRelease,
   writeStoredRelease,
+  defaultRulesDeps,
   startUpdater,
   stopUpdater,
 };

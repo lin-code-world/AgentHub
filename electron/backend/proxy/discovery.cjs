@@ -3830,6 +3830,8 @@ module.exports = {
   bindRaccoonDevice,
   byteCryptoDecrypt,
   validateTraeCallback,
+  // ZCode 登录 provider 口径（zai / bigmodel）：只做值归一与回落，自测直接调它锁行为
+  resolveZcodeProvider,
   OAUTH_PORT,
   wbAuthDir,
   wbAuthCandidateDirs,

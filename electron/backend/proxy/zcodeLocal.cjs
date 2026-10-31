@@ -42,7 +42,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execSync, spawn } = require("node:child_process");
 const config = require("../config.cjs");
-const { resolveModelRules, cachedModelRules } = require("./zcodeBuiltin.cjs");
+const zcodeBuiltin = require("./zcodeBuiltin.cjs");
+const { resolveModelRules, cachedModelRules } = zcodeBuiltin;
 
 const ENC_PREFIX = "enc:v1:";
 const NONCE_SIZE = 12;
@@ -997,19 +998,18 @@ function launchZcode(exe) {
  *   config.modelConfigRules.modelRules[] = { modelMatch: 正则, config.properties.inputFormat:
  *     { supportsText, supportsImage, supportsVideo, supportsAudio, supportsPdf } }
  * 语义（实测）：按文件顺序取**最后一个匹配项**——具体规则覆盖通用规则
- * （如 .*glm-5\.3(?:-flash)? 为 false，紧随其后的 .*glm-5\.3-flash 为 true，与官方客户端实测行为一致）。
+ * （如 .*glm-5\.3.* 为 false，紧随其后的 .*glm-5\.3-flash.* 为 true，与官方客户端实测行为一致）。
  * 这是"某模型是否支持图片输入"最权威的本地来源：官方客户端 UI 即依据它决定能否附图。
  */
 
 /** 构建 resolveModelRules 需要的 deps 三来源：
  *  storedFile = config.dataDir()/proxy/zcode-builtin.json（本机落盘副本，Task 4 联网更新后优先从这里读）
  *  clientDirs = [~/.zcode/v2/runtime/provider]（客户端自带副本所在目录，按深度 4 递归找最新 zcode-builtin.json）
- *  builtinFile = 仓库内置 assets/zcode-builtin.json（权威最低但永远存在，保证"全新机器"不退化） */
+ *  builtinFile = 仓库内置 assets/zcode-builtin.json（权威最低但永远存在，保证"全新机器"不退化）
+ *  三来源口径只写一遍（zcodeBuiltin.defaultRulesDeps）：联网更新器与这里的读取必须看到同一组路径，
+ *  否则会出现"更新说已是最新、能力却不变"。 */
 function _modelRulesDeps() {
-  const storedFile = path.join(config.dataDir(), "proxy", "zcode-builtin.json");
-  const clientDirs = [path.join(v2Dir(), "runtime", "provider")];
-  const builtinFile = path.join(__dirname, "assets", "zcode-builtin.json");
-  return { storedFile, clientDirs, builtinFile };
+  return zcodeBuiltin.defaultRulesDeps();
 }
 
 /** 读取模型能力规则：三来源取最新（resolveModelRules 内部有按来源 mtime 的缓存，失败只跳过来源）。
@@ -1026,8 +1026,8 @@ function readClientModelRules() {
 /**
  * 解析模型 id 的元数据（按属性取"最后一个定义该属性的匹配规则"）。
  * 注意：这是**逐属性**覆盖而非整条规则覆盖——官方表里通用规则给窗口/上限，专用规则只补图片/PDF 能力，
- * 例：.*glm-5\.3(?:-flash)? 给 contextWindow=1000000 / maxOutputTokens.max=128000，
- * 其后的 .*glm-5\.3-flash 只给 inputFormat，因此窗口与上限应沿用前者。
+ * 例：.*glm-5\.3.* 给 contextWindow=1000000 / maxOutputTokens.max=128000，
+ * 其后的 .*glm-5\.3-flash.* 只给 inputFormat，因此窗口与上限应沿用前者。
  * 返回 { inputFormat, contextWindow, maxOutputTokens }；无匹配返回 null。
  */
 function resolveModelMeta(modelId) {

@@ -121,6 +121,23 @@ async function main() {
   }
 
   console.log("");
+  console.log("=== 4 resolveZcodeProvider：只认字面值 zai / bigmodel，其余一律回落配置默认 ===");
+  // 语义：入参必须**原样**等于 zai 或 bigmodel；大小写变体、带空格、空串、非法值、
+  // null/undefined 一律视为"没选"，回落配置默认 rules.zcode.oauthProvider，配置也缺失时兜底 zai
+  // （选错一方会在兑换环节按错误的一方取值而失败）。
+  ok("先确认已导出（否则本组断言无从谈起）", () => typeof discovery.resolveZcodeProvider === "function");
+  ok('"zai" 原样（不被配置默认覆盖）', () => discovery.resolveZcodeProvider("zai", { oauthProvider: "bigmodel" }) === "zai");
+  ok('"bigmodel" 原样（不被配置默认覆盖）', () => discovery.resolveZcodeProvider("bigmodel", { oauthProvider: "zai" }) === "bigmodel");
+  ok('"ZAI" 大小写变体 → 回落配置默认 bigmodel', () => discovery.resolveZcodeProvider("ZAI", { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok('" zai " 带空格变体 → 回落配置默认 bigmodel', () => discovery.resolveZcodeProvider(" zai ", { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok('"weird" 非法值 → 回落配置默认 bigmodel', () => discovery.resolveZcodeProvider("weird", { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok('"" 空串 → 回落配置默认 bigmodel', () => discovery.resolveZcodeProvider("", { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok("undefined → 回落配置默认 bigmodel", () => discovery.resolveZcodeProvider(undefined, { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok("null → 回落配置默认 bigmodel", () => discovery.resolveZcodeProvider(null, { oauthProvider: "bigmodel" }) === "bigmodel");
+  ok('配置也缺失 → 兜底 "zai"', () => discovery.resolveZcodeProvider(undefined, undefined) === "zai");
+  ok('配置文件段为空对象 → 兜底 "zai"', () => discovery.resolveZcodeProvider("weird", {}) === "zai");
+
+  console.log("");
   console.log(`结果：pass=${pass} fail=${fail}`);
   if (fail) {
     console.log(`失败项：\n  - ${bad.join("\n  - ")}`);

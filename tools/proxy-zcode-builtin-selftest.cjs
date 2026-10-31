@@ -13,13 +13,25 @@
 //       pickLatestRelease（revision 降序 + 同 revision 来源优先级）、URL 构造、缓存。
 "use strict";
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function eq(actual, expected, label) {
-  const a = JSON.stringify(actual), e = JSON.stringify(expected);
-  if (a === e) { pass++; }
-  else { fail++; console.log(`  ✗ ${label}\n    期望 ${e}\n    实际 ${a}`); }
+  const a = JSON.stringify(actual),
+    e = JSON.stringify(expected);
+  if (a === e) {
+    pass++;
+  } else {
+    fail++;
+    console.log(`  ✗ ${label}\n    期望 ${e}\n    实际 ${a}`);
+  }
 }
-function ok(cond, label) { if (cond) pass++; else { fail++; console.log(`  ✗ ${label}`); } }
+function ok(cond, label) {
+  if (cond) pass++;
+  else {
+    fail++;
+    console.log(`  ✗ ${label}`);
+  }
+}
 
 const zb = require("../electron/backend/proxy/zcodeBuiltin.cjs");
 
@@ -61,12 +73,14 @@ function rel(rev) {
         optionSpecs: { maxOutputTokens: { max: 128000 } },
       },
     },
-    { // 无 modelMatch → 被 filter 掉
+    {
+      // 无 modelMatch → 被 filter 掉
       modelMatch: "",
       config: { properties: { contextWindow: 500000 } },
     },
     null, // 空对象 → filter 掉
-    { // 完整缺失 config
+    {
+      // 完整缺失 config
       modelMatch: ".*foo",
       config: undefined,
     },
@@ -132,21 +146,33 @@ function rel(rev) {
   eq(picked1.origin, "builtin", "最大 revision 者的 origin");
 
   // 同 revision：stored(0) > client(1) > builtin(2)
-  eq(zb.pickLatestRelease([
-    { origin: "builtin", revision: 43, raw: rel(43) },
-    { origin: "stored", revision: 43, raw: rel(43) },
-  ]).origin, "stored", "同 revision 优先 stored");
+  eq(
+    zb.pickLatestRelease([
+      { origin: "builtin", revision: 43, raw: rel(43) },
+      { origin: "stored", revision: 43, raw: rel(43) },
+    ]).origin,
+    "stored",
+    "同 revision 优先 stored"
+  );
 
-  eq(zb.pickLatestRelease([
-    { origin: "builtin", revision: 43, raw: rel(43) },
-    { origin: "client", revision: 43, raw: rel(43) },
-  ]).origin, "client", "同 revision builtin vs client → client");
+  eq(
+    zb.pickLatestRelease([
+      { origin: "builtin", revision: 43, raw: rel(43) },
+      { origin: "client", revision: 43, raw: rel(43) },
+    ]).origin,
+    "client",
+    "同 revision builtin vs client → client"
+  );
 
-  eq(zb.pickLatestRelease([
-    { origin: "client", revision: 43, raw: rel(43) },
-    { origin: "stored", revision: 43, raw: rel(43) },
-    { origin: "builtin", revision: 43, raw: rel(43) },
-  ]).origin, "stored", "三源同 revision → stored");
+  eq(
+    zb.pickLatestRelease([
+      { origin: "client", revision: 43, raw: rel(43) },
+      { origin: "stored", revision: 43, raw: rel(43) },
+      { origin: "builtin", revision: 43, raw: rel(43) },
+    ]).origin,
+    "stored",
+    "三源同 revision → stored"
+  );
 
   // 空输入
   eq(zb.pickLatestRelease([]), null, "空数组返回 null");
@@ -374,6 +400,144 @@ async function testUpdater(t, zb) {
   }
 }
 
+// ===== 空 modelRules 必须整体拒绝（Critical：更新失败不得把已有能力写坏） =====
+/** 构造指定 revision 与原始 modelRules 的 release（上游形状） */
+function relWith(rev, list) {
+  return { schemaVersion: 1, revision: rev, config: { modelConfigRules: { modelRules: list } } };
+}
+
+/** 取规则里能覆盖 GLM-5.3 的那条（与 resolveModelMeta 同口径：整串锚定 + 忽略大小写） */
+function pickRule(rules, modelId) {
+  for (const r of rules || []) {
+    let re;
+    try {
+      re = new RegExp("^(?:" + r.re + ")$", "i");
+    } catch {
+      continue;
+    }
+    if (re.test(modelId)) return r;
+  }
+  return null;
+}
+
+function testEmptyRulesRejected(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-empty-"));
+  const storedFile = paths.join(dir, "proxy", "zcode-builtin.json");
+  const builtinFile = paths.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
+  const deps = { storedFile, clientDirs: [], builtinFile };
+  try {
+    fsSync.mkdirSync(paths.dirname(storedFile), { recursive: true });
+    fsSync.writeFileSync(storedFile, JSON.stringify(rel(43)), "utf8");
+    zb.invalidateModelRules();
+
+    // ① 空数组与"全是垃圾条目"都要在校验层被拒，且理由能区分是哪一种
+    const emptyR = zb.validateRelease(relWith(100, []));
+    eq(emptyR.ok, false, `${t}80 modelRules 为空数组 → 校验拒绝`);
+    ok(/空数组/.test(emptyR.reason || ""), `${t}81 拒绝理由指明"空数组"`);
+    const junkR = zb.validateRelease(relWith(100, [{ modelMatch: "" }, { config: {} }, null]));
+    eq(junkR.ok, false, `${t}82 modelRules 全是无效条目 → 校验拒绝`);
+    ok(/无效/.test(junkR.reason || ""), `${t}83 拒绝理由指明"全部无效"`);
+
+    // ② 落盘层对任何调用方兜底：即便绕过校验直接喂进来也不写、文件一字未变
+    const before = fsSync.readFileSync(storedFile, "utf8");
+    ok(zb.writeStoredRelease(storedFile, relWith(100, []), [43]) === false, `${t}84 revision 很大但 modelRules 为空 → 拒绝落盘`);
+    ok(zb.writeStoredRelease(storedFile, relWith(100, [{ modelMatch: "" }]), [43]) === false, `${t}85 revision 很大但条目全无效 → 拒绝落盘`);
+    eq(fsSync.readFileSync(storedFile, "utf8"), before, `${t}86 被拒时落盘文件内容一字未变`);
+
+    // ③ 已有能力值不能被弄坏：解析结果与兜底缓存都仍是原来那份
+    const res = zb.resolveModelRules(deps);
+    ok(res && res.revision === 43, `${t}87 被拒后解析仍拿到原 revision 43`);
+    eq(res && res.origin, "stored", `${t}88 被拒后解析仍命中 stored 来源`);
+    const glm = pickRule(zb.cachedModelRules(), "GLM-5.3");
+    ok(glm !== null, `${t}89 兜底缓存里仍有 GLM-5.3 的规则`);
+    eq(glm && glm.contextWindow, 1000000, `${t}90 兜底缓存 GLM-5.3 contextWindow 未被写坏`);
+    eq(glm && glm.maxOutputTokens, 128000, `${t}91 兜底缓存 GLM-5.3 maxOutputTokens 未被写坏`);
+
+    // ④ 合法 release 仍能正常落盘（拦截没误伤正常路径）
+    const valid = rel(44);
+    ok(zb.writeStoredRelease(storedFile, valid, [43]) === true, `${t}92 合法 release（有规则）仍能落盘`);
+    eq(JSON.parse(fsSync.readFileSync(storedFile, "utf8")).revision, 44, `${t}93 合法 release 落盘内容为新 revision`);
+
+    // ⑤ 目标文件不存在时被拒，且不会先把文件建出来
+    const fresh = paths.join(dir, "fresh", "zcode-builtin.json");
+    ok(zb.writeStoredRelease(fresh, relWith(100, []), [43]) === false, `${t}94 空规则 + 目标不存在 → 拒绝`);
+    ok(!fsSync.existsSync(fresh), `${t}95 拒绝时连文件都不该建`);
+  } finally {
+    zb.invalidateModelRules();
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ===== 缓存 key 必须带文件路径（不同来源指向不同文件、mtime 同毫秒不能串味） =====
+function testCacheKeyIncludesPath(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-cachekey-"));
+  try {
+    const fileA = paths.join(dir, "a.json");
+    const fileB = paths.join(dir, "b.json");
+    const rawB = rel(61);
+    rawB.config.modelConfigRules.modelRules[0].config.properties.contextWindow = 777777;
+    fsSync.writeFileSync(fileA, JSON.stringify(rel(60)), "utf8");
+    fsSync.writeFileSync(fileB, JSON.stringify(rawB), "utf8");
+    // 两份文件 mtime 落到同一毫秒：旧 key（label + mtime）完全相同，第二次会吃第一次的结论
+    const stamp = new Date(1600000000000);
+    fsSync.utimesSync(fileA, stamp, stamp);
+    fsSync.utimesSync(fileB, stamp, stamp);
+    eq(fsSync.statSync(fileA).mtimeMs, fsSync.statSync(fileB).mtimeMs, `${t}96 两份文件 mtime 相同（前提成立）`);
+
+    zb.invalidateModelRules();
+    const resA = zb.resolveModelRules({ storedFile: fileA, clientDirs: [], builtinFile: "" });
+    eq(resA && resA.revision, 60, `${t}97 先解析 A 得到 60`);
+    const resB = zb.resolveModelRules({ storedFile: fileB, clientDirs: [], builtinFile: "" });
+    eq(resB && resB.revision, 61, `${t}98 换成同 mtime 的另一份文件 B → 必须重新解析得到 61（不串味）`);
+    eq(pickRule(resB && resB.rules, "GLM-5.3").contextWindow, 777777, `${t}99 解析 B 拿到的是 B 自己的能力值`);
+  } finally {
+    zb.invalidateModelRules();
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ===== 三来源 deps 只有一份口径（zcodeBuiltin.defaultRulesDeps，zcodeLocal 直接复用） =====
+function testDefaultRulesDeps(t, zb) {
+  const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-deps-"));
+  const savedData = process.env.AGENTHUB_DATA_DIR;
+  const savedV2 = process.env.ZCODE_V2_DIR;
+  process.env.AGENTHUB_DATA_DIR = paths.join(dir, "data");
+  process.env.ZCODE_V2_DIR = paths.join(dir, "v2");
+  try {
+    ok(typeof zb.defaultRulesDeps === "function", `${t}100 应导出 defaultRulesDeps`);
+    const deps = zb.defaultRulesDeps();
+    eq(deps.storedFile, paths.join(process.env.AGENTHUB_DATA_DIR, "proxy", "zcode-builtin.json"), `${t}101 storedFile 落在 dataDir()/proxy/zcode-builtin.json`);
+    eq(deps.builtinFile, paths.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json"), `${t}102 builtinFile 指向仓库内置副本`);
+    ok(fsSync.existsSync(deps.builtinFile), `${t}103 内置副本文件真实存在`);
+    ok(Array.isArray(deps.clientDirs), `${t}104 clientDirs 是数组`);
+    eq(deps.clientDirs, [paths.join(process.env.ZCODE_V2_DIR, "runtime", "provider")], `${t}105 clientDirs 为 ZCODE_V2_DIR/runtime/provider`);
+
+    // zcodeLocal 必须复用同一组 deps：把一份能力值特殊的副本放到 storedFile，
+    // 若两处各自拼路径（漏改一处），这里就读不到它
+    const own = rel(70);
+    own.config.modelConfigRules.modelRules = [
+      {
+        modelMatch: ".*glm-5\\.3-own.*",
+        config: { properties: { contextWindow: 123456, inputFormat: { supportsImage: true } }, optionSpecs: { maxOutputTokens: { max: 6543 } } },
+      },
+    ];
+    fsSync.mkdirSync(paths.dirname(deps.storedFile), { recursive: true });
+    fsSync.writeFileSync(deps.storedFile, JSON.stringify(own), "utf8");
+    zb.invalidateModelRules();
+    const zcodeLocal = require(paths.join(__dirname, "..", "electron", "backend", "proxy", "zcodeLocal.cjs"));
+    const meta = zcodeLocal.resolveModelMeta("GLM-5.3-own");
+    eq(meta && meta.contextWindow, 123456, `${t}106 zcodeLocal 与更新器看到同一份 storedFile（窗口）`);
+    eq(meta && meta.maxOutputTokens, 6543, `${t}107 zcodeLocal 与更新器看到同一份 storedFile（上限）`);
+  } finally {
+    zb.invalidateModelRules();
+    if (savedData === undefined) delete process.env.AGENTHUB_DATA_DIR;
+    else process.env.AGENTHUB_DATA_DIR = savedData;
+    if (savedV2 === undefined) delete process.env.ZCODE_V2_DIR;
+    else process.env.ZCODE_V2_DIR = savedV2;
+    fsSync.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 (async () => {
   try {
     // RED 阶段：函数不存在时给出可读的失败信息，而不是 TypeError 直接崩掉
@@ -388,6 +552,9 @@ async function testUpdater(t, zb) {
     await testWriteStored("writeStoredRelease ", zb);
     await testRemoteFetch("fetchRemoteRelease ", zb);
     await testUpdater("updater ", zb);
+    await testEmptyRulesRejected("emptyRules ", zb);
+    await testCacheKeyIncludesPath("cacheKey ", zb);
+    await testDefaultRulesDeps("defaultRulesDeps ", zb);
   } catch (e) {
     fail++;
     console.log(`  ✗ 测试脚本异常：${(e && e.stack) || e}`);
