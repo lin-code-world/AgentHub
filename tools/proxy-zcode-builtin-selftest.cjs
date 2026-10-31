@@ -207,6 +207,39 @@ function twoHopFetch(firstBody, innerBody) {
 const okFirstHop = () => jsonResponse({ code: 0, data: { configs: { builtin_provider_config_json: INNER_URL } } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 假 fetch 的中止错误（与真实 fetch 被 signal 掐断时的形态一致） */
+function abortErr() {
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  return e;
+}
+
+/** 慢速假 fetch：等 delayMs 再回响应；等待期间 signal 一旦 abort 就立刻抛 AbortError。
+ *  （真实 fetch 尊重 signal；桩也必须尊重，否则"总预算被掐断"这类断言测不出来） */
+function slowFetch(delayMs, makeResponse) {
+  return async (url, init) => {
+    const signal = init && init.signal;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, delayMs);
+      if (!signal) return;
+      if (signal.aborted) {
+        clearTimeout(timer);
+        reject(abortErr());
+        return;
+      }
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(abortErr());
+        },
+        { once: true }
+      );
+    });
+    return String(url).includes("client/configs") ? okFirstHop() : makeResponse(url);
+  };
+}
+
 /** ⑥⑦ 落盘拒绝/采纳（临时目录，不碰用户数据） */
 function testWriteStored(t, zb) {
   const dir = fsSync.mkdtempSync(paths.join(os.tmpdir(), "zcode-write-"));
@@ -276,6 +309,19 @@ async function testRemoteFetch(t, zb) {
     const big = new Response("x", { status: 200, headers: { "content-length": String(11 * 1024 * 1024) } });
     const f = twoHopFetch(big, jsonResponse(rel(44)));
     eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f }), null, `${t}52 第一跳超 10MB → null`);
+  }
+  {
+    // 超时是**本次更新的总预算**，两跳共享同一个 deadline（不是每跳各自 20s）：
+    // 第一跳吃掉 40ms 后，第二跳必须被同一个 60ms deadline 掐断 → null。
+    // 若按"每跳各自计时"实现，第二跳会拿到完整 60ms 预算而成功返回对象，本断言即失败。
+    const f = slowFetch(40, () => jsonResponse(rel(44)));
+    eq(await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f, timeoutMs: 60 }), null, `${t}53 两跳共享总预算 60ms：第一跳耗 40ms 后第二跳被掐断 → null`);
+  }
+  {
+    // 共享预算下正常路径仍要能跑通（防止把 deadline 做得过紧误杀正常请求）
+    const f = slowFetch(10, () => jsonResponse(rel(44)));
+    const out = await zb.fetchRemoteRelease({ ...CONFIG, fetchImpl: f, timeoutMs: 500 });
+    ok(out && out.revision === 44, `${t}54 共享总预算 500ms、两跳各 10ms → 正常返回 revision 44`);
   }
 }
 

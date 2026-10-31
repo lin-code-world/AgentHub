@@ -8,13 +8,15 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 反代网关 · ZCode 模型能力数据的纯函数层（来源选择 + 校验 + 规则映射）
+// 反代网关 · ZCode 模型能力数据层（三来源选择 + 校验 + 规则映射 + 联网自动更新与原子落盘）
 //
-// 为什么要单独抽这一层：最终发布要给一台没装 ZCode 官方客户端的机器用。
-// 现有 resolveModelMeta() 的规则读自本机 zcode-builtin.json，无客户端就退化成
-// 写死默认值。本模块把"选哪份数据 + 校验结构 + 映射成统一形状"三个纯逻辑
-// 独立出来，后续任务再在它里面加文件 IO 与联网更新，供 zcodeLocal.resolveModelMeta()
-// 消费——测试也就能在纯函数层完成，不依赖真客户端。
+// 为什么要有这一层：最终发布要给一台没装 ZCode 官方客户端的机器用。
+// resolveModelMeta() 的规则读自本机 zcode-builtin.json，无客户端就退化成写死默认值。
+// 本模块负责两件事：① 从客户端目录 / 本机落盘副本 / 仓库内置副本三来源按 revision 取最新
+// 并映射成统一形状（纯函数，供 zcodeLocal.resolveModelMeta() 同步消费）；
+// ② 联网按官方 revision 更新落盘副本（两跳请求、校验、原子落盘、定时调度与退避），
+// 任何失败都沿用现有数据。纯函数部分离线可测，联网部分在自测里用假 fetch 覆盖，
+// 都不依赖真客户端、不打真上游。
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -289,7 +291,8 @@ function isSafeRemoteUrl(raw) {
   }
 }
 
-/** 单跳信号：自身超时，可选叠加外部中止信号（stopUpdater 能立刻掐断在途请求） */
+/** 总预算信号：本次更新**全程共享一个 deadline**（两跳请求与正文读取都用它），
+ *  可选叠加外部中止信号（stopUpdater 能立刻掐断在途请求）。 */
 function deadlineSignal(ms, outer) {
   const timeout = AbortSignal.timeout(ms);
   return outer ? AbortSignal.any([timeout, outer]) : timeout;
@@ -330,6 +333,9 @@ async function readBodyLimited(resp, limit) {
 /**
  * 官方两跳拉取：GET {clientConfigsUrl}?app_version=..&platform=.. → data.configs.builtin_provider_config_json
  * （一个 URL 字符串）→ GET 它拿最终配置 JSON。
+ * `timeoutMs` 是**本次更新的总预算**（默认 20 秒），不是"每跳各自 20 秒"：入口建一次 deadline，
+ * 两跳请求与两次正文读取共用它，第二跳不再继承满额预算（官方实现同样是一个 20 秒 timer
+ * 覆盖内部两次请求；每跳各算最坏会拖到约 40 秒，与「总超时 20 秒」的口径不符）。
  * 一切失败（网络、超时、业务码非 0、字段缺失、畸形、超限）统一返回 null，绝不抛：
  * 更新循环靠"拿到 null 就沿用现有数据"兜底，一次抖动不能让模型能力退化。
  * 返回的是**上游原始形状**的 JSON（与 assets/zcode-builtin.json 同形状），
@@ -340,13 +346,14 @@ async function fetchRemoteRelease(opts) {
   const fetchImpl = o.fetchImpl || globalThis.fetch;
   const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : REMOTE_TIMEOUT_MS;
   const outer = o.signal || null;
-  const init = (signal) => ({ method: "GET", redirect: "error", credentials: "omit", signal });
+  const deadline = deadlineSignal(timeoutMs, outer);
+  const init = { method: "GET", redirect: "error", credentials: "omit", signal: deadline };
   try {
     if (typeof fetchImpl !== "function") return null;
     const base = String(o.clientConfigsUrl || "");
     if (!base || !isSafeRemoteUrl(base)) return null;
 
-    const first = await fetchImpl(buildClientConfigsUrl(base, o.appVersion, o.platform), init(deadlineSignal(timeoutMs, outer)));
+    const first = await fetchImpl(buildClientConfigsUrl(base, o.appVersion, o.platform), init);
     if (!first || !first.ok) return null;
     const firstText = await readBodyLimited(first, REMOTE_BODY_LIMIT);
     if (!firstText) return null;
@@ -360,7 +367,7 @@ async function fetchRemoteRelease(opts) {
     const inner = ((firstJson.data || {}).configs || {}).builtin_provider_config_json;
     if (typeof inner !== "string" || !inner.trim() || !isSafeRemoteUrl(inner)) return null;
 
-    const second = await fetchImpl(inner, init(deadlineSignal(timeoutMs, outer)));
+    const second = await fetchImpl(inner, init);
     if (!second || !second.ok) return null;
     const secondText = await readBodyLimited(second, REMOTE_BODY_LIMIT);
     if (!secondText) return null;
