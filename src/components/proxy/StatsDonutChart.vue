@@ -9,7 +9,7 @@
   ============================================================
 -->
 <script setup lang="ts">
-// 反代网关 · 用量统计：通用环形图（Token 构成 / 请求状态共用）
+// 反代网关 · 总览：通用环形图（两个比例饼图共用：总 Token 比例 / 请求数比例）
 // 中心数值用 HTML 覆盖层画——echarts 的 graphic/title 组件没注册，也省一次按需注册的包体积。
 import { onMounted, onBeforeUnmount, ref, watch, nextTick, computed } from "vue";
 import { init, type ECharts } from "../../utils/echarts";
@@ -39,13 +39,15 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
-/** 每项解析出实色：显式 color 优先，否则按调色板轮转 */
+/** 每项解析出实色：显式 color 优先，否则按调色板轮转。
+ *  uid 只作列表渲染的 key——名字可能重复（多个未命名的 Key 都显示「（未命名）」、
+ *  「其他」也可能与某个真实分组同名），拿名字当 key 会撞车并让图例错位。 */
 const items = computed(() =>
   (props.data || []).map((d, i) => {
     const vars = props.palette && props.palette.length ? props.palette : DEFAULT_PALETTE;
     const vname = vars[i % vars.length];
     const fallback = PALETTE_FALLBACK[i % PALETTE_FALLBACK.length];
-    return { ...d, color: d.color || cssVar(vname, fallback) };
+    return { ...d, uid: `${i}-${d.name}`, color: d.color || cssVar(vname, fallback) };
   }),
 );
 
@@ -132,7 +134,7 @@ watch(() => ui.isDark, () => nextTick(render));
       </div>
     </div>
     <ul class="donut-legend">
-      <li v-for="d in items" :key="d.name">
+      <li v-for="d in items" :key="d.uid">
         <i :style="{ background: d.color }"></i>
         <span class="lg-name">{{ d.name }}</span>
         <b class="lg-val">{{ fmtVal(d.value) }}</b>

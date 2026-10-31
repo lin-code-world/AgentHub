@@ -19,8 +19,8 @@
 //
 // 全库无 registerTheme、无 graphic option、无 mark* / dataZoom / title 组件：
 // sync/Heatmap.vue 与 memory/MemoryHeatmap.vue 是纯 DOM 格子，积分日历的时间轴档与见底曲线档
-// 分别是纯 DOM 与内联 SVG，都不碰 echarts。PieChart 由反代网关用量统计页的
-// 「Token 构成 / 请求状态」两个环形图使用。新增图表类型时才往上面的 use([...]) 里加。
+// 分别是纯 DOM 与内联 SVG，都不碰 echarts。PieChart 由反代网关「总览」页的
+// 两个比例饼图（总 Token 比例 / 请求数比例）使用。新增图表类型时才往上面的 use([...]) 里加。
 import * as echarts from "echarts/core";
 import { LineChart, PieChart } from "echarts/charts";
 import { GridComponent, LegendComponent, LegendScrollComponent, TooltipComponent } from "echarts/components";

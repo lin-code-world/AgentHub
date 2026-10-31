@@ -23,12 +23,12 @@ async function refresh() {
   try {
     dataDir.value = await api.getDataDir();
   } catch {
-    /* 浏览器预览无数据目录 */
+    /* 网页端不提供数据目录 */
   }
   try {
     isPortable.value = await api.getIsPortable();
   } catch {
-    /* 浏览器预览走 mock */
+    /* 取不到就按不可用展示 */
   }
 }
 
@@ -47,7 +47,7 @@ async function openDataDir() {
   try {
     await api.openDataDir();
   } catch {
-    /* 浏览器预览无此能力 */
+    /* 网页端无此能力 */
   }
 }
 </script>
@@ -106,7 +106,7 @@ async function openDataDir() {
       <div class="set-row">
         <div class="set-info">
           <div class="set-name">数据目录</div>
-          <div class="set-desc">{{ dataDir || "（浏览器预览）" }}</div>
+          <div class="set-desc">{{ dataDir || "（不可用）" }}</div>
         </div>
         <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
           <span><button class="btn btn-ghost" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button></span>

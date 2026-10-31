@@ -111,7 +111,7 @@ console.log("");
 console.log("=== L3：明细筛选改精确 keyId ===");
 ok("keyId 精确命中 3 条", store.statsDetail({ from, to, keyId: key.id }).total === 3);
 ok("不存在的 keyId 命中 0 条", store.statsDetail({ from, to, keyId: "不存在" }).total === 0);
-ok("旧 key 模糊参数仍在（按流水快照匹配，既有口径）", store.statsDetail({ from, to, key: "新名" }).total === 1);
+ok("旧 key 参数已被忽略（不再参与筛选，返回区间内全部 3 条）", store.statsDetail({ from, to, key: "新名" }).total === 3);
 
 console.log("");
 console.log("=== L3b：实体删除后回退快照 ===");

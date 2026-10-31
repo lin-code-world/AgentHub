@@ -7,10 +7,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:1420 && electron .\"",
-    "dev:web": "vite",
-    "web": "vite --open",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview",
     "electron:build": "npm run build && electron-builder",
     "electron:pack": "npm run build && electron-builder --dir",
     "gen:icon": "node tools/gen-icon.cjs",

@@ -8,13 +8,13 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// IPC 封装：Electron 环境下通过 preload 桥接调用主进程；浏览器环境（npm run dev:web 预览 UI）
-// 回退到本地 mock。命令清单与 electron/preload.cjs 白名单、backend/ipc.cjs 一一对应
+// IPC 封装：Electron 环境下通过 preload 桥接调用主进程；浏览器环境（局域网网页控制台）
+// 走加密通道。命令清单与 electron/preload.cjs 白名单、backend/ipc.cjs 一一对应
 import type {
   AppConfig,
   ProxyConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
-  ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
+  ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow, ProxyStatsRange, ProxyStatsPoint,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
   ProxyCheckinRow, ZcodeDeviceStatusResult, ZcodeClaimModeResult,
   ProxyProvider, ProxyProviderKind, ProxyProviderModel, ProxyProviderTestResult,
@@ -30,7 +30,6 @@ export type {
   ProxyOpLogList, ProxyOpLogRow,
 } from "../types";
 
-import { mock } from "./mock";
 import { denyReason, isWebTransport } from "./caps";
 import { onWebEventState, subscribeWebEvents, type WebEventState } from "./events";
 import { webInvoke } from "./web-transport";
@@ -101,8 +100,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>, timeoutMs: n
     const res = await invokeWithTimeout(webInvoke(cmd, toPlain(args)), cmd, timeoutMs);
     return unwrapResult<T>(cmd, res);
   }
-  // 浏览器回退：直接走 mock
-  return (await mock.invoke(cmd, args)) as T;
+  throw new Error(`命令 ${cmd} 无法执行：既不在桌面窗口内，也没有连上网页控制台后端`);
 }
 
 // ===== 框架：配置 =====
@@ -126,7 +124,7 @@ export const adminAccessInfo = () => call<AdminAccessInfo>("admin_access_info");
 export const adminResetToken = () => call<{ ok: boolean; token: string; message?: string }>("admin_reset_token");
 
 /** 订阅主进程广播（网关状态 / 额度刷新 / 配置变更），返回退订函数。
- *  Web 托管形态走 SSE（信封同形）；纯静态预览（mock）没有事件源 */
+ *  Web 托管形态走 SSE（信封同形） */
 export function onUpdateEvent(cb: (payload: unknown) => void): (() => void) | undefined {
   if (window.agenthub?.onUpdateEvent) return window.agenthub.onUpdateEvent((payload) => cb(payload));
   if (isWebTransport()) return subscribeWebEvents(cb);
@@ -350,7 +348,17 @@ export const proxyStatsOverview = (opts?: { from?: number; to?: number; granular
   call<ProxyStatsOverview>("proxy_stats_overview", opts as Record<string, unknown>);
 export const proxyStatsTop = (dim: ProxyStatsDim, days?: number) =>
   call<{ name: string; req: number; tokens: number }[]>("proxy_stats_top", { dim, days });
-/** 请求明细：key/model 为模糊搜索，status 走分桶（ok/4xx/5xx/other） */
+/** 带筛选条件的时间序列（折线图用）：条件口径与明细一致，不传筛选 = 全量 */
+export const proxyStatsSeries = (opts: {
+  from?: number;
+  to?: number;
+  granularity?: "auto" | "hour" | "day";
+  channel?: string;
+  keyId?: string;
+  model?: string;
+  status?: string;
+}) => call<{ range: ProxyStatsRange; series: ProxyStatsPoint[] }>("proxy_stats_series", opts as Record<string, unknown>);
+/** 请求明细：channel / keyId / model 均为精确匹配（下拉选择），status 走分桶（ok/4xx/5xx/other） */
 export const proxyStatsDetail = (opts: {
   from?: number;
   to?: number;
@@ -358,7 +366,6 @@ export const proxyStatsDetail = (opts: {
   pageSize?: number;
   channel?: string;
   keyId?: string;
-  key?: string;
   model?: string;
   status?: string;
 }) => call<ProxyStatsDetail>("proxy_stats_detail", opts as Record<string, unknown>);

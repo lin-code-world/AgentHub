@@ -39,7 +39,7 @@ function eq(actual, expect, name) {
 }
 
 // 前置：新增导出没落地时报一条干净的红并退出——基线上跑这份自测能看到它在管真事
-const API = ["normRange", "pickGranularity", "statsOverview", "statsSummary", "statsSeries", "statsTopRich", "statsKeys", "statsStatus", "statsTokenMix"];
+const API = ["normRange", "pickGranularity", "statsOverview", "statsSummary", "statsSeries", "statsTopRich", "statsKeys", "statsStatus", "statsTokenMix", "statsFilteredSeries", "statsDetail"];
 const missing = API.filter((n) => typeof store[n] !== "function");
 ok(missing.length === 0, `新增聚合面全部导出（缺：${missing.join(" ") || "无"}）`);
 if (missing.length) { console.log("\nFAIL 统计自测：导出缺失，后续断言无从谈起"); process.exit(1); }
@@ -170,20 +170,19 @@ console.log("\n⑦ 请求明细（statsDetail）");
   eq(all.total, 6, "30 天区间全部 6 条");
   eq([all.agg.req, all.agg.promptTokens, all.agg.completionTokens, all.agg.tokens], [6, 6610, 2650, 9260], "筛选汇总口径与行一致");
 
-  const byKeyName = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, key: "主" });
-  eq(byKeyName.total, 3, "Key 名模糊搜索「主」命中 3 条（含 3 天前那条）");
-  const byKeyId = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, key: "k3" });
-  eq(byKeyId.total, 1, "Key 搜索同时匹配 keyId（k3 命中 1 条）");
+  const byKeyId = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, keyId: "k3" });
+  eq(byKeyId.total, 1, "Key 精确筛选（keyId=k3）命中 1 条");
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, keyId: "不存在" }).total, 0, "不存在的 keyId 命中 0 条");
   const byModel = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, model: "m2" });
-  eq(byModel.total, 2, "模型模糊搜索「m2」命中 2 条");
+  eq(byModel.total, 2, "模型精确匹配「m2」命中 2 条");
+  // 精确匹配的边界：m1 不能把 m10 / m11 一起捞进来（改成精确匹配就是为了这个）
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, model: "m1" }).total, 3, "模型精确匹配 m1 = 3 条（不含同前缀的其它模型）");
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, model: "m" }).total, 0, "精确匹配下前缀「m」不命中任何模型");
   const byChannel = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, channel: "workbuddy" });
   eq(byChannel.total, 2, "渠道精确筛选命中 2 条");
   eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, status: "ok" }).total, 4, "状态桶 ok 命中 4 条");
   eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, status: "4xx" }).total, 1, "状态桶 4xx 命中 1 条");
   eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, status: "5xx" }).total, 1, "状态桶 5xx 命中 1 条");
-  // LIKE 转义：用户敲一个 % 不能变成「匹配全表」
-  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, key: "%" }).total, 0, "搜索里的 % 被转义成字面量（不命中全表）");
-  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, key: "_" }).total, 0, "搜索里的 _ 被转义成字面量");
   // 分页（pageSize 有最小 5 的夹取：传 5 才是 5）
   const p2 = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, page: 2, pageSize: 5 });
   eq([p2.total, p2.pageSize, p2.rows.length], [6, 5, 1], "分页：第 2 页拿余下 1 条");
@@ -191,6 +190,45 @@ console.log("\n⑦ 请求明细（statsDetail）");
   // 区间隔离
   eq(store.statsDetail({ from: TODAY_FROM, to: TODAY_TO }).total, 4, "今日区间只剩 4 条");
   eq(store.statsDetail({ from: NOW - 6 * DAY, to: NOW }).total, 5, "7 天区间 5 条");
+}
+
+// ===== ⑧ 带筛选条件的时间序列（折线图专用）：口径必须与明细完全一致 =====
+console.log("\n⑧ 带筛选条件的时间序列（statsFilteredSeries）");
+{
+  const sumReq = (r) => r.series.reduce((a, p) => a + p.req, 0);
+  const sumTok = (r) => r.series.reduce((a, p) => a + p.tokens, 0);
+
+  // 不传筛选 = 全量，且与「明细 total」同一口径
+  const all = store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day" });
+  eq(sumReq(all), 6, "不传筛选：请求数与明细全量一致（6 条）");
+  eq(sumReq(all), store.statsDetail({ from: NOW - 30 * DAY, to: NOW }).total, "与 statsDetail 的 total 逐字相等");
+
+  // 逐维筛选：各自只算自己那些
+  eq(sumReq(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", keyId: "k1" })), 3, "按 keyId 精确筛：k1 共 3 条");
+  eq(sumReq(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", channel: "trae" })), 3, "按 channel 精确筛：trae 共 3 条");
+  eq(sumReq(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", model: "m2" })), 2, "按 model 精确筛：m2 共 2 条");
+  eq(sumReq(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", model: "m" })), 0, "折线图侧也是精确匹配：前缀 m 不命中");
+  eq(sumReq(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", status: "5xx" })), 1, "按 status 分桶筛：5xx 共 1 条");
+
+  // token 也要跟着筛选走（只验 k3 那条 500 的既有 token）
+  eq(sumTok(store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day", keyId: "k3" })), 7000, "筛选后 token 也按条件累加（k3 = 5000+2000）");
+
+  // 多条件叠加（trae + 今天）
+  eq(sumReq(store.statsFilteredSeries({ from: TODAY_FROM, to: TODAY_TO, granularity: "hour", channel: "trae" })), 2, "多条件叠加：今天 + trae = 2 条");
+
+  // 区间颠倒：normRange 换序后结果必须与正常区间完全相同（防「拼了两遍 ts 条件」的口径漂移）
+  const normal = store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "day" });
+  const swapped = store.statsFilteredSeries({ from: NOW, to: NOW - 30 * DAY, granularity: "day" });
+  eq(sumReq(swapped), sumReq(normal), "区间颠倒时与正常区间结果相同（不出现全 0）");
+
+  // 空区间：返回补零序列而不是空数组，且合计为 0
+  const empty = store.statsFilteredSeries({ from: NOW - 500 * DAY, to: NOW - 400 * DAY, granularity: "day" });
+  ok(empty.series.length > 0, `空区间仍返回补零序列（${empty.series.length} 个点）`);
+  eq(sumReq(empty), 0, "空区间合计为 0");
+
+  // 粒度：显式要小时且跨度 > 7 天时后端降级为按天（与 pickGranularity 同口径）
+  const degraded = store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "hour" });
+  eq(degraded.range.granularity, "day", "30 天跨度显式要小时 → 后端降级按天");
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"} 统计自测：${pass} 项通过，${failed} 项失败`);

@@ -29,8 +29,8 @@ import "./styles/element.css";
 const app = createApp(App);
 app.use(createPinia());
 
-// 启动形态三选一：Electron 直接挂载（IPC）；浏览器先探测网关托管（有后端走 RPC，
-// 无本地会话或会话已过期先挂登录页）；纯静态预览（dev:web）回落挂载走 mock。
+// 启动形态二选一：Electron 直接挂载（IPC）；浏览器先探测网关托管（有后端走 RPC，
+// 无本地会话或会话已过期先挂登录页）。
 async function bootstrap() {
   if (isElectron()) {
     app.mount("#app");
@@ -39,10 +39,16 @@ async function bootstrap() {
   const caps = await probeCaps();
   // 升级残留清理（I4）：网页控制台改用 ECDH 会话后不再需要明文令牌，探测到托管形态即无条件删掉
   // 旧键——不等一次成功登录才删（那时令牌已经在浏览器里躺了整个升级周期）。
-  // 探测失败（无后端 / 纯静态预览）时无从判断，保守不动
   if (caps) clearLegacyToken();
+  // 浏览器里探测不到托管后端 = 这不是网页控制台（比如随手用浏览器打开了页面）：
+  // 直接给出提示，不挂载主界面（已经没有假数据兜底，挂上去每个命令都会报错）
+  if (!caps) {
+    const host = document.getElementById("app");
+    if (host) host.innerHTML = '<div style="padding:48px;font-family:system-ui;color:#aab5c1;line-height:1.9">' + "<b>未连接到 AgentApiGateway 后端</b><br />请在本机启动应用后，通过「设置 · 局域网访问」里给出的地址打开网页控制台。" + "</div>";
+    return;
+  }
   const authed = hasSession();
-  if (caps && !authed) {
+  if (!authed) {
     const { default: WebLogin } = await import("./views/WebLogin.vue");
     createApp(WebLogin).mount("#app");
     return;

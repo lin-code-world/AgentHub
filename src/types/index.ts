@@ -369,12 +369,13 @@ export interface ProxyStatsAggRow {
   tokens: number;
   ttftAvg: number;
   latencyAvg: number;
+  /** 该分组最后一次请求的时间戳（「最新使用」列） */
+  lastTs: number;
 }
 
-/** 各 Key 用量行：Key 名可改，keyId 才是身份；lastTs 供「最近使用」列 */
+/** 各 Key 用量行：Key 名可改，keyId 才是身份 */
 export interface ProxyStatsKeyRow extends ProxyStatsAggRow {
   keyId: string;
-  lastTs: number;
 }
 
 /** 时间序列点（后端已按粒度补零，图表 x 轴连续） */
@@ -658,7 +659,7 @@ export const MODULES: ModuleDef[] = [
     key: "proxy",
     name: "反代网关",
     pages: [
-      // 「总览」= 原用量统计页（时间区间 + KPI + 趋势 + 明细），兼作网关服务启停入口；
+      // 「总览」= 原用量统计页（时间区间 + 用量统计表 + 两个比例饼图 + 请求明细含折线图）；
       // 放第一位：点进模块默认打开它（pages[0] 即默认页）
       { id: "stats", name: "总览" },
       { id: "agents", name: "号池" },

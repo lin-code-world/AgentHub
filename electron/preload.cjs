@@ -91,6 +91,7 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_zcode_restore_mid",
   "proxy_stats_overview",
   "proxy_stats_top",
+  "proxy_stats_series",
   "proxy_stats_detail",
   "proxy_stats_cleanup",
   "proxy_recent",

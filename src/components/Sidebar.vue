@@ -271,7 +271,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 </template>
 
 <style scoped>
-/* 左栏外层：上下双卡片列。极矮窗口（浏览器预览等无缩放兜底时）整体可滚 */
+/* 左栏外层：上下双卡片列。极矮窗口（浏览器访问等无缩放兜底时）整体可滚 */
 .side-col {
   grid-area: side;
   display: flex;

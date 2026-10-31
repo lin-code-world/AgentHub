@@ -16,7 +16,7 @@ import type { AppConfig, SettingsTab, ModuleDef, ModuleKey, PageDef } from "../t
 import * as api from "../api/ipc";
 
 /** 递归合并：以 base 为基线补全 patch 缺失的嵌套字段；数组与原始值一律整体取 patch（有则覆盖）。
- *  用途：后端返回的配置一旦缺某个嵌套字段（旧版后端 / 字段重命名 / mock 未同步），浅合并会让
+ *  用途：后端返回的配置一旦缺某个嵌套字段（旧版后端 / 字段重命名），浅合并会让
  *  模板访问形如 proxy.creditsRefreshMin 时直接抛错白屏——这里保证任何层级都有 defaultConfig 兜底。 */
 function mergeConfigDeep<T>(base: T, patch: unknown): T {
   if (Array.isArray(base) || Array.isArray(patch)) return (patch === undefined ? base : (patch as T));
@@ -30,7 +30,7 @@ function mergeConfigDeep<T>(base: T, patch: unknown): T {
   return patch === undefined ? base : (patch as T);
 }
 
-// 浏览器 mock / 后端加载失败时的兜底默认值；后端权威默认值见 electron/backend/config.cjs
+// 后端加载失败时的兜底默认值；后端权威默认值见 electron/backend/config.cjs
 const defaultConfig: AppConfig = {
   theme: "dark",
   admin: { token: "" },

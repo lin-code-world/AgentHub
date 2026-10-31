@@ -9,7 +9,7 @@
  * ============================================================
  */
 // 服务端能力清单（Web 托管形态的单一事实源）：
-//   - 判定"这是网关托管的 Web UI 还是纯前端预览（dev:web）"——前者走 RPC，后者走 mock
+//   - 判定"这是网关托管的 Web UI 还是普通浏览器"——前者走 RPC，后者不挂载主界面
 //   - 板块裁剪：只渲染服务端声明支持的模块
 //   - 命令门控：deny 命令在 call() 层统一拦下，文案由服务端下发（前端不重复维护）
 export type CommandMode = "read" | "write" | "deny";
@@ -40,7 +40,7 @@ export function settingsUnavailable(): boolean {
   return caps !== null;
 }
 
-/** 探测网关托管形态：3 秒超时；纯静态预览（无后端）或接口不可用时返回 null 走 mock */
+/** 探测网关托管形态：3 秒超时；无后端或接口不可用时返回 null（调用方据此不挂载主界面） */
 export async function probeCaps(): Promise<Caps | null> {
   try {
     const ctl = new AbortController();

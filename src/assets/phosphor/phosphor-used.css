@@ -31,6 +31,9 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+.ph.ph-arrow-counter-clockwise:before {
+  content: "\e038";
+}
 .ph.ph-arrows-clockwise:before {
   content: "\e094";
 }
@@ -45,6 +48,9 @@
 }
 .ph.ph-caret-double-right:before {
   content: "\e12a";
+}
+.ph.ph-caret-down:before {
+  content: "\e136";
 }
 .ph.ph-chart-bar:before {
   content: "\e150";
@@ -78,9 +84,6 @@
 }
 .ph.ph-file-arrow-up:before {
   content: "\e61e";
-}
-.ph.ph-file-code:before {
-  content: "\e914";
 }
 .ph.ph-fingerprint:before {
   content: "\e23e";

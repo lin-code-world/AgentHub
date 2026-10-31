@@ -100,7 +100,6 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 - `vite.config.ts` 里 unplugin-vue-components 设了 `dirs: []`：本地组件必须显式 import（自动注册已刻意关闭，避免同名静默换实现）；Element
   Plus 的 `<el-*>` 走 resolver 自动按需引入。
 - Vite dev 端口 1420 `strictPort`，与 `electron/main.cjs` 的加载地址绑定，改动会断桌面开发。
-- `npm run dev:web` 纯浏览器预览走 `src/api/mock.ts`（配置落 localStorage，未覆盖的命令返回 null 让页面降级）。
 - 浏览器形态的请求统一走 `src/api/web-transport.ts` 与 `events.ts`，只走桌面管理服务的 ECDH 加密通道。
   不要在页面里直接 fetch，否则会绕过鉴权、重试与错误收口。
 

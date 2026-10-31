@@ -93,7 +93,7 @@ async function refresh() {
     running.value = st.running;
     listenPort.value = st.running ? st.port : 0;
   } catch {
-    /* 浏览器预览走 mock */
+    /* 取不到就按未运行展示 */
   }
 }
 
@@ -370,7 +370,7 @@ function openDataDir() {
         <div class="set-row">
           <div class="set-info">
             <div class="set-name">数据目录</div>
-            <div class="set-desc">{{ vault?.dataDir || "（浏览器预览）" }} · 存储驱动 {{ vault?.driver || "-" }}</div>
+            <div class="set-desc">{{ vault?.dataDir || "（不可用）" }} · 存储驱动 {{ vault?.driver || "-" }}</div>
           </div>
           <el-tooltip :content="dataDirGate.reason || ''" :disabled="!dataDirGate.disabled" placement="top">
             <span><button class="btn btn-sm" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button></span>

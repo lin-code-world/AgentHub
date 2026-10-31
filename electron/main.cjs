@@ -162,7 +162,7 @@ function applyNativeTheme(theme) {
 // ===== 全局大小自适应 =====
 // 以 1280 为设计基准宽，整页等比缩放（钳制 0.7~1.25）：窗口更小整体缩小、更大适度放大。
 // zoomFactor 缩放的是 CSS 像素（含媒体查询），常态下有效布局宽度恒为 1280，
-// 布局本身只在大窗口侧自然拉伸；浏览器预览（dev:web）不走此逻辑，由 CSS 断点兜底
+// 布局本身只在大窗口侧自然拉伸；浏览器访问网页控制台时不走此逻辑，由 CSS 断点兜底
 const DESIGN_WIDTH = 1280;
 const ZOOM_MIN = 0.7;
 const ZOOM_MAX = 1.25;

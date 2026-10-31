@@ -123,8 +123,6 @@ if (API_OK) {
     ["electron/preload.cjs", /"proxy_stats_cleanup",/g, "preload 白名单登记（漏了渲染层会收到「未授权的 IPC 命令」）"],
     ["src/types/index.ts", /usageRetentionDays: number;/g, "前端类型字段"],
     ["src/stores/app.ts", /usageRetentionDays: 90,/g, "前端默认值"],
-    ["src/api/mock.ts", /usageRetentionDays: 90,/g, "浏览器预览的默认值"],
-    ["src/api/mock.ts", /case "proxy_stats_cleanup"/g, "浏览器预览的 mock 分支"],
     ["src/api/ipc.ts", /export const proxyStatsCleanup = /g, "渲染层 api 出口"],
     ["src/components/config/ConfigProxySection.vue", /v-model\.number="app\.config\.proxy\.usageRetentionDays"/g, "设置页输入框"],
     ["src/components/config/ConfigProxySection.vue", /app\.config\.proxy\.usageRetentionDays = Number\.isFinite\(urd\) && Math\.round\(urd\) >= 1 \? Math\.min\(3650, Math\.round\(urd\)\) : 90;/g, "保存时钳位（非正值兜底 90，不钳成 1 天）"],

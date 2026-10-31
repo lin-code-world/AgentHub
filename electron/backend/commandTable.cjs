@@ -25,7 +25,7 @@ const proxyIndex = require("./proxy/index.cjs");
 
 /** 只读命令（无副作用）：监视面板与只读令牌都依赖这份判定。
  *  proxy_config_get 入列（Ruling 24）：只是界面分类口径，本任务不改任何鉴权判定 */
-const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
+const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_series", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
 
 /** 网页端不可用命令：值面向用户（原因 + 替代路径），前端提示与服务端 403 共用同一份文案。
  *  含浏览器不可用命令与桌面专用命令：令牌查看 / 重置、目录选择与打开、整份配置读写都只在桌面窗口可用

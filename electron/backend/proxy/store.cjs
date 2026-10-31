@@ -1513,7 +1513,7 @@ function statsTopRich(dim, from, to, limit) {
   // 名字映射只在 key/account 维度需要（channel/model 的 name 即分组值本身）
   const names = g.nameCol === "key_name" ? currentKeyNames()
     : g.nameCol === "account_name" ? currentAccountNames() : null;
-  return rows.map((r) => ({id: r.gid, name: (names && names.get(r.gid)) || r.name || "", ...shapeAgg(r)}));
+  return rows.map((r) => ({id: r.gid, name: (names && names.get(r.gid)) || r.name || "", lastTs: Number(r.last_ts) || 0, ...shapeAgg(r)}));
 }
 
 /** 各 Key 用量：按 key_id 分组（Key 名可改，id 才是身份），带最近使用时间。
@@ -1568,11 +1568,6 @@ function statsTokenMix(from, to) {
   ];
 }
 
-/** LIKE 参数转义：用户输入里的 \ % _ 必须当字面量，否则搜一个 "%" 会命中全表 */
-function likeArg(s) {
-  return "%" + String(s).replace(/[\\%_]/g, (m) => "\\" + m) + "%";
-}
-
 /** 状态分桶 → SQL 片段（与 statsStatus 的分桶口径保持一致） */
 function statusWhere(status) {
   if (status === "ok") return "status >= 200 AND status < 300";
@@ -1580,6 +1575,62 @@ function statusWhere(status) {
   if (status === "5xx") return "status >= 500";
   if (status === "other") return "(status < 200 OR (status >= 300 AND status < 400))";
   return "";
+}
+
+/** 明细 / 趋势共用的筛选条件 → { where, vals }：口径只此一处，避免两处查询漂移。
+ *  区间缺省 = 不限（保留期自测等旧调用方按「全表」用；统计页总是显式传 from/to）。 */
+function usageWhere(o) {
+  const where = [];
+  const vals = [];
+  const from = Number(o.from);
+  const to = Number(o.to);
+  if (Number.isFinite(from) && from > 0) { where.push("ts >= ?"); vals.push(Math.round(from)); }
+  if (Number.isFinite(to) && to > 0) { where.push("ts <= ?"); vals.push(Math.round(to)); }
+  if (o.channel) { where.push("channel = ?"); vals.push(o.channel); }
+  if (o.keyId) { where.push("key_id = ?"); vals.push(o.keyId); }
+  if (o.model) { where.push("model = ?"); vals.push(o.model); }
+  const sw = statusWhere(o.status);
+  if (sw) where.push(sw);
+  return { where, vals };
+}
+
+/** 按时间分桶的序列：与 statsSeries 同口径（补零连续），但吃明细的筛选条件。
+ *  折线图要跟着「请求明细」的查询条件走，所以不能在总览里取（那是全量口径）。 */
+function statsFilteredSeries(opts) {
+  open();
+  const o = opts || {};
+  const { from, to } = normRange(o.from, o.to);
+  const granularity = pickGranularity(from, to, o.granularity);
+  // 时间条件只由 usageWhere 拼一次，且喂它 normRange 之后的值：
+  // 否则这里再拼一遍 ts 条件会与 normRange（换序 / 366 天截断）的口径漂移，
+  // 传颠倒区间时会出现「明细有数、折线全 0」的错配。
+  const { where, vals } = usageWhere({ ...o, from, to });
+  const w = where.length ? "WHERE " + where.join(" AND ") : "";
+  const fmt = granularity === "hour" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
+  const rows = db.prepare(
+    `SELECT strftime('${fmt}', ts / 1000, 'unixepoch', 'localtime') AS k, ${AGG_COLS}
+     FROM usage_requests ${w}
+     GROUP BY k`
+  ).all(...vals);
+  const map = new Map();
+  for (const r of rows) if (r && r.k) map.set(r.k, r);
+  const out = [];
+  if (granularity === "hour") {
+    const start = new Date(from);
+    start.setMinutes(0, 0, 0);
+    for (let t = start.getTime(); t <= to; t += 3600000) {
+      const k = hourStr(t);
+      out.push({ t, label: k, ...shapeAgg(map.get(k)) });
+    }
+  } else {
+    const start = new Date(from);
+    start.setHours(0, 0, 0, 0);
+    for (let t = start.getTime(); t <= to; t += DAY_MS) {
+      const k = dayStr(t);
+      out.push({ t, label: k, ...shapeAgg(map.get(k)) });
+    }
+  }
+  return { range: { from, to, granularity }, series: out };
 }
 
 /** 统计总览：一次返回 KPI / 序列 / 四维排行 / 各 Key / 状态分布 / Token 构成。
@@ -1611,18 +1662,7 @@ function statsDetail(opts) {
   const o = opts || {};
   const size = Math.min(100, Math.max(5, o.pageSize || 20));
   const p = Math.max(1, o.page || 1);
-  const where = [];
-  const vals = [];
-  const from = Number(o.from);
-  const to = Number(o.to);
-  if (Number.isFinite(from) && from > 0) { where.push("ts >= ?"); vals.push(Math.round(from)); }
-  if (Number.isFinite(to) && to > 0) { where.push("ts <= ?"); vals.push(Math.round(to)); }
-  if (o.channel) { where.push("channel = ?"); vals.push(o.channel); }
-  if (o.keyId) { where.push("key_id = ?"); vals.push(o.keyId); }
-  if (o.key) { where.push("(key_name LIKE ? ESCAPE '\\' OR key_id LIKE ? ESCAPE '\\')"); vals.push(likeArg(o.key), likeArg(o.key)); }
-  if (o.model) { where.push("model LIKE ? ESCAPE '\\'"); vals.push(likeArg(o.model)); }
-  const sw = statusWhere(o.status);
-  if (sw) where.push(sw);
+  const { where, vals } = usageWhere(o);
   const w = where.length ? "WHERE " + where.join(" AND ") : "";
   const total = db.prepare(`SELECT COUNT(*) AS c FROM usage_requests ${w}`).get(...vals).c;
   const agg = shapeAgg(db.prepare(`SELECT ${AGG_COLS} FROM usage_requests ${w}`).get(...vals));
@@ -1775,6 +1815,7 @@ module.exports = {
   snapshotCredits,
   insertUsage, statsToday, statsTrend, statsTop, statsDetail, recentRequests,
   normRange, pickGranularity, statsOverview, statsSummary, statsSeries, statsTopRich,
+  statsFilteredSeries,
   statsKeys, statsStatus, statsTokenMix,
   cleanupUsage, setUsageRetention, cleanupOpLogs,
 };

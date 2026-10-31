@@ -8,21 +8,24 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 反代网关 · 用量统计（方案《反代网关-用量统计增强方案.md》）
+<!-- 反代网关 · 总览（原「用量统计」页）
+     页面结构：顶部时间档位 + 刷新/清理；用量统计表（维度切换 + 可排序列头 + 最新使用 + 筛选下钻）；
+     两张比例饼图（跟随维度切换）；请求明细（筛选行 + 折线图 + 明细表）。
      口径：不建日聚合冗余表，全部由 usage_requests 流水直查 GROUP BY；流水保留期可配
      （设置 · 反代网关「余额历史 / 请求流水保留」，默认 90 天），本页「清理」按当前值立即删一轮。
-     时间区间统摄全页：KPI / 趋势 / 排行 / 各 Key / 明细全部吃同一个 { from, to }。 -->
+     时间区间统摄全页：用量统计表 / 饼图 / 请求明细吃同一个 { from, to }；
+     折线图另按明细的筛选条件单独取 proxy_stats_series（与明细表逐条对齐）。 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import * as api from "../../api/ipc";
-import type { ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsKeyRow } from "../../types";
+import type { ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsAggRow, ProxyStatsPoint } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { fmtInt, fmtK, fmtMs, fmtTime, fmtDate, fmtAgo, channelName, statusCls } from "./format";
 import { coalesceAsync } from "../../utils/timing";
 import { toast as ElMessage } from "../../utils/toast";
 import { loadPhaseOf } from "./loadState";
-import StatsTrendChart from "../../components/proxy/StatsTrendChart.vue";
 import StatsDonutChart from "../../components/proxy/StatsDonutChart.vue";
+import StatsTrendChart from "../../components/proxy/StatsTrendChart.vue";
 
 const app = useAppStore();
 
@@ -31,7 +34,6 @@ const PRESETS = [
   { key: "today", label: "今天" },
   { key: "7d", label: "近 7 天" },
   { key: "30d", label: "近 30 天" },
-  { key: "90d", label: "近 90 天" },
   { key: "custom", label: "自定义" },
 ] as const;
 type Preset = (typeof PRESETS)[number]["key"];
@@ -67,7 +69,7 @@ const range = computed<{ from: number; to: number }>(() => {
     }
     return { from: dayStart(now) - 6 * DAY_MS, to: now };
   }
-  const days = preset.value === "today" ? 1 : preset.value === "7d" ? 7 : preset.value === "30d" ? 30 : 90;
+  const days = preset.value === "today" ? 1 : preset.value === "7d" ? 7 : 30;
   const from = dayStart(now) - (days - 1) * DAY_MS;
   // 「今天」档到此刻为止；其余档到今天 23:59:59.999（含当天全部流水）
   const to = days === 1 ? now : dayStart(now) + DAY_MS - 1;
@@ -100,16 +102,30 @@ const DIMS = [
   { value: "key", label: "Key" },
   { value: "channel", label: "渠道" },
   { value: "model", label: "模型" },
-  { value: "account", label: "账号" },
 ] as const;
 // 初次进入的默认视角：Key × Token（最常用的「谁在用、用了多少」）
 const dim = ref<ProxyStatsDim>("key");
-const topBy = ref<"req" | "tokens">("tokens");
-const metric = ref<"req" | "tokens" | "success" | "latency">("req");
+/** 排序口径：点列头切换。只在这两列之间切，且恒为降序（看「谁最多」是这个页面的主要用法） */
+const sortBy = ref<"req" | "tokens">("tokens");
+function pickSort(k: "req" | "tokens") {
+  sortBy.value = k;
+}
+/** 折线图的横轴粒度：跨度 ≤ 1 天按小时（看得清一天内的起伏），超过 1 天按天。
+ *  「今天」天然落在这条规则里；「自定义」选同一天也走按小时，两个入口同区间得到同一种图。
+ *  注意 range 依赖 nowTick/preset，本身是响应式的，所以这里能跟着档位与日期自动重算。 */
+const trendGranularity = computed<"hour" | "day">(() => {
+  const { from, to } = range.value;
+  return to - from <= DAY_MS ? "hour" : "day";
+});
 const dimLabel = computed(() => DIMS.find((d) => d.value === dim.value)?.label || "维度");
 
 // ===== 数据 =====
 const ov = ref<ProxyStatsOverview | null>(null);
+/** 折线图数据：由 proxy_stats_series 按明细筛选条件返回（不复用 ov.series，那是全量口径） */
+const series = ref<ProxyStatsPoint[]>([]);
+/** 折线图实际使用的粒度：以后端回填为准（后端可能把 hour 降级成 day），
+ *  初值同 trendGranularity，取到数据后被覆盖 */
+const seriesGranularity = ref<"hour" | "day">("day");
 const detail = ref<ProxyStatsDetail | null>(null);
 const page = ref(1);
 const pageSize = 15;
@@ -119,29 +135,67 @@ const busy = ref(false);
 const filters = reactive({ key: "", model: "", channel: "", status: "" }); // key 存 Key 的 keyId（明细筛选是下拉精确选择）
 
 const s = computed(() => ov.value?.summary);
-const successCls = computed(() => ((s.value?.successRate ?? 100) < 99 ? "err" : "acc"));
-/** 缓存命中率 = 缓存读 ÷ 输入（缓存读是 prompt_tokens 的子集，不能与输入并列进总量） */
-const cacheHit = computed(() => {
-  const v = ov.value?.summary;
-  if (!v || !v.promptTokens) return 0;
-  return Math.round((v.cacheReadTokens / v.promptTokens) * 1000) / 10;
-});
 
 const channelOptions = computed(() => (ov.value?.tops.channel || []).map((r) => ({ id: r.name, label: channelName(r.name) })));
+/** 模型下拉选项：来自当前区间的模型排行（与渠道下拉同源），选中即按模型精确匹配 */
+const modelOptions = computed(() => (ov.value?.tops.model || []).map((r) => ({ id: r.name, label: r.name || "（空模型）" })));
 
 const topRows = computed(() => {
   const rows = [...(ov.value?.tops[dim.value] || [])];
-  const key = topBy.value;
+  const key = sortBy.value;
   rows.sort((a, b) => (key === "tokens" ? b.tokens - a.tokens : b.req - a.req));
-  const total = rows.reduce((sum, r) => sum + (key === "tokens" ? r.tokens : r.req), 0) || 1;
   return rows.slice(0, 10).map((r) => ({
     ...r,
     label: dim.value === "channel" ? channelName(r.name) : r.name || "（未命名）",
-    pct: Math.round(((key === "tokens" ? r.tokens : r.req) / total) * 1000) / 10,
   }));
 });
 
+/** 饼图分组：跟上方维度走。模型条目多，只取前 8 名并把其余合并成「其他」；
+ *  Key / 渠道数量有限且每个都值得看，全部列出不合并。
+ *  重名处理：Key 可以重名也能为空（显示成「（未命名）」），图例上同名会分不清，
+ *  这里给重名项补 (1)(2) 序号，仅影响显示，不影响数值与下钻。 */
+const PIE_TOP = 8;
+function pieSlices(metric: "tokens" | "req"): { name: string; value: number }[] {
+  const rows = [...(ov.value?.tops[dim.value] || [])];
+  const labelOf = (r: ProxyStatsAggRow) => (dim.value === "channel" ? channelName(r.name) : r.name || "（未命名）");
+  // 先按该指标排序再截断：「其他」必须是真正排在后面的那些，不能按别的口径先挑
+  rows.sort((a, b) => (metric === "tokens" ? b.tokens - a.tokens : b.req - a.req));
+  const limit = dim.value === "model" ? PIE_TOP : rows.length;
+  const head = rows.slice(0, limit);
+  const rest = rows.slice(limit);
+  // 同名计数：第二次出现起补序号，避免图例出现多条一模一样且无法区分的条目
+  const seen = new Map<string, number>();
+  const out = head
+    .map((r) => {
+      const base = labelOf(r);
+      const n = (seen.get(base) || 0) + 1;
+      seen.set(base, n);
+      return { name: n === 1 ? base : `${base} (${n})`, value: metric === "tokens" ? r.tokens : r.req };
+    })
+    .filter((d) => d.value > 0);
+  const restSum = rest.reduce((sum, r) => sum + (metric === "tokens" ? r.tokens : r.req), 0);
+  if (restSum > 0) out.push({ name: "其他", value: restSum });
+  return out;
+}
+const pieTokens = computed(() => pieSlices("tokens"));
+const pieReq = computed(() => pieSlices("req"));
+
 const keyRows = computed(() => [...(ov.value?.keys || [])].sort((a, b) => b.tokens - a.tokens));
+
+/** 用量统计行 → 明细筛选：按当前维度把该行灌进对应筛选条件并滚到明细表 */
+function drillToRow(r: ProxyStatsAggRow) {
+  filters.key = "";
+  filters.channel = "";
+  filters.model = "";
+  if (dim.value === "key") filters.key = r.id;
+  else if (dim.value === "channel") filters.channel = r.id;
+  else if (dim.value === "model") filters.model = r.name;
+  filters.status = "";
+  page.value = 1;
+  loadDetail();
+  loadSeries();
+  detailRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 const totalPages = computed(() => Math.max(1, Math.ceil((detail.value?.total || 0) / pageSize)));
 /** 空态三态：加载中 / 确实没有请求 / 加载失败（失败给「重试」，别把断网当成「当前区间无数据」）。
@@ -154,8 +208,30 @@ const rateCls = (r: number) => (r < 95 ? "rate-bad" : r < 99 ? "rate-warn" : "")
 async function refresh() {
   const { from, to } = range.value;
   try {
-    ov.value = await api.proxyStatsOverview({ from, to, granularity: "auto" });
+    ov.value = await api.proxyStatsOverview({ from, to, granularity: trendGranularity.value });
     err.value = "";
+  } catch (e) {
+    err.value = String((e as Error).message || e);
+  }
+}
+
+/** 折线图数据：与明细同口径吃筛选条件（Key / 模型 / 渠道 / 状态）；都不填就是全量。
+ *  粒度以后端回填的为准——后端在「要小时但跨度 > 7 天」时会降级成按天，
+ *  前端若还按自己要的 hour 去切片，标签会全变空字符串（横轴无刻度）。 */
+async function loadSeries() {
+  const { from, to } = range.value;
+  try {
+    const r = await api.proxyStatsSeries({
+      from,
+      to,
+      granularity: trendGranularity.value,
+      keyId: filters.key || undefined,
+      model: filters.model || undefined,
+      channel: filters.channel || undefined,
+      status: filters.status || undefined,
+    });
+    series.value = r.series || [];
+    if (r.range?.granularity) seriesGranularity.value = r.range.granularity;
   } catch (e) {
     err.value = String((e as Error).message || e);
   }
@@ -183,7 +259,7 @@ async function reload() {
   nowTick.value = Date.now(); // 先推进时间锚再取数：手动刷新要看到「此刻」为止的数据
   busy.value = true;
   try {
-    await Promise.all([refresh(), loadDetail()]);
+    await Promise.all([refresh(), loadSeries(), loadDetail()]);
   } finally {
     busy.value = false;
   }
@@ -196,11 +272,12 @@ function goPage(p: number) {
 
 // ===== 明细筛选 =====
 const detailRef = ref<HTMLElement | null>(null);
-let searchTimer = 0;
 
+/** 点「查询」/ 回车：把当前填写的条件应用上去并回到第一页（折线图同步按同条件重算） */
 function applyFilter() {
   page.value = 1;
   loadDetail();
+  loadSeries();
 }
 function resetFilters() {
   filters.key = "";
@@ -208,16 +285,6 @@ function resetFilters() {
   filters.channel = "";
   filters.status = "";
   applyFilter();
-}
-
-/** 从各 Key 用量表下钻：把 Key 的 keyId 灌进明细筛选下拉并滚过去 */
-function drillToKey(k: ProxyStatsKeyRow) {
-  filters.key = k.keyId;
-  filters.channel = "";
-  filters.status = "";
-  page.value = 1;
-  loadDetail();
-  detailRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // ===== 清理流水：范围二选一（仅超期=按设置页保留期删旧 / 全部=清空整表），不可恢复所以先问一道 =====
@@ -247,10 +314,10 @@ async function doCleanup() {
 /** 本页是否处于前台：页面经 v-show 保活，事件刷新只在激活时跑，切走即停 */
 const active = computed(() => app.activeModule === "proxy" && app.activePage === "stats");
 
-// 事件合流：概览 + 明细一起拉，1s 窗口合并防重入；先推进时间锚，让 range 拿到当下区间
+// 事件合流：概览 + 折线 + 明细一起拉，1s 窗口合并防重入；先推进时间锚，让 range 拿到当下区间
 const scheduleRefresh = coalesceAsync(() => {
   nowTick.value = Date.now();
-  return Promise.all([refresh(), loadDetail()]);
+  return Promise.all([refresh(), loadSeries(), loadDetail()]);
 }, 1000);
 
 // 档位/自定义日期变化：回到第 1 页并整体重拉。监听源头而不是 range 本身——
@@ -259,16 +326,8 @@ watch([preset, customRange], () => {
   page.value = 1;
   scheduleRefresh();
 });
-// 文本搜索防抖 300ms（每次敲键都打一次 IPC 太浪费）
-watch(
-  () => filters.model,
-  () => {
-    window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(applyFilter, 300);
-  }
-);
-// 下拉筛选（Key / 渠道 / 状态）都是点选，选中立即刷新
-watch([() => filters.key, () => filters.channel, () => filters.status], applyFilter);
+// 筛选条件只在点「查询」时才生效：下拉 / 输入框改完不自动查，避免与「筛选」按钮下钻叠成两次查询。
+// 回车等同点查询（键盘操作的常规预期），文本输入去掉了原来的 300ms 防抖轮询。
 
 watch(active, (on) => {
   if (on) scheduleRefresh();
@@ -298,7 +357,6 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  window.clearTimeout(searchTimer);
   window.clearInterval(liveTimer);
   scheduleRefresh.cancel();
   scheduleLiveRefresh.cancel();
@@ -318,7 +376,7 @@ onUnmounted(() => {
           </button>
         </div>
         <el-date-picker v-if="preset === 'custom'" :model-value="customRange" type="daterange" value-format="YYYY-MM-DD" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="glass-popper" class="f-date-range" @update:model-value="pickCustomRange" />
-        <span class="range-hint">{{ rangeLabel }} · {{ ov?.range.granularity === "hour" ? "按小时" : "按天" }}</span>
+        <span class="range-hint">{{ rangeLabel }}</span>
         <div class="spacer"></div>
         <button class="btn btn-sm" @click="reload"><i class="ph ph-arrows-clockwise"></i> 刷新</button>
         <button class="btn btn-sm" @click="openClean"><i class="ph ph-broom"></i> 清理</button>
@@ -328,136 +386,75 @@ onUnmounted(() => {
         <div class="set-desc err-text">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></div>
       </div>
 
-      <!-- KPI：区间口径（与下方所有模块同一区间） -->
-      <div class="kpis kpis-6">
-        <div class="kpi" :title="`成功 ${fmtInt(s?.ok || 0)} · 失败 ${fmtInt(s?.err || 0)}`">
-          <span>总请求</span><b class="acc">{{ fmtInt(s?.req || 0) }}</b>
-        </div>
-        <div class="kpi" :title="`输入 ${fmtInt(s?.promptTokens || 0)} + 输出 ${fmtInt(s?.completionTokens || 0)}`">
-          <span>总 Token</span><b>{{ fmtK(s?.totalTokens || 0) }}</b>
-        </div>
-        <div class="kpi" :title="`成功 ${fmtInt(s?.ok || 0)} / 共 ${fmtInt(s?.req || 0)} 次请求`">
-          <span>成功率</span><b :class="successCls">{{ (s?.successRate ?? 100).toFixed(1) }}%</b>
-        </div>
-        <div class="kpi" :title="`P50 ${fmtMs(s?.ttftP50 || 0)} · 平均 ${fmtMs(s?.ttftAvg || 0)} · 总耗时均值 ${fmtMs(s?.latencyAvg || 0)}`">
-          <span>平均 TTFT</span><b>{{ fmtMs(s?.ttftAvg || 0) }}</b>
-        </div>
-        <div class="kpi" :title="`缓存读 ${fmtInt(s?.cacheReadTokens || 0)} · 缓存命中率 ${cacheHit}%（缓存读为输入的子集）`">
-          <span>输入 Token</span><b>{{ fmtK(s?.promptTokens || 0) }}</b>
-        </div>
-        <div class="kpi" :title="`缓存写 ${fmtInt(s?.cacheCreationTokens || 0)}`">
-          <span>输出 Token</span><b>{{ fmtK(s?.completionTokens || 0) }}</b>
-        </div>
-      </div>
-
-      <!-- 趋势：多指标切换 + 点上数值 + 悬停看板 -->
-      <div style="margin-top: 12px">
-        <StatsTrendChart :points="ov?.series || []" :metric="metric" :granularity="ov?.range.granularity || 'day'" @change-metric="metric = $event" />
-      </div>
-
-      <!-- Token 构成 / 请求状态 -->
-      <div class="grid-2" style="margin-top: 12px">
-        <div class="card anim">
-          <div class="card-title">
-            Token 构成 <span class="right">缓存命中率 {{ cacheHit }}%</span>
-          </div>
-          <StatsDonutChart :data="ov?.tokenMix || []" :palette="['--accent', '--info']" unit="token" center-label="总 Token" />
-        </div>
-        <div class="card anim">
-          <div class="card-title">
-            请求状态 <span class="right">共 {{ fmtInt(s?.req || 0) }} 次</span>
-          </div>
-          <StatsDonutChart :data="ov?.status || []" :palette="['--accent', '--warn', '--danger', '--text-3']" center-label="成功率" :center-value="(s?.successRate ?? 100).toFixed(1) + '%'" />
-        </div>
-      </div>
-
-      <!-- 用量占比 TOP：维度 × 排序双切换，含请求/响应 token 分列 -->
+      <!-- 用量统计：维度 × 排序双切换，含请求/响应 token 分列 -->
       <div class="card anim" style="margin-top: 12px">
         <div class="card-title">
-          用量占比 TOP 10
+          用量统计
           <div class="chips" style="margin-left: 8px">
             <button v-for="d in DIMS" :key="d.value" class="chip" :class="{ active: dim === d.value }" @click="dim = d.value">{{ d.label }}</button>
           </div>
-          <div class="chips" style="margin-left: 12px">
-            <button class="chip" :class="{ active: topBy === 'tokens' }" @click="topBy = 'tokens'">Token</button>
-            <button class="chip" :class="{ active: topBy === 'req' }" @click="topBy = 'req'">请求数</button>
-          </div>
         </div>
         <div class="tbl-wrap">
-          <table class="tbl tbl-c">
+          <table class="tbl tbl-c tbl-even">
+            <colgroup>
+              <col />
+              <col class="w-sort" />
+              <col />
+              <col />
+              <col class="w-sort" />
+              <col />
+              <col />
+              <col />
+              <col class="w-btn" />
+            </colgroup>
             <tbody>
               <tr>
                 <th>{{ dimLabel }}</th>
-                <th style="width: 32%">占比（{{ topBy === "tokens" ? "Token" : "请求数" }}）</th>
-                <th>总 Token</th>
+                <th class="th-sort" :class="{ 'is-sort': sortBy === 'tokens' }" @click="pickSort('tokens')">总 Token <i class="ph ph-caret-down"></i></th>
                 <th>请求 Token</th>
                 <th>响应 Token</th>
-                <th>请求数</th>
+                <th class="th-sort" :class="{ 'is-sort': sortBy === 'req' }" @click="pickSort('req')">请求数 <i class="ph ph-caret-down"></i></th>
                 <th>成功率</th>
                 <th>平均 TTFT</th>
+                <th>最新使用</th>
+                <th></th>
               </tr>
               <tr v-for="r in topRows" :key="r.id">
                 <td>{{ r.label }}</td>
-                <td>
-                  <div class="ratio">
-                    <div class="ratio-track"><div class="ratio-fill" :style="{ width: Math.min(100, r.pct) + '%' }"></div></div>
-                    <span class="num">{{ r.pct }}%</span>
-                  </div>
-                </td>
                 <td class="mono">{{ fmtK(r.tokens) }}</td>
                 <td class="mono">{{ fmtK(r.promptTokens) }}</td>
                 <td class="mono">{{ fmtK(r.completionTokens) }}</td>
                 <td class="mono">{{ fmtInt(r.req) }}</td>
                 <td class="mono" :class="rateCls(r.successRate)">{{ r.successRate.toFixed(1) }}%</td>
                 <td class="mono">{{ fmtMs(r.ttftAvg) }}</td>
+                <td class="mono">{{ fmtAgo(r.lastTs) }}</td>
+                <td><button class="btn btn-sm" @click="drillToRow(r)">筛选</button></td>
               </tr>
               <tr v-if="!topRows.length">
-                <td colspan="8" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前时间区间暂无请求数据</template></td>
+                <td colspan="9" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前时间区间暂无请求数据</template></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- 各 Key 用量：一眼看出哪把 Key 在烧 Token，点「筛选」直接下钻到明细 -->
-      <div class="card anim" style="margin-top: 12px">
-        <div class="card-title">
-          各 Key 用量 <span class="right">按总 Token 倒序 · 共 {{ keyRows.length }} 个</span>
+      <!-- 两个饼图：口径跟上方维度切换走，分别看「谁吃 token 多」与「谁请求多」 -->
+      <div class="grid-2" style="margin-top: 12px">
+        <div class="card anim">
+          <div class="card-title">
+            总 Token 比例 <span v-if="dim === 'model'" class="right">前 8 名</span>
+          </div>
+          <StatsDonutChart :data="pieTokens" :palette="['--accent', '--info', '--warn', '--danger']" unit="token" center-label="总 Token" />
         </div>
-        <div class="tbl-wrap">
-          <table class="tbl tbl-c">
-            <tbody>
-              <tr>
-                <th>Key</th>
-                <th>总 Token</th>
-                <th>请求 Token</th>
-                <th>响应 Token</th>
-                <th>请求数</th>
-                <th>成功率</th>
-                <th>平均 TTFT</th>
-                <th>最近使用</th>
-                <th></th>
-              </tr>
-              <tr v-for="k in keyRows" :key="k.keyId">
-                <td>{{ k.name || "（未命名）" }}</td>
-                <td class="mono">{{ fmtK(k.tokens) }}</td>
-                <td class="mono">{{ fmtK(k.promptTokens) }}</td>
-                <td class="mono">{{ fmtK(k.completionTokens) }}</td>
-                <td class="mono">{{ fmtInt(k.req) }}</td>
-                <td class="mono" :class="rateCls(k.successRate)">{{ k.successRate.toFixed(1) }}%</td>
-                <td class="mono">{{ fmtMs(k.ttftAvg) }}</td>
-                <td class="mono">{{ fmtAgo(k.lastTs) }}</td>
-                <td><button class="btn btn-sm" @click="drillToKey(k)">筛选</button></td>
-              </tr>
-              <tr v-if="!keyRows.length">
-                <td colspan="9" class="empty-cell"><template v-if="phase === 'loading'">加载中…</template><template v-else-if="phase === 'failed'">加载失败：{{ err }} <button class="btn-link btn-sm" @click="reload">重试</button></template><template v-else>当前时间区间暂无 Key 用量</template></td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="card anim">
+          <div class="card-title">
+            请求数比例 <span v-if="dim === 'model'" class="right">前 8 名</span>
+          </div>
+          <StatsDonutChart :data="pieReq" :palette="['--accent', '--info', '--warn', '--danger']" unit="int" center-label="总请求" />
         </div>
       </div>
 
-      <!-- 请求明细：Key 下拉选择 + 模型模糊搜索 + 渠道 / 状态过滤 + 筛选汇总 -->
+      <!-- 请求明细：筛选条件 + 折线图（总 Token 走左轴、总请求数走右轴）+ 明细表 -->
       <div ref="detailRef" class="card anim" style="margin-top: 12px">
         <div class="card-title">请求明细</div>
         <div class="detail-filters">
@@ -465,8 +462,11 @@ onUnmounted(() => {
             <el-option value="" label="全部 Key" />
             <el-option v-for="k in keyRows" :key="k.keyId" :value="k.keyId" :label="k.name || k.keyId" />
           </el-select>
-          <el-input v-model="filters.model" placeholder="搜索模型" clearable class="f-el-input" popper-class="glass-popper" />
-          <el-select v-model="filters.channel" placeholder="全部渠道" clearable class="f-el-select" popper-class="glass-popper">
+          <el-select v-model="filters.model" placeholder="全部模型" clearable filterable class="f-el-select f-el-wide" popper-class="glass-popper">
+            <el-option value="" label="全部模型" />
+            <el-option v-for="m in modelOptions" :key="m.id" :value="m.id" :label="m.label" />
+          </el-select>
+          <el-select v-model="filters.channel" placeholder="全部渠道" clearable class="f-el-select f-el-wide" popper-class="glass-popper">
             <el-option value="" label="全部渠道" />
             <el-option v-for="c in channelOptions" :key="c.id" :value="c.id" :label="c.label" />
           </el-select>
@@ -477,9 +477,11 @@ onUnmounted(() => {
             <el-option value="5xx" label="服务端 5xx" />
             <el-option value="other" label="无响应" />
           </el-select>
-          <button class="btn btn-sm" @click="resetFilters">重置</button>
-          <span class="detail-agg">{{ detail?.agg ? `命中 ${fmtInt(detail.agg.req)} 条 · 输入 ${fmtK(detail.agg.promptTokens)} · 输出 ${fmtK(detail.agg.completionTokens)} · 合计 ${fmtK(detail.agg.tokens)}` : "" }}</span>
+          <button class="btn btn-sm btn-chip-accent" @click="applyFilter"><i class="ph ph-magnifying-glass"></i> 查询</button>
+          <button class="btn btn-sm" @click="resetFilters"><i class="ph ph-arrow-counter-clockwise"></i> 重置</button>
+          <span class="detail-agg">{{ detail?.agg ? `${fmtInt(detail.agg.req)} 次请求 / 输入 ${fmtK(detail.agg.promptTokens)} token / 输出 ${fmtK(detail.agg.completionTokens)} token / 合计 ${fmtK(detail.agg.tokens)} token` : "" }}</span>
         </div>
+        <StatsTrendChart :points="series" :granularity="seriesGranularity" />
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
             <tbody>
@@ -513,10 +515,10 @@ onUnmounted(() => {
                     <span class="tag" :class="statusCls(r.status)">{{ r.status || "-" }}</span>
                   </el-tooltip>
                 </td>
-                <td class="mono">{{ fmtInt(r.promptTokens) }}</td>
-                <td class="mono">{{ fmtInt(r.completionTokens) }}</td>
+                <td class="mono">{{ fmtK(r.promptTokens) }}</td>
+                <td class="mono">{{ fmtK(r.completionTokens) }}</td>
                 <td class="mono">
-                  <el-tooltip v-if="r.cacheReadTokens" :content="`缓存读 ${fmtInt(r.cacheReadTokens)} / 输入 ${fmtInt(r.promptTokens)}${r.cacheCreationTokens ? ` / 缓存写 ${fmtInt(r.cacheCreationTokens)}` : ''}`" placement="top">
+                  <el-tooltip v-if="r.cacheReadTokens" :content="`缓存读 ${fmtK(r.cacheReadTokens)} / 输入 ${fmtK(r.promptTokens)}${r.cacheCreationTokens ? ` / 缓存写 ${fmtK(r.cacheCreationTokens)}` : ''}`" placement="top">
                     <span>{{ r.promptTokens ? Math.round((r.cacheReadTokens / r.promptTokens) * 100) + "%" : "-" }}</span>
                   </el-tooltip>
                   <span v-else>-</span>
@@ -614,16 +616,35 @@ onUnmounted(() => {
   gap: 8px;
   margin-bottom: 10px;
 }
-.detail-filters :deep(.f-el-input) {
-  width: 180px;
-}
+/* 明细筛选行的下拉宽度按内容长度分两档：
+   窄档（Key / 状态）内容短；宽档（模型 / 渠道）名称带版本号、渠道中文名或下划线，需要更多空间 */
 .detail-filters :deep(.f-el-select) {
-  width: 140px;
+  width: 120px;
 }
-.detail-filters :deep(.f-el-input .el-input__wrapper),
+.detail-filters :deep(.f-el-select.f-el-wide) {
+  width: 240px;
+}
 .detail-filters :deep(.f-el-select .el-select__wrapper) {
   min-height: 30px;
   font-size: 12.5px;
+}
+/* 查询 / 重置与左侧输入框同高（输入框 30px，小号按钮默认 24px，会矮一截） */
+.detail-filters .btn {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+/* 查询用「选中标签」配色（与时间档位选中的绿色一致）：淡绿底 + 绿描边 + 亮绿字 */
+.detail-filters .btn-chip-accent {
+  background: var(--accent-dim);
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.detail-filters .btn-chip-accent:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .detail-agg {
   margin-left: auto;
@@ -631,11 +652,51 @@ onUnmounted(() => {
   color: var(--text-3);
   font-family: var(--font-mono);
 }
+/* 折线图夹在筛选行与表格之间：上下留一点间距，别和两边贴在一起 */
+.detail-filters + .trend-chart {
+  margin: 4px 0 10px;
+}
 
 /* 三个表（TOP / 各 Key / 明细）字段值居中；th 全局 .tbl 已居中，这里覆盖默认左对齐的 td */
 .tbl-c th,
 .tbl-c td {
   text-align: center;
+}
+/* 等宽分配：表格按列数均分，避免某一列按内容撑得很长（占比列已去进度条，不需要宽） */
+.tbl-even {
+  table-layout: fixed;
+}
+.tbl-even th,
+.tbl-even td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 可排序列：列头可点，带排序箭头；激活时箭头与文字高亮 */
+.tbl-even .th-sort {
+  cursor: pointer;
+  user-select: none;
+}
+.tbl-even .th-sort:hover {
+  color: var(--text-1);
+}
+.tbl-even .th-sort.is-sort {
+  color: var(--accent);
+}
+.tbl-even .th-sort i {
+  font-size: 10px;
+  vertical-align: middle;
+  opacity: 0.35;
+}
+.tbl-even .th-sort.is-sort i {
+  opacity: 1;
+}
+/* 有排序箭头的两列稍宽一点，避免「总 Token ⌄」被省略号截断 */
+.tbl-even .w-sort {
+  width: 14%;
+}
+/* 操作列只放一个按钮，不需要与其他列同宽 */
+.tbl-even .w-btn {
+  width: 8%;
 }
 
 /* 成功率低于阈值时着色（TOP / Key 表共用） */
