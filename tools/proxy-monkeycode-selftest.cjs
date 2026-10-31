@@ -14,7 +14,7 @@
 // 守的是几条最容易在重构里静默坏掉的协议事实：
 //   · 站点身份与 Cookie 名（改错即全渠道 401）；
 //   · 建任务体：system 走独立字段且只取第一条、model_id 用目录里的 UUID、resource 与任务流同口径；
-//   · ACP 事件 → OpenAI delta 的翻译（工具调用 id 合成、tool_call_update 增量路由、usage 是累计值）；
+//   · ACP 事件 → OpenAI delta 的翻译（事件在 update.sessionUpdate、正文在 update.content.text；usage 不下发）；
 //   · 模型目录过滤：隐藏不列、只留 basic 档与裸名；
 //   · 镜像发现优先级：任务列表 → 用户镜像(devbox) → 内置兜底；
 //   · 签到验证码随机数发生器（FNV-1a + xorshift32）的确定性。
@@ -113,7 +113,7 @@ console.log("\n[3] 上游错误 → 网关状态");
 
 console.log("\n[4] 任务流 ACP → OpenAI delta");
 {
-  const t = new stream.Translator("abc123", "monkeycode-basic/glm-5.3-flash", true);
+  const t = new stream.Translator("abc123", "monkeycode-basic/glm-5.3-flash");
   // 真实结构（实测）：事件类型在 update.sessionUpdate，正文在 update.content.text
   let r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "你" } } });
   eq(r.deltas, [{ content: "你" }], "正文 chunk → content delta");
@@ -124,8 +124,9 @@ console.log("\n[4] 任务流 ACP → OpenAI delta");
   eq(tc.id, "tc-1", "工具调用 id 用上游 toolCallId");
   eq(tc.function.name, "read", "工具名取 kind");
   ok(tc.function.arguments.includes("path"), "对象参数转 JSON 串", tc.function.arguments);
+  // usage_update 只记录、不造帧（下游按本地估算记账，见 stream.cjs succeed 注释）
   r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "usage_update", used: 34807, size: 200000 } });
-  eq(t.usage.total_tokens, 34807, "usage_update 的 used 记为 total_tokens");
+  eq(r.deltas, [], "usage_update 不下发任何帧");
   eq(t.model, "monkeycode-basic/glm-5.3-flash", "下发给客户端的 model 用请求名");
   // 已确认不需要的事件：plan / 命令列表 / 重试 都只记录、不造帧
   r = t.handleAcp({ sessionId: "ses_x", update: { sessionUpdate: "available_commands_update", availableCommands: [] } });

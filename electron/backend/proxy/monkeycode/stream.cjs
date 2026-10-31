@@ -56,16 +56,14 @@ async function frameText(data) {
  * 产出的是 delta 对象与需要回给上游的帧，由驱动层分别走 emit / ws.send。
  */
 class Translator {
-  constructor(taskId, requestedModel, includeUsage) {
+  constructor(taskId, requestedModel) {
     // 下发给客户端的 model 用**客户端请求的那一个**，不是上游真名：统一名/别名映射由网关侧负责
     this.chatId = `chatcmpl-${taskId}`;
     this.model = String(requestedModel || "");
-    this.includeUsage = !!includeUsage;
     this.content = "";
     this.reasoning = "";
     this.tools = [];
     this.lastToolIndex = null;
-    this.usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     this.finished = false;
   }
 
@@ -112,16 +110,6 @@ class Translator {
     return null;
   }
 
-  /** usage_update 是**累计值**：used = 已用 token、size = 上下文窗口。这里把 used 报成 total_tokens */
-  mergeUsage(update) {
-    const used = Number(update && update.used);
-    if (Number.isFinite(used) && used > 0) this.usage.total_tokens = Math.trunc(used);
-  }
-
-  usageSeen() {
-    return this.usage.prompt_tokens || this.usage.completion_tokens || this.usage.total_tokens;
-  }
-
   summary() {
     return `正文 ${this.content.length} 字、思考 ${this.reasoning.length} 字、工具 ${this.tools.length} 个`;
   }
@@ -164,17 +152,14 @@ class Translator {
       return out;
     }
     if (kind === "usage_update") {
-      this.mergeUsage(update);
+      // 只记录、不造帧：上游给的是「已用 token」累计值，拆不出 OpenAI 的 prompt/completion；
+      // 下发会把 server 的本地估算顶掉（见 succeed 注释），所以这里不回任何东西
       return out;
     }
     // plan / available_commands_update / llm_call_retry / 未知事件：只记录，不造帧
     return out;
   }
 
-  /** task-ended 的收尾数据里可能再带一次用量，合并后再报 */
-  mergeFinalUsage(data) {
-    if (data && typeof data === "object") this.mergeUsage(data);
-  }
 }
 
 /** 下行 data 的解码：上游 `TaskStream.Data` 是 Go 的 `[]byte`，JSON 里表现为 base64 字符串。
@@ -232,8 +217,8 @@ function errorDetail(data) {
  * @returns {Promise<Translator>} 正常结束；任何失败都 reject（错误带 status）
  */
 function runTaskStream(opts) {
-  const { region, section, deps, session, taskId, prompt, requestedModel, includeUsage, emit, signal } = opts;
-  const translator = new Translator(taskId, requestedModel, includeUsage);
+  const { region, section, deps, session, taskId, prompt, requestedModel, emit, signal } = opts;
+  const translator = new Translator(taskId, requestedModel);
 
   return new Promise((resolve, reject) => {
     const url = endpoints.taskStreamUrl(region, section, taskId, "new");
@@ -281,7 +266,9 @@ function runTaskStream(opts) {
     };
     const succeed = () => {
       deps.verbose && deps.verbose(`任务 ${taskId} 正常结束（${translator.summary()}）`);
-      if (translator.usageSeen()) emit({ type: "usage", usage: { ...translator.usage } });
+      // 不 emit usage：上游只给「已用 token（used）」这一个累计值，拆不出 prompt/completion；
+      // 若下发会顶掉 server 的本地估算（estimateTokens），造成流水 token 归零、每条被标
+      // empty-completion、账号用量不累加。第三方 monkeycode2api 同样不发 usage 帧。
       emit({ type: "finish", reason: "stop" });
       settle(() => resolve(translator));
     };
@@ -365,7 +352,6 @@ function runTaskStream(opts) {
             return;
           }
           if (type === "task-ended") {
-            translator.mergeFinalUsage(decodeData(payload.data));
             succeed();
             return;
           }
@@ -374,7 +360,11 @@ function runTaskStream(opts) {
             return;
           }
           if (type !== "task-running") {
-            deps.verbose && deps.verbose(`忽略任务流消息类型：${type || "(空)"}`);
+            // cursor（历史游标）/ user-input（本端消息的服务端回显）都是正常帧，静默；
+            // 其余未知类型才留一条排障日志
+            if (type !== "cursor" && type !== "user-input") {
+              deps.verbose && deps.verbose(`忽略任务流消息类型：${type || "(空)"}`);
+            }
             return;
           }
           const kind = String((payload && payload.kind) || "");

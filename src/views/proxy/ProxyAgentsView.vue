@@ -224,9 +224,9 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // ModelScope（魔搭）凭据形态特殊：不是 JSON 快照，而是 ms- 访问令牌。
   // 故它的「粘贴」页签改为专用令牌输入（见 tokenPane），并隐藏不适用的两种 JSON 方式。
   if (channel === "modelscope" && (key === "file" || key === "local")) return false;
-  // MonkeyCode：本机没有「扫描导入」这一路——它是纯网页产品、没有可扫描的桌面登录态，scanner 也不认这个渠道。
-  // 留着页签只会让用户点了得到「未发现可导入的登录态」，故隐藏；「粘贴 JSON / 文件」两条是真能用的。
-  if ((channel === "monkeycode" || channel === "monkeycode_intl") && key === "local") return false;
+  // MonkeyCode：只保留「OAuth 登录」（应用内弹窗登录）。凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态，
+  // 本机也没有可扫描的客户端登录态 —— 其余三种途径全部隐藏，后端也一并关掉了导入（见 index.cjs 的 OAUTH_ONLY）
+  if (channel === "monkeycode" || channel === "monkeycode_intl") return key === "oauth";
   return true;
 }
 

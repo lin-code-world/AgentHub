@@ -174,7 +174,6 @@ function makeMonkeyCode(channel, deps) {
           taskId,
           prompt: prompt.prompt,
           requestedModel,
-          includeUsage: !!(body.stream_options && body.stream_options.include_usage === true),
           emit,
           signal: (ctx && ctx.meta && ctx.meta.signal) || null,
         });

@@ -72,6 +72,11 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   事件类型看 `update.sessionUpdate`，正文/思考看 `update.content.text`（顶层 `type/kind/timestamp` 是外层信封，别拿来当事件类型）。
 - 任务跑完一轮后上游**仍是 `processing`**、继续占用账号；本渠道每次请求都新建任务、不复用，所以 `chat()` 结束时要调
   `PUT /api/v1/users/tasks/stop` 释放（`task.stopTask`），否则下一次请求必撞 10811「已有运行中的任务」并把账号打入冷却。
+- 添加账号**只保留应用内弹窗登录**（`discovery.beginMonkeyCodeOAuth`）：凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态。
+  界面侧 `ProxyAgentsView.addTabAllowed` 对该双站只放 OAuth 页签，后端 `index.cjs` 的 `parseAccountsJson` 对两站直接返回
+  `oauth-only` 拒掉导入 —— **两处都要**关，只关界面会留下"藏了入口但接口还能灌"的绕过。代价：该渠道不能再用导出 / 导入跨机传号。
+- `usage` **不下发**：上游只给「已用 token（used）」一个累计值，拆不出 prompt/completion；下发会顶掉 `server.cjs` 的本地估算，
+  造成流水 token 归零、每条被标 `empty-completion`、账号用量不累加。第三方 monkeycode2api 同样不发 usage 帧。
 
 ## 渠道路由特殊判断走插件
 

@@ -40,6 +40,7 @@ const raccoonAuth = require("./raccoonAuth.cjs");
 const zcodeLocal = require("./zcodeLocal.cjs");
 const mcRegion = require("./monkeycode/region.cjs");
 const mcCredentials = require("./monkeycode/credentials.cjs");
+const mcEndpoints = require("./monkeycode/endpoints.cjs");
 const wbCrypto = require("./wbCrypto.cjs");
 const qoderAuth = require("./qoderAuth.cjs");
 const clineCredentials = require("./cline/credentials.cjs");
@@ -3313,7 +3314,7 @@ async function beginMonkeyCodeOAuth(channel, onDone, helpers) {
     if (!cookie || !/monkeycode_ai_session=/.test(cookie)) return;
     let r;
     try {
-      r = await adapters.httpJson(`${site}/api/v1/users/status`, {
+      r = await adapters.httpJson(`${site}${mcEndpoints.USER_STATUS_PATH}`, {
         method: "GET",
         headers: { Cookie: cookie, Accept: "application/json", "User-Agent": "monkeycode-local-proxy", Origin: site, Referer: site + "/" },
       });

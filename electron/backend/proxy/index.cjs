@@ -85,14 +85,6 @@ function normalizeZcodeSnapshot(raw) {
   return { channel: "zcode", ...record, expiresAt: 0, source: "json" };
 }
 
-/** 有些渠道的会话寿命只有客户端侧的固定值、上游既不回到期字段也没有续期接口，只能本地推算：
- *  MonkeyCode 的 session 是 30 天硬上限，按「粘贴时刻 + 30 天」落到 expires_at，号池的到期列、
- *  临期提示与 expire_first 排序才有真值可用。其余渠道没有可推算的会话寿命，留 0（=不过期）。 */
-function defaultExpiresAt(channel) {
-  if (channel === "monkeycode" || channel === "monkeycode_intl") return Date.now() + 30 * 86400000;
-  return 0;
-}
-
 // 一条记录归一化为 addAccount 入参；token 与 refreshToken 均为空返回 null（交由上层按无效计数）
 function normalizeAccountJson(raw, fallbackChannel) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -103,10 +95,6 @@ function normalizeAccountJson(raw, fallbackChannel) {
   let token = String(raw.token ?? raw.accessToken ?? raw.access_token ?? raw.jwt ?? raw.JWT ?? raw.zcodeJwtToken ?? raw.zcodejwttoken ?? "").trim();
   token = token.replace(/^Cloud-IDE-JWT\s+/i, "").replace(/^Bearer\s+/i, "");
   let refreshToken = String(raw.refreshToken ?? raw.refresh_token ?? raw.apiKey ?? raw.codingPlanKey ?? "").trim();
-  // MonkeyCode：session 常以 cookie 名或 session 字段出现（浏览器里复制到的就是这两种形态）
-  if ((channel === "monkeycode" || channel === "monkeycode_intl") && !token) {
-    token = String(raw.session ?? raw[require("./monkeycode/endpoints.cjs").SESSION_COOKIE_NAME] ?? "").trim();
-  }
   // 智能识别：如果是 zcode 渠道，且 token 看起来是 32 位 apiKey.secret（2段且非 JWT），将其归一化到 refreshToken
   if (channel === "zcode") {
     if (token && !refreshToken && /^[a-f0-9]{32}\.[a-zA-Z0-9_-]+$/i.test(token)) {
@@ -128,18 +116,13 @@ function normalizeAccountJson(raw, fallbackChannel) {
   if (!uid && refreshToken) {
     uid = crypto.createHash("sha256").update(refreshToken).digest("hex").slice(0, 16);
   }
-  // MonkeyCode 的凭据本身就是身份（session），既不是 JWT 也没有 uid 字段可解。取一段哈希当 uid：
-  // 号池 JSON 导入按 (渠道, uid) 去重，uid 留空会让同一个号被反复导入成多条，额度排序与辨认都会失真。
-  if (!uid && (channel === "monkeycode" || channel === "monkeycode_intl")) {
-    uid = crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
-  }
   const out = {
     channel,
     uid,
     name: String(raw.name ?? raw.remark ?? "").trim(),
     token,
     refreshToken,
-    expiresAt: Number(raw.expiresAt ?? raw.expires_at ?? 0) || defaultExpiresAt(channel),
+    expiresAt: Number(raw.expiresAt ?? raw.expires_at ?? 0) || 0,
     source: "json",
   };
   // zcode 专属画像字段（provider/email 透传 meta，切号快照缺失时这些是仅有的渠道身份）
@@ -151,6 +134,12 @@ function normalizeAccountJson(raw, fallbackChannel) {
 
 /** 解析 JSON 文本（对象 / 数组 / {accounts:[...]} 包装），返回 { list, invalid, reason? } */
 function parseAccountsJson(text, fallbackChannel) {
+  // MonkeyCode 双站只保留应用内「OAuth 登录」这一路添加账号：它的凭据是 HttpOnly 网页会话、
+  // 没有可粘贴的令牌形态（见 AGENTS.md「MonkeyCode 渠道」）。这里连同后端一并关掉导入，
+  // 避免"界面上藏了、接口还能灌"的绕过。
+  if (fallbackChannel === "monkeycode" || fallbackChannel === "monkeycode_intl") {
+    return { list: [], invalid: 0, reason: "oauth-only" };
+  }
   let parsed;
   try {
     parsed = JSON.parse(String(text || ""));
@@ -178,6 +167,9 @@ const METADATA_ONLY_MESSAGE =
   "这是旧版桌面端导出的账号元数据（不含 token），不能用于灌号。请改用：" +
   "① 粘贴含 token/refreshToken 的凭据 JSON（新版桌面端号池「导出」按钮的产物已含明文凭据）；" +
   "② 管理 API POST /api/accounts/import";
+// MonkeyCode 双站只保留应用内「OAuth 登录」添加账号（凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态）
+const OAUTH_ONLY_MESSAGE =
+  "MonkeyCode 只支持用「OAuth 登录」添加账号：请在号池页点该渠道的「OAuth 登录」，在弹出的窗口里登录即可（不支持粘贴 / 导入凭据）。";
 
 /** 批量入池：同渠道同 uid 已存在则跳过；入池即后台查一次额度 */
 function importAccounts(list) {
@@ -1257,6 +1249,7 @@ function register(ipcMain) {
     const fallback = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
     const { list, invalid, reason } = parseAccountsJson(json, fallback);
     if (reason === "metadata-only") return fail(METADATA_ONLY_MESSAGE);
+    if (reason === "oauth-only") return fail(OAUTH_ONLY_MESSAGE);
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];
@@ -1289,7 +1282,7 @@ function register(ipcMain) {
     } else {
       texts = [buf.toString("utf8")];
     }
-    let added = 0, dup = 0, invalid = 0, metaOnly = 0;
+    let added = 0, dup = 0, invalid = 0, metaOnly = 0, oauthOnly = 0;
     for (const text of texts) {
       let parsed;
       try {
@@ -1302,20 +1295,26 @@ function register(ipcMain) {
         metaOnly += parsed.invalid;
         continue;
       }
+      if (parsed.reason === "oauth-only") {
+        oauthOnly++;
+        continue;
+      }
       invalid += parsed.invalid;
       const r2 = importAccounts(parsed.list);
       added += r2.added;
       dup += r2.dup;
     }
+    if (!added && !dup && oauthOnly) return fail(OAUTH_ONLY_MESSAGE);
     if (!added && !dup && metaOnly) return fail(METADATA_ONLY_MESSAGE);
     if (!added && !dup) return fail(`没有可导入的账号（${invalid ? `${invalid} 条记录无效` : "文件为空"}）`);
     const parts = [`成功导入 ${added} 个账号`];
     if (dup) parts.push(`${dup} 个同 UID 已存在跳过`);
     if (invalid) parts.push(`${invalid} 条记录无效忽略`);
     if (metaOnly) parts.push(`${metaOnly} 条元数据（无凭据）已跳过`);
+    if (oauthOnly) parts.push(`${oauthOnly} 份 MonkeyCode 凭据已跳过（请用 OAuth 登录添加）`);
     const message = parts.join("，");
     oplog.log("info", "号池账号", `文件导入（${path.basename(file)}）：${message}`);
-    return ok({ added, dup, invalid, metaOnly, file: path.basename(file), message });
+    return ok({ added, dup, invalid, metaOnly, oauthOnly, file: path.basename(file), message });
   }));
   // 浏览器端「选择 JSON 文件」上传：文件框由渲染层 <input type="file"> 弹（浏览器到不了主进程弹框，
   // 也不新增文件上传接口），读成文本走本命令——解析入库复用粘贴 JSON 同一份 parseAccountsJson +
@@ -1325,6 +1324,7 @@ function register(ipcMain) {
     const fallback = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
     const { list, invalid, reason } = parseAccountsJson(text, fallback);
     if (reason === "metadata-only") return fail(METADATA_ONLY_MESSAGE);
+    if (reason === "oauth-only") return fail(OAUTH_ONLY_MESSAGE);
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];
