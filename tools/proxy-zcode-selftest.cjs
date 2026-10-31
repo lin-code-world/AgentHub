@@ -800,14 +800,58 @@ async function main() {
     assert.strictEqual(res.revision, 99);
   });
 
-  // ===== T34 缓存失效：任一来源文件 mtime 变化 → 下次调用重新读 =====
-  await T("T34 缓存：同一组来源第二次调用不重复解析（同 mtime 命中缓存），文件改动后缓存失效", () => {
-    const builtinAsset = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
-    const res1 = zcodeBuiltin.resolveModelRules({ storedFile: "", clientDirs: [], builtinFile: builtinAsset });
-    assert.ok(res1, "第一次应命中 builtin");
-    const res2 = zcodeBuiltin.resolveModelRules({ storedFile: "", clientDirs: [], builtinFile: builtinAsset });
-    assert.ok(res2, "第二次同来源也应有结果");
-    assert.strictEqual(res1.revision, res2.revision, "同 mtime 应给出相同 revision");
+  // ===== T34 缓存自动失效：来源文件内容变化（mtime 变）→ 不调 invalidate 也自动重读 =====
+  // 语义：缓存 key 含来源文件 mtime，文件被改动（mtime 推进）即自动失效——这是设计行为，
+  // 不依赖显式失效调用。下面用"同来源解析两次结果一致"证明命中缓存，"改内容 + 推进 mtime 后
+  // 拿到新 revision"证明自动失效。
+  await T("T34 缓存：同来源第二次命中缓存；文件内容变化（mtime 变）后自动失效重读", () => {
+    const sandboxBuiltin = path.join(SANDBOX, "cache-builtin.json");
+    const body = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json"), "utf8"));
+    body.revision = 50;
+    fs.writeFileSync(sandboxBuiltin, JSON.stringify(body), "utf8");
+    const deps = { storedFile: "", clientDirs: [], builtinFile: sandboxBuiltin };
+
+    const res1 = zcodeBuiltin.resolveModelRules(deps);
+    assert.ok(res1 && res1.revision === 50, `第一次应读到 revision=50，实得 ${res1 && res1.revision}`);
+    // 同来源第二次：cacheKey 未变 → 命中缓存
+    const res2 = zcodeBuiltin.resolveModelRules(deps);
+    assert.strictEqual(res2.revision, 50, "同 mtime 命中缓存，revision 不变");
+
+    // 改文件内容 + 明确推进 mtime → cacheKey 变化 → 自动失效重读（无需 invalidate）
+    body.revision = 77;
+    fs.writeFileSync(sandboxBuiltin, JSON.stringify(body), "utf8");
+    const future = Date.now() / 1000 + 30;
+    fs.utimesSync(sandboxBuiltin, future, future);
+    const res3 = zcodeBuiltin.resolveModelRules(deps);
+    assert.ok(res3 && res3.revision === 77, `文件 mtime 变化后应自动失效重读到 77，实得 ${res3 && res3.revision}`);
+  });
+
+  // ===== T35 invalidateModelRules：唯一显式失效入口，清空缓存（含规则内容）并让下次调用重读 =====
+  // 两层缓存已合一：cachedModelRules() 直接读 _resolveCache.value.rules，所以"失效后 cachedModelRules()
+  // 返回 []"即等价于"缓存对象被清空"。invoke 后改文件再解析，验证重读拿到新内容。
+  await T("T35 invalidateModelRules：清空后 cachedModelRules 返回 []，下次 resolveModelRules 重读文件", () => {
+    const sandboxBuiltin = path.join(SANDBOX, "inv-builtin.json");
+    const body = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json"), "utf8"));
+    body.revision = 60;
+    fs.writeFileSync(sandboxBuiltin, JSON.stringify(body), "utf8");
+    const deps = { storedFile: "", clientDirs: [], builtinFile: sandboxBuiltin };
+
+    const res1 = zcodeBuiltin.resolveModelRules(deps);
+    assert.ok(res1 && res1.revision === 60, "首次解析应读到 revision=60");
+    assert.ok(zcodeBuiltin.cachedModelRules().length > 0, "解析成功后 cachedModelRules 应非空");
+    assert.strictEqual(zcodeBuiltin.cachedModelRules(), res1.rules, "cachedModelRules 与胜出结果同源（两层合一）");
+
+    zcodeBuiltin.invalidateModelRules();
+    assert.deepStrictEqual(zcodeBuiltin.cachedModelRules(), [], "失效后 cachedModelRules 必须为空数组");
+
+    // 改文件内容并推进 mtime，再解析：必须重新读文件
+    body.revision = 88;
+    fs.writeFileSync(sandboxBuiltin, JSON.stringify(body), "utf8");
+    const future = Date.now() / 1000 + 60;
+    fs.utimesSync(sandboxBuiltin, future, future);
+    const res2 = zcodeBuiltin.resolveModelRules(deps);
+    assert.ok(res2 && res2.revision === 88, `失效后应重读到 revision=88，实得 ${res2 && res2.revision}`);
+    assert.strictEqual(zcodeBuiltin.cachedModelRules(), res2.rules, "重读后 cachedModelRules 与新结果同源");
   });
 
   console.log(`\n${pass} 通过 / ${fail} 失败`);

@@ -105,7 +105,7 @@ function buildClientConfigsUrl(baseUrl, appVersion, platform) {
  *  任何一份读不出来或 JSON 损坏，只跳过该来源，不抛错。
  *
  *  缓存：key 由三个来源文件的存在性 + mtime 组成；任一变化即失效，下一次调用重新读。
- *  显式失效入口：setCachedModelRules([]) 即可清空（另提供 invalidateModelRules() 别名）。 */
+ *  显式失效入口只有一个，见 invalidateModelRules()。 */
 function resolveModelRules(deps) {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -164,7 +164,7 @@ function resolveModelRules(deps) {
     }
     const v = validateRelease(json);
     if (!v.ok) return null;
-    return { origin, revision: v.release.revision, raw: v.release.modelRules, _mtime: stat.mtimeMs, _exists: true };
+    return { origin, revision: v.release.revision, raw: v.release.modelRules, _mtime: stat.mtimeMs };
   };
 
   // 构建缓存 key（任一来源存在性或 mtime 变化即失效）
@@ -212,36 +212,28 @@ function resolveModelRules(deps) {
   const picked = pickLatestRelease(sources);
   const result = picked ? { origin: picked.origin, revision: picked.revision, rules: picked.raw } : null;
 
-  // 写入进程内缓存：供同步的 cachedModelRules() 消费（resolveModelMeta 会读）
-  if (result) {
-    setCachedModelRules(result.rules);
-  }
   _resolveCache.key = cacheKey;
   _resolveCache.value = result;
   return result;
 }
 
-// resolveModelRules 的按来源 mtime 缓存（与 _cachedRules 解耦：一个管"哪个来源胜出"，一个管"规则内容"）
+// resolveModelRules 的按来源 mtime 缓存。value 同时承载"哪个来源胜出"与"规则内容"，
+// 命中缓存提前 return 时读的也是同一对象——两层状态合一，不会出现"命中缓存却读到空规则"的分裂。
 const _resolveCache = { key: "", value: null };
 
-/** 显式失效 resolveModelRules 缓存（下次调用强制重读） */
+/** 唯一显式失效入口：清空缓存（含规则内容），下次 resolveModelRules 重新读三个来源。
+ *  Task 4 更新落盘副本成功后调用它即可让新规则生效。 */
 function invalidateModelRules() {
   _resolveCache.key = "";
   _resolveCache.value = null;
-  // 同时清空规则缓存
-  _cachedRules = [];
 }
 
 // ===== cachedModelRules =====
 
-// 进程内缓存：resolveModelRules 后续任务成功解析后调 setCached 写入，
-// 供同步的 resolveModelMeta() 消费。本模块纯函数层只暴露读写器。
-let _cachedRules = [];
+// 供同步的 resolveModelMeta() 消费：直接暴露缓存里胜出来源的规则；
+// 缓存为空（从未解析过或已失效）返回空数组，调用方退回保守默认值。
 function cachedModelRules() {
-  return _cachedRules;
-}
-function setCachedModelRules(rules) {
-  _cachedRules = Array.isArray(rules) ? rules : [];
+  return _resolveCache.value && Array.isArray(_resolveCache.value.rules) ? _resolveCache.value.rules : [];
 }
 
 module.exports = {
@@ -251,6 +243,5 @@ module.exports = {
   buildClientConfigsUrl,
   resolveModelRules,
   cachedModelRules,
-  setCachedModelRules,
   invalidateModelRules,
 };

@@ -164,9 +164,13 @@ function rel(rev) {
   ok(url2.includes("app_version=1.0.0"), "尾斜杠 URL 也带 app_version");
 })();
 
-// ===== cachedModelRules =====
+// ===== cachedModelRules / invalidateModelRules =====
 (function testCached() {
   eq(zb.cachedModelRules(), [], "初始缓存为空数组");
+  ok(typeof zb.invalidateModelRules === "function", "应导出 invalidateModelRules（唯一显式失效入口）");
+  ok(zb.setCachedModelRules === undefined, "setCachedModelRules 已移除，避免与 invalidateModelRules 状态分裂");
+  zb.invalidateModelRules();
+  eq(zb.cachedModelRules(), [], "失效后缓存仍为空数组（幂等、不抛错）");
 })();
 
 // ===== 仓库内置副本可用 =====

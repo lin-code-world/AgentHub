@@ -42,7 +42,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execSync, spawn } = require("node:child_process");
 const config = require("../config.cjs");
-const { mapModelRules, resolveModelRules, setCachedModelRules, cachedModelRules } = require("./zcodeBuiltin.cjs");
+const { resolveModelRules, cachedModelRules } = require("./zcodeBuiltin.cjs");
 
 const ENC_PREFIX = "enc:v1:";
 const NONCE_SIZE = 12;
@@ -1000,7 +1000,6 @@ function launchZcode(exe) {
  * （如 .*glm-5\.3(?:-flash)? 为 false，紧随其后的 .*glm-5\.3-flash 为 true，与官方客户端实测行为一致）。
  * 这是"某模型是否支持图片输入"最权威的本地来源：官方客户端 UI 即依据它决定能否附图。
  */
-let _capCache = { file: "", mtimeMs: 0, rules: [] };
 
 /** 构建 resolveModelRules 需要的 deps 三来源：
  *  storedFile = config.dataDir()/proxy/zcode-builtin.json（本机落盘副本，Task 4 联网更新后优先从这里读）
@@ -1013,44 +1012,13 @@ function _modelRulesDeps() {
   return { storedFile, clientDirs, builtinFile };
 }
 
-/** 找最新的 zcode-builtin.json（runtime/provider/<平台>/<版本>/endpoint-XXXX/，层级名含版本与 endpoint 哈希，故扫描） */
-function findClientBuiltin() {
-  const deps = _modelRulesDeps();
-  const clientDirs = deps.clientDirs;
-  const hits = [];
-  const walk = (dir, depth) => {
-    if (depth > 4) return;
-    let ents = [];
-    try {
-      ents = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of ents) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) walk(p, depth + 1);
-      else if (e.name === "zcode-builtin.json") {
-        try {
-          hits.push({ p, m: fs.statSync(p).mtimeMs });
-        } catch {
-          /* 忽略 */
-        }
-      }
-    }
-  };
-  for (const root of clientDirs) walk(root, 0);
-  hits.sort((a, b) => b.m - a.m);
-  return hits[0] || null;
-}
-
-/** 读取模型能力规则：三来源取最新（resolveModelRules 内部有按 mtime 的缓存）。
- *  返回 ModelRule[]；全部来源不可用时从 setCachedModelRules 留下的进程内缓存兜底，
- *  再不行返回 [] 让 resolveModelMeta 退化回默认值。 */
+/** 读取模型能力规则：三来源取最新（resolveModelRules 内部有按来源 mtime 的缓存，失败只跳过来源）。
+ *  返回 ModelRule[]；全部来源不可用时退回缓存兜底，再不行返回 [] 让 resolveModelMeta 退化回默认值。 */
 function readClientModelRules() {
   const deps = _modelRulesDeps();
   const res = resolveModelRules(deps);
   if (res && Array.isArray(res.rules)) return res.rules;
-  // 三来源全挂，退回进程内缓存（启动时可能有上一次成功解析留下的结果）
+  // 三来源全挂，退回进程内缓存（可能是上一次成功解析留下的结果）
   return cachedModelRules();
 }
 
