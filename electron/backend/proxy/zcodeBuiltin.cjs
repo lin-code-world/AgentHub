@@ -17,15 +17,35 @@
 // 消费——测试也就能在纯函数层完成，不依赖真客户端。
 "use strict";
 
+// ===== mapModelRules =====
+
+/** 把上游 modelRules 数组映射成统一 ModelRule[] 形状：
+ *  输入（上游 JSON）：[{ modelMatch, config: { properties: { contextWindow?, inputFormat? }, optionSpecs: { maxOutputTokens: { max }? } } }]
+ *  输出：[{ re, fmt, contextWindow, maxOutputTokens }] —— 只保留有 re 的规则，过滤无效条目。
+ *  这份函数是 zcodeBuiltin（校验）与 zcodeLocal（读客户端文件）两处对同一份上游数据的唯一映射口径。
+ *  语义逐字等价于 zcodeLocal 既有实现，不改 "contextWindow 为 0 被 Number()||undefined 吞掉" 的既有行为。 */
+function mapModelRules(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((r) => {
+      const cfg = (r || {}).config || {};
+      const props = cfg.properties || {};
+      const opts = cfg.optionSpecs || {};
+      const maxOut = (opts.maxOutputTokens || {}).max;
+      return {
+        re: (r && r.modelMatch) || "",
+        fmt: props.inputFormat || null,
+        contextWindow: Number(props.contextWindow) || undefined,
+        maxOutputTokens: Number(maxOut) || undefined,
+      };
+    })
+    .filter((r) => r.re);
+}
+
 // ===== validateRelease =====
 
 /** 校验 release JSON 并映射为统一 ModelRule[] 形状。
- *  规则映射口径与 zcodeLocal.readClientModelRules() 逐字段对齐，
- *  保证行为等价：config.modelConfigRules.modelRules[] →
- *    { re: modelMatch, fmt: properties.inputFormat|null,
- *      contextWindow: Number(properties.contextWindow)||undefined,
- *      maxOutputTokens: Number(optionSpecs.maxOutputTokens.max)||undefined }
- */
+ *  规则映射口径通过 mapModelRules() 复用——与 zcodeLocal.readClientModelRules() 唯一映射源。 */
 function validateRelease(json) {
   if (!json || typeof json !== "object" || Array.isArray(json)) {
     return { ok: false, reason: "release 不是对象" };
@@ -40,23 +60,9 @@ function validateRelease(json) {
   if (!Array.isArray(list)) {
     return { ok: false, reason: "modelRules 非数组" };
   }
-  const modelRules = list
-    .map((r) => {
-      const cfg = (r || {}).config || {};
-      const props = cfg.properties || {};
-      const opts = cfg.optionSpecs || {};
-      const maxOut = (opts.maxOutputTokens || {}).max;
-      return {
-        re: (r && r.modelMatch) || "",
-        fmt: props.inputFormat || null,
-        contextWindow: Number(props.contextWindow) || undefined,
-        maxOutputTokens: Number(maxOut) || undefined,
-      };
-    })
-    .filter((r) => r.re);
   return {
     ok: true,
-    release: { revision: json.revision, schemaVersion: 1, modelRules },
+    release: { revision: json.revision, schemaVersion: 1, modelRules: mapModelRules(list) },
   };
 }
 
@@ -108,6 +114,7 @@ function setCachedModelRules(rules) {
 }
 
 module.exports = {
+  mapModelRules,
   validateRelease,
   pickLatestRelease,
   buildClientConfigsUrl,

@@ -42,6 +42,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execSync, spawn } = require("node:child_process");
 const config = require("../config.cjs");
+const { mapModelRules } = require("./zcodeBuiltin.cjs");
 
 const ENC_PREFIX = "enc:v1:";
 const NONCE_SIZE = 12;
@@ -981,20 +982,7 @@ function readClientModelRules() {
   try {
     const j = JSON.parse(fs.readFileSync(hit.p, "utf8"));
     const list = ((((j || {}).config || {}).modelConfigRules) || {}).modelRules || [];
-    rules = list
-      .map((r) => {
-        const cfg = (r || {}).config || {};
-        const props = cfg.properties || {};
-        const opts = cfg.optionSpecs || {};
-        const maxOut = (opts.maxOutputTokens || {}).max;
-        return {
-          re: (r && r.modelMatch) || "",
-          fmt: props.inputFormat || null,
-          contextWindow: Number(props.contextWindow) || undefined,
-          maxOutputTokens: Number(maxOut) || undefined,
-        };
-      })
-      .filter((r) => r.re);
+    rules = mapModelRules(list);
   } catch { rules = []; }
   _capCache = { file: hit.p, mtimeMs: hit.m, rules };
   return rules;

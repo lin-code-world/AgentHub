@@ -51,6 +51,42 @@ function rel(rev) {
   };
 }
 
+// ===== mapModelRules 直接断言（确认共享函数的形状语义本身） =====
+(function testMapModelRules() {
+  const input = [
+    {
+      modelMatch: ".*glm-5\\.3",
+      config: {
+        properties: { contextWindow: 1000000, inputFormat: { supportsImage: true } },
+        optionSpecs: { maxOutputTokens: { max: 128000 } },
+      },
+    },
+    { // 无 modelMatch → 被 filter 掉
+      modelMatch: "",
+      config: { properties: { contextWindow: 500000 } },
+    },
+    null, // 空对象 → filter 掉
+    { // 完整缺失 config
+      modelMatch: ".*foo",
+      config: undefined,
+    },
+  ];
+  const out = zb.mapModelRules(input);
+  eq(out.length, 2, "只有两条有 modelMatch 的规则留下");
+  eq(out[0].re, ".*glm-5\\.3", "第一条 re");
+  eq(out[0].contextWindow, 1000000, "第一条 contextWindow");
+  eq(out[0].maxOutputTokens, 128000, "第一条 maxOutputTokens");
+  ok(out[0].fmt && out[0].fmt.supportsImage === true, "第一条 fmt");
+  eq(out[1].re, ".*foo", "第二条 re");
+  eq(out[1].contextWindow, undefined, "缺失 config → contextWindow undefined");
+  eq(out[1].maxOutputTokens, undefined, "缺失 config → maxOutputTokens undefined");
+  eq(out[1].fmt, null, "缺失 config → fmt null");
+  // 非数组输入安全降级
+  eq(zb.mapModelRules(null), [], "null 输入返回空数组");
+  eq(zb.mapModelRules(undefined), [], "undefined 输入返回空数组");
+  eq(zb.mapModelRules({}), [], "对象输入返回空数组");
+})();
+
 // ===== validateRelease =====
 (function testValidateRelease() {
   const r = zb.validateRelease(rel(43));
