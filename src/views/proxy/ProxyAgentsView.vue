@@ -1906,22 +1906,26 @@ onUnmounted(() => {
                     </span>
                   </td>
                   <td>
-                    <!-- 状态标签：使用 pill 样式 -->
-                    <el-tooltip :content="hasFreshError(acc) ? '点击查看最近一次上游错误' : ''" :disabled="!hasFreshError(acc)" placement="top">
-                      <span
-                        class="pill status-tag"
-                        :class="[isNeedCaptcha(acc) ? 'warn' : acc.status === 'online' ? 'ok' : acc.status === 'cooling' ? 'warn' : acc.status === 'disabled' ? 'blue' : 'err', { 'has-err': hasFreshError(acc) }]"
-                        @click="hasFreshError(acc) && (errRow = acc)"
-                      >
-                        {{ isNeedCaptcha(acc) ? "需过码" : (ACCOUNT_STATUS[acc.status]?.text || acc.status) }}
-                      </span>
-                    </el-tooltip>
-                    <!-- 冷却剩余时间：秒级跳动，到点自动归零消失（状态派生在主进程惰性完成） -->
-                    <span v-if="coolLeft(acc)" class="cool-left mono">剩 {{ coolLeft(acc) }}</span>
-                    <!-- 模型级冷却（6004/11102 不落账号状态）：悬浮看逐模型明细 -->
-                    <el-tooltip v-if="modelCoolLeft(acc)" :content="modelCoolTitle(acc)" placement="top">
-                      <span class="cool-left mono">模型冷却剩 {{ modelCoolLeft(acc) }}</span>
-                    </el-tooltip>
+                    <!-- 纵向两行：状态胶囊在上，冷却剩余时间在下（各渠道统一，居中排列）。
+                         用内层 div 承载 flex，不直接在 td 上改 display——td 脱离 table-cell 会被浏览器包成匿名单元格，列宽易乱 -->
+                    <div class="status-cell">
+                      <!-- 状态标签：使用 pill 样式 -->
+                      <el-tooltip :content="hasFreshError(acc) ? '点击查看最近一次上游错误' : ''" :disabled="!hasFreshError(acc)" placement="top">
+                        <span
+                          class="pill status-tag"
+                          :class="[isNeedCaptcha(acc) ? 'warn' : acc.status === 'online' ? 'ok' : acc.status === 'cooling' ? 'warn' : acc.status === 'disabled' ? 'blue' : 'err', { 'has-err': hasFreshError(acc) }]"
+                          @click="hasFreshError(acc) && (errRow = acc)"
+                        >
+                          {{ isNeedCaptcha(acc) ? "需过码" : (ACCOUNT_STATUS[acc.status]?.text || acc.status) }}
+                        </span>
+                      </el-tooltip>
+                      <!-- 冷却剩余时间：秒级跳动，到点自动归零消失（状态派生在主进程惰性完成） -->
+                      <span v-if="coolLeft(acc)" class="cool-left mono">剩 {{ coolLeft(acc) }}</span>
+                      <!-- 模型级冷却（6004/11102 不落账号状态）：悬浮看逐模型明细 -->
+                      <el-tooltip v-if="modelCoolLeft(acc)" :content="modelCoolTitle(acc)" placement="top">
+                        <span class="cool-left mono">模型冷却剩 {{ modelCoolLeft(acc) }}</span>
+                      </el-tooltip>
+                    </div>
                   </td>
                   <td class="mono num">
                     <el-tooltip :content="acc.channel === 'zcode' && acc.credits > 0 ? `${fmtInt(acc.credits)} Tokens` : ''" :disabled="!(acc.channel === 'zcode' && acc.credits > 0)" placement="top">
@@ -3640,8 +3644,15 @@ onUnmounted(() => {
   font-size: 11px;
 }
 /* ===== 状态列：冷却剩余 + 点击弹最近错误小窗 ===== */
+/* 纵向两行：状态胶囊在上、冷却剩余时间在下（各渠道统一）。
+   此前是行内排，胶囊与「剩 / 模型冷却剩」挤在一条线上，长文本还会被挤乱 */
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
 .cool-left {
-  margin-left: 6px;
   font-size: 10.5px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
