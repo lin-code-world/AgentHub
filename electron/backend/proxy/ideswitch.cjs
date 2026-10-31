@@ -669,13 +669,17 @@ function precheckSwitch(acc) {
   if (channel === "trae") return { supported: false, reason: TRAE_UNSUPPORTED };
 
   if (channel === "zcode") {
-    // 快照检查：粘贴 JSON / 纯 token 导入的账号没有切号快照，如实拒绝并指路
+    // 快照检查：粘贴 JSON / 纯 token 导入的账号没有切号快照，如实拒绝并指路。
+    //  只指向在用的两条入口：「从本机软件导入」已下线（见 index.cjs 的 SCAN_IMPORT_DISABLED_MESSAGE），
+    //  再提它会让用户去找一个已经不存在的页签。
     if (!zcodeLocal.readSwitchSnapshot(acc)) {
-      return { supported: false, reason: "该账号没有切号快照（缺少 oauth 凭据组），仅支持反代调用。请用「从本机软件导入」或「OAuth 登录」补全快照后再切号。" };
+      return { supported: false, reason: "该账号没有切号快照（缺少 oauth 凭据组），仅支持反代调用。请用「OAuth 登录」（可选 Z.ai / BigModel）或「粘贴凭据」补全快照后再切号。" };
     }
     const p = zcodeLocal.paths();
     if (!fs.existsSync(p.credentials)) {
-      return { supported: false, reason: "未找到本机 ZCode 登录文件（~/.zcode/v2/credentials.json），请先安装并登录一次 ZCode 客户端" };
+      // 切号是把账号写进本机客户端的登录态，本机没客户端就没有可写的地方：
+      //  如实说清「装客户端才能切」，同时点明不装也能用反代，避免被理解成账号不可用。
+      return { supported: false, reason: "未找到本机 ZCode 登录文件（~/.zcode/v2/credentials.json）：本机切换需要先安装并登录 ZCode 客户端。不装客户端也可以把账号加进号池做反代调用（OAuth 登录 / 粘贴凭据）" };
     }
     probe.file = p.credentials;
     probe.running = zcodeLocal.isZcodeRunning();
