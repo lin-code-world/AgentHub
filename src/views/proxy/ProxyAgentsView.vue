@@ -95,7 +95,7 @@ function stripTip(ch: ProxyChannelView): string {
 /** 页面顶部切换条只列有账号的渠道（空号池没有浏览价值）；往空渠道加号走「添加账号」弹窗内的渠道下拉框 */
 const switchableChannels = computed(() => pool.value.filter((c) => (c.summary?.accountCount ?? 0) > 0));
 // 本地 IDE 快捷切换
-const ideStatus = ref<{ workbuddyInstalled: boolean; workbuddyAiInstalled?: boolean; traeInstalled?: boolean; raccoonInstalled?: boolean; lobsterInstalled?: boolean; zcodeInstalled?: boolean; qoderInstalled?: boolean; qoderIntlInstalled?: boolean; currentUid: string } | null>(null);
+const ideStatus = ref<{ workbuddyInstalled: boolean; workbuddyAiInstalled?: boolean; traeInstalled?: boolean; raccoonInstalled?: boolean; lobsterInstalled?: boolean; zcodeInstalled?: boolean; qoderInstalled?: boolean; qoderIntlInstalled?: boolean; currentUid: string; zcodeHasAnchor?: boolean; zcodeHasBackup?: boolean } | null>(null);
 const ideSwitching = ref("");
 let offEvent: (() => void) | undefined;
 
@@ -257,13 +257,24 @@ const deviceGate = denyState("proxy_zcode_device_status", "proxy_zcode_device_re
 const restoreGate = denyState("proxy_zcode_restore_mid");
 const rollbackGate = denyState("proxy_zcode_switch_rollback");
 
-/** 本机没有 ZCode 客户端（如部署到一台只做反代的机器上）：切号、领取模式、恢复本机指纹、切号回滚
- *  都要读写本机客户端的登录态 / 指纹文件，没有客户端时点了只会静默失败。这里如实置灰并说明原因。
- *  判定口径沿用 proxy_ide_status 的 zcodeInstalled（与 ideSupported() 同一份数据，不另造探测）；
- *  探测尚未返回（ideStatus 为 null）时按「有客户端」处理，避免刷新瞬间闪一下置灰。 */
-const zcodeNoClient = computed(() => ideStatus.value?.zcodeInstalled === false);
-/** 无客户端时四类入口统一理由（装了客户端的机器上永远不出现） */
-const ZCODE_NO_CLIENT_REASON = "需要本机安装并登录 ZCode 客户端（这些操作要写入本机客户端的登录态 / 指纹）";
+/**
+ * ZCode 本机能力判定（只用于「号池在没装客户端的机器上如实降级」）：
+ *   切号 / 领取模式 —— 要写本机客户端登录态、要借 live 指纹，前提是本机有 ZCode 登录文件
+ *     （proxy_ide_status 的 zcodeInstalled，与 ideSupported() 同一份数据，不另造探测）；
+ *   恢复本机指纹 —— 只写 telemetry-state.json 并靠本机锚点回写，前提是**有指纹锚点**，
+ *     不依赖客户端登录文件；
+ *   切号回滚 —— 只读网关自己的切号备份目录，前提是**有备份**，同样不依赖客户端登录文件。
+ *   后两项若也挂到 zcodeInstalled 上，「装了客户端但退出登录 / 换机未登录」就会被误报成
+ *   「没装客户端」并禁用，与用户实际能力不符。
+ *   字段为 undefined（探测还没返回 / 探测异常 / 旧版本）时一律按可用处理，避免误禁用。
+ */
+const zcodeNoLogin = computed(() => ideStatus.value?.zcodeInstalled === false);
+const zcodeNoAnchor = computed(() => ideStatus.value?.zcodeHasAnchor === false);
+const zcodeNoBackup = computed(() => ideStatus.value?.zcodeHasBackup === false);
+/** 两组理由分开写：说错了会让人去装/登录一个并不解决问题的客户端 */
+const ZCODE_NO_LOGIN_REASON = "需要本机安装并登录 ZCode 客户端（这一步要写入本机客户端的登录态）";
+const ZCODE_NO_ANCHOR_REASON = "本机没有可恢复的指纹锚点（从未锚定过，或指纹从没记录到）";
+const ZCODE_NO_BACKUP_REASON = "本机没有可回滚的切号备份（从未在此机器上切过号）";
 
 // 渠道允许的添加方式（分段控件按弹窗内选中的渠道过滤，与页面浏览渠道解耦）
 const METHOD_TABS = computed(
@@ -984,8 +995,8 @@ function ideTitle(acc: ProxyAccount) {
   if (acc.channel === "lobster") return "LobsterAI 渠道走应用内回环 OAuth 登录（无需安装官方客户端），不支持写回本机登录态";
   if (acc.channel === "modelscope") return "ModelScope 渠道用你自建的 ms- 访问令牌（官方公开 API，无客户端登录态），不支持写回本机";
   if (acc.channel === "raccoon") return "把该账号写为小浣熊本机登录态（~/.box-agent/config/auth.json）；点击后弹确认框，确认即自动关闭客户端、写入、再重新打开，登录文件缺失时按号池凭据重建";
-  // 无客户端时按钮已被 zcodeNoClient 禁用：这时提示要给理由，不能还留着「点击后弹确认框」的引导
-  if (acc.channel === "zcode") return zcodeNoClient.value ? `${ZCODE_NO_CLIENT_REASON}；不装客户端也可以用反代调用（账号照常参与调度）` : "把该账号写为本机 ZCode 当前登录态（合并式写回，移动端远程连接地址保持不变）；点击后弹确认框，确认即自动关闭客户端、写入、再重新打开";
+  // 本机有登录态但按钮被禁时，提示要给理由，不能还留着「点击后弹确认框」的引导
+  if (acc.channel === "zcode") return zcodeNoLogin.value ? `${ZCODE_NO_LOGIN_REASON}；不装客户端也可以用反代调用（账号照常参与调度）` : "把该账号写为本机 ZCode 当前登录态（合并式写回，移动端远程连接地址保持不变）；点击后弹确认框，确认即自动关闭客户端、写入、再重新打开";
   if (!ideSupported(acc)) return "本机未找到对应客户端的登录文件（未安装或从未登录过）";
   return `把该账号写为本地 ${channelName(acc.channel)} 当前登录态；点击后弹确认框，确认即自动关闭客户端、写入、再重新打开`;
 }
@@ -1754,7 +1765,7 @@ onUnmounted(() => {
                 <i class="ph ph-clock"></i>{{ labelsOf(ch.id).auto }}
               </button>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || (zcodeNoClient ? '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹。指纹是号池自己的数据，本机没装 ZCode 客户端也能诊断与修复' : '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹')" placement="top">
+            <el-tooltip v-if="ch.id === 'zcode'" :content="deviceGate.reason || (zcodeNoLogin ? '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹。指纹是号池自己的数据，本机没装 ZCode 客户端也能诊断与修复' : '设备指纹（deviceMid）诊断与修复：多账号共用同一枚指纹时，一个账号领取周末套餐会把全组账号的当周资格烧掉（服务端提示「不符合领取条件」/1004）。修复即给这些账号重派全新随机指纹')" placement="top">
               <span>
                 <button
                   class="btn btn-sm"
@@ -1764,20 +1775,22 @@ onUnmounted(() => {
                 >{{ devBusy ? "检测中…" : devHasIssue ? "指纹异常" : "指纹诊断" }}</button>
               </span>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode' && devClaimMode" :content="zcodeNoClient ? ZCODE_NO_CLIENT_REASON : restoreGate.reason || '本机指纹当前借出给某账号领周末套餐（领取模式），手机远程连接不可用；点击写回本机锚定指纹并重启客户端，远程即恢复'" placement="top">
+            <!-- 恢复本机指纹只写 telemetry-state.json 并回写本机锚点：没有锚点才禁，与客户端登录态无关 -->
+            <el-tooltip v-if="ch.id === 'zcode' && devClaimMode" :content="zcodeNoAnchor ? ZCODE_NO_ANCHOR_REASON : restoreGate.reason || '本机指纹当前借出给某账号领周末套餐（领取模式），手机远程连接不可用；点击写回本机锚定指纹并重启客户端，远程即恢复'" placement="top">
               <span>
                 <button
                   class="btn btn-sm btn-warning"
-                  :disabled="devBusy || zcodeNoClient || restoreGate.disabled"
+                  :disabled="devBusy || zcodeNoAnchor || restoreGate.disabled"
                   @click="restoreRemoteMid"
                 >{{ devBusy ? "恢复中…" : "恢复本机指纹" }}</button>
               </span>
             </el-tooltip>
-            <el-tooltip v-if="ch.id === 'zcode'" :content="zcodeNoClient ? ZCODE_NO_CLIENT_REASON : rollbackGate.reason || '切号出问题或移动端远程连接异常时，一键还原到最近一次切换前的状态'" placement="top">
+            <!-- 切号回滚只读网关自己的切号备份目录：没有备份才禁，与客户端是否登录无关 -->
+            <el-tooltip v-if="ch.id === 'zcode'" :content="zcodeNoBackup ? ZCODE_NO_BACKUP_REASON : rollbackGate.reason || '切号出问题或移动端远程连接异常时，一键还原到最近一次切换前的状态'" placement="top">
               <span>
                 <button
                   class="btn btn-sm"
-                  :disabled="zcodeNoClient || rollbackGate.disabled"
+                  :disabled="zcodeNoBackup || rollbackGate.disabled"
                   @click="zcodeRollback"
                 >切号回滚</button>
               </span>
@@ -1951,13 +1964,13 @@ onUnmounted(() => {
                     </el-tooltip>
                     <el-tooltip
                       v-if="acc.channel === 'zcode'"
-                      :content="zcodeNoClient ? ZCODE_NO_CLIENT_REASON : claimGate.reason || '领取模式（人工操作）：把本机指纹临时借出为该账号专属指纹并重启客户端，之后在官方客户端里点「限时可领取」人工领取周末套餐；领完回工具栏点「恢复本机指纹」。期间手机远程不可用'"
+                      :content="zcodeNoLogin ? ZCODE_NO_LOGIN_REASON : claimGate.reason || '领取模式（人工操作）：把本机指纹临时借出为该账号专属指纹并重启客户端，之后在官方客户端里点「限时可领取」人工领取周末套餐；领完回工具栏点「恢复本机指纹」。期间手机远程不可用'"
                       placement="top"
                     >
                       <span>
                         <button
                           class="btn-link btn-sm"
-                          :disabled="ideSwitching === acc.id || zcodeNoClient || claimGate.disabled"
+                          :disabled="ideSwitching === acc.id || zcodeNoLogin || claimGate.disabled"
                           @click="enterClaimMode(acc)"
                         >
                           {{ ideSwitching === acc.id ? "处理中…" : "领取模式" }}
@@ -2536,7 +2549,7 @@ onUnmounted(() => {
             </span>
           </div>
           <div class="dev-hint">
-            <template v-if="zcodeNoClient">本机没有 ZCode 客户端，账号行的「领取模式」与工具栏的「恢复本机指纹」不可用；指纹仍是号池自己的数据，这里可以照常诊断与修复。下面的异常多为存量遗留，修复即给这些账号重派全新随机指纹；AgentHub 内「一键领取」不受影响。</template>
+            <template v-if="zcodeNoLogin">本机没有 ZCode 登录态（未安装或未登录客户端），账号行的「领取模式」不可用；指纹仍是号池自己的数据，这里可以照常诊断与修复，有了指纹锚点后工具栏的「恢复本机指纹」也照常可用。下面的异常多为存量遗留，修复即给这些账号重派全新随机指纹；AgentHub 内「一键领取」不受影响。</template>
             <template v-else>周末套餐领取资格 = 账号本周未领 + 设备指纹本周未被消耗。多个账号共用同一枚指纹时，一个账号领取成功会把全组账号的当周资格烧掉（服务端报「不符合领取条件」）。切号只写登录态、不动指纹；要在官方客户端里领套餐请用账号行的「领取模式」（临时借出指纹 → 人工领取 → 恢复锚定值），AgentHub 内「一键领取」不受影响。以下异常多为存量遗留，修复即给这些账号重派全新随机指纹。</template>
           </div>
           <div class="checkin-rows">

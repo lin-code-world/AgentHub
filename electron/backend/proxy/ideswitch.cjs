@@ -986,6 +986,7 @@ function verifyWritten(file, token, uid, beforeKeys) {
 function ideSwitchStatus() {
   const out = {
     traeInstalled: false, workbuddyInstalled: false, workbuddyAiInstalled: false, raccoonInstalled: false, zcodeInstalled: false,
+    zcodeHasAnchor: false, zcodeHasBackup: false,
     qoderInstalled: false, qoderIntlInstalled: false, lobsterInstalled: false, modelscopeInstalled: false,
     currentUid: "", channels: {},
   };
@@ -1041,11 +1042,15 @@ function ideSwitchStatus() {
     out.raccoonInstalled = fs.existsSync(rf) || fs.existsSync(home);
     out.channels.raccoon = { file: rf, installed: out.raccoonInstalled, uid: ruid };
   } catch { /* 未安装 / 未登录 */ }
-  // zcode：~/.zcode/v2/credentials.json 存在即视为已安装；uid 解 zcodejwttoken 的 user_id
+  // zcode：credentials.json 存在即「本机有登录态」（能切号）；另报两个独立前提——
+  //   hasAnchor（有指纹锚点才能「恢复本机指纹」）、hasBackup（有切号备份才能「切号回滚」）。
+  //   三者语义不同，不要合并：登录文件被删（退出登录）不影响锚点与备份。
   try {
     const zs = zcodeSwitch.zcodeIdeStatus();
     out.zcodeInstalled = zs.installed;
-    out.channels.zcode = { file: zs.file, installed: zs.installed, uid: zs.uid, newGen: zs.newGen };
+    out.zcodeHasAnchor = zs.hasAnchor;
+    out.zcodeHasBackup = zs.hasBackup;
+    out.channels.zcode = { file: zs.file, installed: zs.installed, uid: zs.uid, newGen: zs.newGen, hasAnchor: zs.hasAnchor, hasBackup: zs.hasBackup };
   } catch { /* 未安装 / 未登录 */ }
   // LobsterAI：登录走应用内回环 OAuth，**不需要本机安装官方客户端**。这里如实上报
   // installed=true（渠道在册即「可用」，不代表本机有客户端——本机导入/写回对龙虾都不适用，

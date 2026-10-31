@@ -505,10 +505,44 @@ async function restoreRemoteMid(opts) {
   };
 }
 
-/** 切号能力探测（ideSwitchStatus 的 zcode 段）：装了没 / 当前登录 uid / 是否新代际。
+/**
+ * 是否还有可回滚的切号备份（「切号回滚」的唯一前提）。
+ *  只读：直接拼路径 readdir，不走 backupRoot()——那个会 mkdirSync，而这个判定挂在每次号池页刷新
+ *  都调用的 ideSwitchStatus 上，不该在磁盘上留下空目录。没有备份时 rollbackLatest 本来也只能
+ *  如实回「没有可回滚的切号备份」。
+ */
+function hasSwitchBackup() {
+  try {
+    const root = path.join(config.dataDir(), "proxy", "zcode-switch-backup");
+    return fs.readdirSync(root).some((n) => /^\d+$/.test(n));
+  } catch {
+    return false; // 目录不存在 / 不可读
+  }
+}
+
+/**
+ * 是否有本机指纹锚点（「恢复本机指纹」的唯一前提）。
+ *  用 readAnchor() 而非 getOrCreateAnchor()：后者会自愈并落盘，本判定是高频只读路径。
+ *  锚点为空时 restoreRemoteMid 本来也无值可恢复（它自己会如实回「从未锚定过」）。
+ */
+function hasRemoteAnchor() {
+  try {
+    const anchor = zcodeLocal.readAnchor();
+    return !!(anchor && String(anchor.remoteMid || ""));
+  } catch {
+    return false;
+  }
+}
+
+/** 切号能力探测（ideSwitchStatus 的 zcode 段）：装了没 / 当前登录 uid / 是否新代际 / 锚点与备份。
  *  刻意不探进程存活：isZcodeRunning 是同步 tasklist（约 350ms），而本函数被高频的 ideSwitchStatus
  *  调用（号池页每次刷新都走），会把主进程反复堵死，且该字段没有任何消费方。切号要用的实时存活
- *  判断由 precheckSwitch 直接调 zcodeLocal.isZcodeRunning() 完成——每次切号只探一次，可以接受 */
+ *  判断由 precheckSwitch 直接调 zcodeLocal.isZcodeRunning() 完成——每次切号只探一次，可以接受。
+ *
+ *  installed 的语义是「本机有 ZCode 登录态」（credentials.json 存在），**不是「装了客户端」**：
+ *  退出登录 / 换机未登录时它为 false，但客户端可能装着。所以只让真正写登录态的入口（切号、
+ *  领取模式）吃它；恢复本机指纹（只写 telemetry-state.json）与切号回滚（只读自己的备份目录）
+ *  各看自己的前提 hasAnchor / hasBackup，避免把「退出登录」误报成「没装客户端」。 */
 function zcodeIdeStatus() {
   try {
     const live = zcodeLocal.readLive();
@@ -518,8 +552,12 @@ function zcodeIdeStatus() {
       file: p.credentials,
       uid: live ? zcodeLocal.uidFromJwt(live.jwt) || (live.codingPlanKeys[0] && live.codingPlanKeys[0].uid) || "" : "",
       newGen: zcodeLocal.isNewGen(),
+      hasAnchor: hasRemoteAnchor(),
+      hasBackup: hasSwitchBackup(),
     };
   } catch {
+    // 探测异常时 installed 保持既有语义（如实报 false）；锚点 / 备份两项不给值，
+    //  前端见 undefined 按可用处理——宁可让用户点下去由后端如实拒绝，也不因探测失败误禁用按钮
     return { installed: false, file: "", uid: "", newGen: false };
   }
 }

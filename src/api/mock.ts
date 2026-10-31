@@ -687,8 +687,9 @@ export const mock = {
         return { ok: true, channel: "workbuddy", message: "已写入（预览），客户端已重新启动" };
       case "proxy_ide_status":
         // 与真实后端契约一致：这里刻意不含「客户端是否在运行」——真实 ideSwitchStatus 故意不探进程
-        // （它在号池页高频调用，同步 tasklist 会堵主进程），运行态只在切号预检的 probe 里给
-        return { workbuddyInstalled: true, workbuddyAiInstalled: true, traeInstalled: false, raccoonInstalled: true, zcodeInstalled: true, qoderInstalled: true, qoderIntlInstalled: false, currentUid: "wb_7c21" };
+        // （它在号池页高频调用，同步 tasklist 会堵主进程），运行态只在切号预检的 probe 里给。
+        // zcodeHasAnchor / zcodeHasBackup 是「恢复本机指纹」「切号回滚」各自的前提，与登录态独立
+        return { workbuddyInstalled: true, workbuddyAiInstalled: true, traeInstalled: false, raccoonInstalled: true, zcodeInstalled: true, zcodeHasAnchor: true, zcodeHasBackup: true, qoderInstalled: true, qoderIntlInstalled: false, currentUid: "wb_7c21" };
       case "proxy_stats_overview":
         return mockProxyOverview(args as { from?: number; to?: number; granularity?: string });
       case "proxy_stats_top":
