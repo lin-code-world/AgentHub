@@ -88,9 +88,14 @@ function buildClientConfigsUrl(baseUrl, appVersion, platform) {
   return `${baseUrl}${sep}app_version=${encodeURIComponent(appVersion)}&platform=${encodeURIComponent(platform)}`;
 }
 
-// ===== resolveModelRules（本任务只留函数占位签名，后续任务填充 IO + fetch） =====
-// 签名需按简报中声明的 deps 形状保持：{ storedFile, clientDirs, builtinFile }
-// 但本任务是纯函数层，resolveModelRules 留空实现，返回 null；缓存模块已就位。
+// ===== resolveModelRules =====
+
+/** 从多来源解析模型规则：deps = { storedFile, clientDirs, builtinFile }。
+ *  本任务只暴露签名占位——IO（读 stored / builtin / client 目录）与联网 fetch 留给后续任务填充。
+ *  占位实现恒返回 Promise<null>，不做任何副作用。后续任务替换实现时签名必须保持不变。 */
+function resolveModelRules(/* deps */) {
+  return Promise.resolve(null);
+}
 
 // ===== cachedModelRules =====
 
@@ -106,6 +111,7 @@ module.exports = {
   validateRelease,
   pickLatestRelease,
   buildClientConfigsUrl,
+  resolveModelRules,
   cachedModelRules,
   setCachedModelRules,
 };
