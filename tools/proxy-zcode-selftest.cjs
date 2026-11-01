@@ -648,43 +648,31 @@ async function main() {
     pool.resetSessionDead(id);
   });
 
-  // ===== T19 ZCode 官方 system 前缀（官方客户端检测，防 405/3012）=====
-  await T("T19 官方前缀：内置常量有效 / 注入语义（补前缀·保留下游·不重复·数组块）", () => {
+  // ===== T19 ZCode 官方 system（上游 3012 的内容指纹）=====
+  await T("T19 官方 system：原样两段 + 下游 system 作为第 3 段（段数不得超 3）", () => {
     const zos = require("../electron/backend/proxy/zcodeOfficialSystem.cjs");
-    const prefix = zos.FALLBACK_PREFIX;
-    assert.ok(typeof prefix === "string" && prefix.length >= zos.MIN_VALID_LENGTH, `内置兜底常量应可用（实测门禁要求官方正文前 1257 字），实际 ${prefix ? prefix.length : 0}`);
-    assert.ok(prefix.startsWith("You are ZCode, an interactive coding agent"), "必须以官方 CLI Prefix 开头");
-    // 无 system → 直接得到前缀
-    assert.strictEqual(zos.injectOfficialZcodeSystem(""), prefix);
-    assert.strictEqual(zos.injectOfficialZcodeSystem(undefined), prefix);
-    // 下游自定义 system → 前缀在前（满足官方校验），下游内容保留在后
-    const custom = "You are a helpful assistant.";
-    const s = zos.injectOfficialZcodeSystem(custom);
-    assert.ok(s.startsWith(prefix), "必须以官方前缀开头，否则上游返回 405/3012");
-    assert.ok(s.endsWith(custom), "必须保留下游 system 内容");
-    // 已含官方前缀 → 原样返回，不重复注入
-    const already = prefix + "\n\n下游内容";
-    assert.strictEqual(zos.injectOfficialZcodeSystem(already), already);
-    // 数组块形式 → 前置一个 text 块，原有块保留
-    const arr = zos.injectOfficialZcodeSystem([{ type: "text", text: custom }]);
-    assert.ok(Array.isArray(arr) && arr.length === 2, "数组块形式应前置一块并保留原块");
-    assert.strictEqual(arr[0].text, prefix);
-    assert.strictEqual(arr[1].text, custom);
-  });
+    const info = zos.officialSystemBlocks();
+    assert.ok(String(info.source).startsWith("assets:"), `必须从仓库内置数据读到官方两段（拿不到就会被 3012 拦），实际来源 ${info.source}`);
+    assert.strictEqual(info.blocks.length, 2, "上游只认前两段：这里必须正好两段");
+    assert.strictEqual(info.blocks[0], "You are ZCode, an interactive coding agent", "第 0 段必须是官方 CLI Prefix");
+    assert.ok(info.blocks[1].length >= 3000, `第 1 段必须足够完整（实测 3101 字才过校验），实际 ${info.blocks[1].length}`);
+    assert.ok(info.blocks[1].includes("# Harness"), "第 1 段必须含官方 Harness 段");
+    assert.ok(info.blocks[1].includes("ZCode Desktop Context"), "第 1 段必须含 Desktop Context 段（实测门禁要求到这里）");
 
-  await T("T19b 从客户端 bundle 文本复原前缀（离线合成样本：括号匹配 / 单双引号混用 / 官方拼装规则）", () => {
-    const zos = require("../electron/backend/proxy/zcodeOfficialSystem.cjs");
-    assert.strictEqual(typeof zos.extractFromBundle, "function", "应导出 extractFromBundle");
-    const b1 = "You are ZCode, an interactive coding agent";
-    const sent = "You are an interactive ZCode agent that helps users with software engineering tasks.";
-    const notice = "IMPORTANT: Assist with authorized security testing, defensive security.";
-    // 合成 bundle：模拟官方结构——字面量 + 含中括号/单引号的 Harness 数组
-    const sample = ['var IJs,gdt=Y(()=>{"use strict";IJs="' + b1 + '"});', 'function Xmn(){return["# Harness","- a line with [label](http://x) inside",\'— single quoted\'].join(`\n`)}', 'var mno,_dt=Y(()=>{"use strict";mno="' + notice + '"});', 'var s2="' + sent + '";'].join("\n");
-    const got = zos.extractFromBundle(sample);
-    const expected = b1 + [["", sent, "", notice].join("\n"), "", ["# Harness", "- a line with [label](http://x) inside", "— single quoted"].join("\n")].join("\n");
-    assert.strictEqual(got, expected, "应按官方 CJs() 规则复原为 块1 + Agent Identity");
-    // 结构不认识时必须安全返回空串，交由上层回落内置常量
-    assert.strictEqual(zos.extractFromBundle("no anchors here"), "", "缺少锚点应返回空串");
+    // 无下游 system → 只发官方两段（实测两段即可通过指纹校验）
+    const bare = zos.buildOfficialSystem("");
+    assert.deepStrictEqual(bare.map((b) => b.text), info.blocks, "无可下发 system 时应只发官方两段");
+    assert.ok(bare.every((b) => b.type === "text"), "system 段必须带 type=text（Anthropic 文本块形态）");
+
+    // 有下游 system → 追加为第 3 段；多块必须合并成一块（>3 段会被上游拒绝）
+    const three = zos.buildOfficialSystem([{ type: "text", text: "A" }, { type: "text", text: "B" }]);
+    assert.strictEqual(three.length, 3, "下游 system 必须合并成一块，总段数不得超 3");
+    assert.strictEqual(three[2].text, "A\n\nB", "下游多块应合并为一段文本");
+    assert.strictEqual(three[0].text, info.blocks[0], "官方第 0 段不得被改写");
+    assert.strictEqual(three[1].text, info.blocks[1], "官方第 1 段不得被改写");
+
+    // 下游是空白 → 不多发一个空段
+    assert.strictEqual(zos.buildOfficialSystem("   ").length, 2, "空白下游 system 不应产生第 3 段");
   });
 
   // ===== T12（LIVE·可选）真实本机文件与额度 =====

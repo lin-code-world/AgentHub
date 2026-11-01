@@ -329,10 +329,14 @@ const DEFAULTS = {
     },
     // ===== ZCode（智谱 GLM 编码套餐）=====
     // 协议事实：上游是 Anthropic Messages（coding-plan 与 start-plan 统一）；
-    // 头组复刻官方 3.12.3 客户端（LLM 面带 X-ZCode-Agent、不带 X-Device-Mid；
-    // billing/claim 控制面反之）。appVersion 上游变更时改这里即热生效，无需发版。
+    // 头组复刻官方客户端（LLM 面带 X-ZCode-Agent、不带 X-Device-Mid；billing/claim 控制面反之）。
     zcode: {
-      appVersion: "4.1.10",
+      // ⚠ 必须是**真实存在过**的客户端版本：上游按版本号识别客户端身份，填一个不存在的版本
+      // （此前是 4.1.10）会让模型请求直接吃 405 + code 3012「unusual activity」——控制面
+      // （余额/签到/配置）却照常返回 200，所以这个字段错了很难从余额上看出问题。
+      // 实测：3.16.3 可过；4.1.10 必被拦。客户端升级后如再遇 3012，先核对这里。
+      // 本机装了客户端时可从 ~/.zcode/v2/runtime/provider/<平台>/<版本>/ 目录名读到真实版本。
+      appVersion: "3.16.3",
       sourceTitle: "cli",
       refererOrigin: "https://zcode.z.ai",
       // coding-plan（付费套餐，凭据 = coding-plan API key "{apiKey}.{secret}"）

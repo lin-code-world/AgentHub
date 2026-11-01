@@ -3858,9 +3858,10 @@ const zcode = {
       const payload = zcodeAnthropic.toAnthropic(upstreamModel, body, {
         defaultMaxTokens: zmeta && zmeta.maxOutputTokens,
       });
-      // 官方客户端检测：zcode-plan 端点要求 system 以官方 ZCode 提示词开头，否则返回 405/3012
-      // unusual activity（见 zcodeOfficialSystem.cjs）。coding-plan 走另一上游，无需注入。
-      if (plan === "start-plan") payload.system = zcodeOfficialSystem.injectOfficialZcodeSystem(payload.system);
+      // 上游对 system 做内容指纹校验（3012）：必须原样带上客户端官方前两段，
+      // 下游应用自己的 system 追加为第 3 段——既过校验，又不牺牲下游提示词。
+      // coding-plan 走另一上游，无此校验，保持原样不动。
+      if (plan === "start-plan") payload.system = zcodeOfficialSystem.buildOfficialSystem(payload.system);
       // 官方流量规范（zcode-api E2e/UIo 逆向实证）：无论 coding-plan 还是 start-plan，
       // 官方客户端发送给 Anthropic 协议的 metadata.user_id 必须是特定结构的 JSON 字符串：
       // {"device_id":"<deviceMid>","account_uuid":"","session_id":"<sessionId>"}
