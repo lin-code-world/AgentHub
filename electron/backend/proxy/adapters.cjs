@@ -3644,7 +3644,9 @@ const zcodeOfficialSystem = require("./zcodeOfficialSystem.cjs");
 
 /** LLM 面身份头组（复刻官方 3.12.3 buildLlmIdentityHeaders：带 X-ZCode-Agent，不带 X-Device-Mid） */
 function zcodeLlmHeaders(c, account, secrets, plan, convId) {
-  const ver = c.appVersion || "4.1.10";
+  // 版本号必须与真实客户端一致：上游按它识别客户端身份，填一个不存在的版本会被判 3012。
+  // 本机装了客户端就用它 runtime 目录里的真实版本（客户端升级后自动跟随），没装才回落配置值。
+  const ver = zcodeOfficialSystem.detectedClientVersion() || c.appVersion || "3.16.3";
   const h = {
     "content-type": "application/json",
     "HTTP-Referer": c.refererOrigin || "https://zcode.z.ai",

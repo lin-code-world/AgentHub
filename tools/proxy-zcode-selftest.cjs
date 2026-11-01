@@ -29,6 +29,9 @@ process.env.ZCODE_V2_DIR = SANDBOX;
 // 回退到 live 值，断言与环境无关，真机锚点也不再被触碰（config.dataDir() 每次调用读 env，
 // 所以这里在 require 之前赋值即可生效）。
 process.env.APPDATA = SANDBOX;
+// 官方 system 的**运行时采集**也要沙箱：自测会造一份假的客户端会话记录与 runtime 版本目录，
+// 让 zcodeOfficialSystem 走「从客户端采集」这条路径，断言不依赖本机是否真装了客户端。
+process.env.ZCODE_ROLLOUT_DIR = path.join(SANDBOX, "rollout");
 
 const zcodeLocal = require("../electron/backend/proxy/zcodeLocal.cjs");
 const zcodeBuiltin = require("../electron/backend/proxy/zcodeBuiltin.cjs");
@@ -59,6 +62,31 @@ const zl = zcodeLocal;
 async function main() {
   console.log(`sandbox: ${SANDBOX}`);
   console.log(`driver note: run under ELECTRON_RUN_AS_NODE. live probes: ${process.env.ZCODE_SELFTEST_LIVE ? "ON" : "off"}\n`);
+
+  // 造一份「本机装了客户端」的沙箱证据：runtime 版本目录 + 一条真实形态的会话记录。
+  // 后面的 T19 用它验证「运行时自动采集 + 版本自动跟随」这条路径。
+  const FAKE_VERSION = "3.17.1";
+  fs.mkdirSync(path.join(SANDBOX, "runtime", "provider", "windows-x86_64", FAKE_VERSION, "endpoint-test"), { recursive: true });
+  const FAKE_SEG0 = "You are ZCode, an interactive coding agent";
+  const FAKE_SEG1 = "\nYou are an interactive ZCode agent that helps users with software engineering tasks.\n\n" + "x".repeat(3100);
+  fs.mkdirSync(process.env.ZCODE_ROLLOUT_DIR, { recursive: true });
+  fs.writeFileSync(
+    path.join(process.env.ZCODE_ROLLOUT_DIR, "model-io-session_selftest.jsonl"),
+    JSON.stringify({
+      startedAt: "2026-11-01T00:00:00.000Z",
+      request: {
+        headers: { "x-zcode-app-version": FAKE_VERSION },
+        body: {
+          system: [
+            { type: "text", text: FAKE_SEG0 },
+            { type: "text", text: FAKE_SEG1 },
+            { type: "text", text: "third" },
+          ],
+        },
+      },
+    }) + "\n",
+    "utf8"
+  );
 
   // ===== T1 enc:v1 加解密往返 =====
   await T("T1 enc:v1 加解密往返 + 错误密钥必抛", () => {
@@ -649,40 +677,49 @@ async function main() {
   });
 
   // ===== T19 ZCode 官方 system（上游 3012 的内容指纹）=====
-  await T("T19 官方 system：原样两段 + 下游 system 作为第 3 段（段数不得超 3）", () => {
+  await T("T19 官方 system：运行时从客户端采集 + 版本自动跟随 + 两段原样 + 下游当第 3 段", () => {
     const zos = require("../electron/backend/proxy/zcodeOfficialSystem.cjs");
-    const info = zos.officialSystemBlocks();
-    assert.ok(String(info.source).startsWith("assets:"), `必须从仓库内置数据读到官方两段（拿不到就会被 3012 拦），实际来源 ${info.source}`);
-    assert.strictEqual(info.blocks.length, 2, "上游只认前两段：这里必须正好两段");
-    assert.strictEqual(info.blocks[0], "You are ZCode, an interactive coding agent", "第 0 段必须是官方 CLI Prefix");
-    assert.ok(info.blocks[1].length >= 3000, `第 1 段必须足够完整（实测 3101 字才过校验），实际 ${info.blocks[1].length}`);
-    assert.ok(info.blocks[1].includes("# Harness"), "第 1 段必须含官方 Harness 段");
-    assert.ok(info.blocks[1].includes("ZCode Desktop Context"), "第 1 段必须含 Desktop Context 段（实测门禁要求到这里）");
 
-    // 无下游 system → 只发官方两段（实测两段即可通过指纹校验）
+    // ① 版本号自动跟随：从客户端 runtime 目录读真实版本（写死版本会随客户端升级而失效）
+    assert.strictEqual(zos.detectedClientVersion(), FAKE_VERSION, "应从 runtime 目录读到真实客户端版本");
+
+    // ② 采集：从会话记录里抽前两段（第三段实测非必需，不采）
+    const cap = zos.captureFromClient();
+    assert.ok(cap && Array.isArray(cap.blocks) && cap.blocks.length === 2, "应能从会话记录采到两段");
+    assert.strictEqual(cap.clientVersion, FAKE_VERSION, "采集结果要带上客户端版本");
+    assert.strictEqual(cap.blocks[0], FAKE_SEG0, "第 0 段应原样取自记录");
+
+    // ③ 优先级 + 落盘：有客户端记录时用客户端，并把副本落到数据目录（下次启动不必重采）
+    const info = zos.officialSystemBlocks();
+    assert.ok(String(info.origin).startsWith("client:"), `有客户端记录时应优先用客户端，实际 ${info.origin}`);
+    const storedPath = path.join(config.dataDir(), "proxy", "zcode-official-system.json");
+    assert.ok(fs.existsSync(storedPath), "采集结果必须落盘到数据目录");
+
+    // ④ 段数语义：官方两段 + 下游 system 作为第 3 段；下游多块必须合并（>3 段会被上游拒）
     const bare = zos.buildOfficialSystem("");
-    assert.deepStrictEqual(
-      bare.map((b) => b.text),
-      info.blocks,
-      "无可下发 system 时应只发官方两段"
-    );
+    assert.strictEqual(bare.length, 2, "无下游 system 时只发官方两段");
+    assert.strictEqual(bare[0].text, FAKE_SEG0);
+    assert.strictEqual(bare[1].text, FAKE_SEG1);
     assert.ok(
       bare.every((b) => b.type === "text"),
       "system 段必须带 type=text（Anthropic 文本块形态）"
     );
-
-    // 有下游 system → 追加为第 3 段；多块必须合并成一块（>3 段会被上游拒绝）
     const three = zos.buildOfficialSystem([
       { type: "text", text: "A" },
       { type: "text", text: "B" },
     ]);
-    assert.strictEqual(three.length, 3, "下游 system 必须合并成一块，总段数不得超 3");
+    assert.strictEqual(three.length, 3, "下游多块必须合并成一块，总段数不得超 3");
     assert.strictEqual(three[2].text, "A\n\nB", "下游多块应合并为一段文本");
-    assert.strictEqual(three[0].text, info.blocks[0], "官方第 0 段不得被改写");
-    assert.strictEqual(three[1].text, info.blocks[1], "官方第 1 段不得被改写");
-
-    // 下游是空白 → 不多发一个空段
+    assert.strictEqual(three[0].text, FAKE_SEG0, "官方第 0 段不得被改写");
+    assert.strictEqual(three[1].text, FAKE_SEG1, "官方第 1 段不得被改写");
     assert.strictEqual(zos.buildOfficialSystem("   ").length, 2, "空白下游 system 不应产生第 3 段");
+
+    // ⑤ 仓库内置那份必须可用（目标机器没装客户端时的唯一来源）
+    const asset = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-official-system.json"), "utf8"));
+    assert.ok(Array.isArray(asset.blocks) && asset.blocks.length >= 2, "assets 必须带两段");
+    assert.ok(String(asset.blocks[0]).startsWith("You are ZCode, an interactive coding agent"), "assets 第 0 段必须是官方开头");
+    assert.ok(String(asset.blocks[1]).length >= 3000, `assets 第 1 段必须完整（实测 3101 字），实际 ${String(asset.blocks[1]).length}`);
+    assert.ok(String(asset.blocks[1]).includes("ZCode Desktop Context"), "assets 第 1 段必须含 Desktop Context（门禁要求到这里）");
   });
 
   // ===== T12（LIVE·可选）真实本机文件与额度 =====
