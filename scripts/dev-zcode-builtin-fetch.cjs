@@ -21,7 +21,8 @@ const zb = require("../electron/backend/proxy/zcodeBuiltin.cjs");
 
 const BUILTIN_PATH = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-builtin.json");
 const CLIENT_CONFIGS_BASE = "https://zcode.z.ai/api/v1/client/configs";
-const APP_VERSION = "4.1.10";
+// 必须与真实客户端版本一致（填不存在的版本会被上游按「伪装客户端」拦，见 rules.cjs 的 appVersion 注释）
+const APP_VERSION = "3.16.3";
 const PLATFORM = "win32-x64";
 const TIMEOUT_MS = 20000;
 

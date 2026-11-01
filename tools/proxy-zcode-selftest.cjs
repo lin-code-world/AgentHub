@@ -661,11 +661,21 @@ async function main() {
 
     // 无下游 system → 只发官方两段（实测两段即可通过指纹校验）
     const bare = zos.buildOfficialSystem("");
-    assert.deepStrictEqual(bare.map((b) => b.text), info.blocks, "无可下发 system 时应只发官方两段");
-    assert.ok(bare.every((b) => b.type === "text"), "system 段必须带 type=text（Anthropic 文本块形态）");
+    assert.deepStrictEqual(
+      bare.map((b) => b.text),
+      info.blocks,
+      "无可下发 system 时应只发官方两段"
+    );
+    assert.ok(
+      bare.every((b) => b.type === "text"),
+      "system 段必须带 type=text（Anthropic 文本块形态）"
+    );
 
     // 有下游 system → 追加为第 3 段；多块必须合并成一块（>3 段会被上游拒绝）
-    const three = zos.buildOfficialSystem([{ type: "text", text: "A" }, { type: "text", text: "B" }]);
+    const three = zos.buildOfficialSystem([
+      { type: "text", text: "A" },
+      { type: "text", text: "B" },
+    ]);
     assert.strictEqual(three.length, 3, "下游 system 必须合并成一块，总段数不得超 3");
     assert.strictEqual(three[2].text, "A\n\nB", "下游多块应合并为一段文本");
     assert.strictEqual(three[0].text, info.blocks[0], "官方第 0 段不得被改写");
