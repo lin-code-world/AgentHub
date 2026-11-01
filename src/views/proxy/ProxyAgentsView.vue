@@ -232,9 +232,6 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // 后端同样拒绝（见 discovery.isScanImportAllowed / index.cjs 的 proxy_scan_import），
   // 这里隐藏页签只挡正常操作，绕过界面直接调接口那一路由后端兜底。
   if (channel === "zcode" && key === "local") return false;
-  // MonkeyCode：只保留「OAuth 登录」（应用内弹窗登录）。凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态，
-  // 本机也没有可扫描的客户端登录态 —— 其余三种途径全部隐藏，后端也一并关掉了导入（见 index.cjs 的 OAUTH_ONLY）
-  if (channel === "monkeycode" || channel === "monkeycode_intl") return key === "oauth";
   return true;
 }
 

@@ -13,7 +13,7 @@
 export const fmtInt = (n: number) => Math.round(n || 0).toLocaleString("en-US");
 
 /** 明细数值（积分 / 每日额度等）：大数走 M / 亿 缩写，其余千分位保留小数（最多 3 位）。
- *  MonkeyCode 的积分以「厘」计价（balance / 1000），整数化会丢掉真实的 .246 这类尾数；
+ *  有的渠道积分以「厘」计价（balance / 1000），整数化会丢掉真实的 .246 这类尾数；
  *  每日额度是千万级 token，用 M 缩写才读得出来（1000 万 → 10.00M）。 */
 export const fmtDetailNum = (n: number): string => {
   const v = Number(n) || 0;
@@ -209,8 +209,6 @@ export const CHANNEL_NAMES: Record<string, string> = {
   accio_cn: "Accio 国内版",
   codearts: "CodeArts（华为云）",
   loomy: "Loomy（讯飞）",
-  monkeycode: "MonkeyCode 国内版",
-  monkeycode_intl: "MonkeyCode 国际版",
 };
 export const channelName = (id: string) => CHANNEL_NAMES[id] || id || "-";
 

@@ -93,7 +93,7 @@ const metaOf = (m: ProxyModel): SourceDetail | ProxyModel => channelMetaOf(m) ||
  * 显示名：渠道视图只认该渠道自己的目录名，全部视图用合并值。
  *
  * 为什么不能直接用行级 name：同名的模型可能被多个渠道提供，合并时只留了其中一个渠道给的名字
- * （例如 MonkeyCode 与 WorkBuddy 都有 minimax-m2.5，名字来自 WorkBuddy）。渠道页里显示它，
+ * （例如两个渠道都提供同名模型时，只留下其中一个渠道给的名字）。渠道页里显示它，
  * 就等于把这个渠道根本没有的名字安在了它头上——上游没给名就该是空的。
  */
 function displayName(m: ProxyModel): string {

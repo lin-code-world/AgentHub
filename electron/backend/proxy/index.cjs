@@ -133,14 +133,11 @@ function normalizeAccountJson(raw, fallbackChannel) {
   return out;
 }
 
-/** 解析 JSON 文本（对象 / 数组 / {accounts:[...]} 包装），返回 { list, invalid, reason? } */
+/** 解析 JSON 文本（对象 / 数组 / {accounts:[...]} 包装），返回 { list, invalid, reason?, unknownChannels? }。
+ *  记录自带 channel 但**认不出**（已下线渠道 / 已删除的自定义提供商 / 名字写错）时**整批拒绝**：
+ *  回报 unknownChannels 且 list 为空，调用方据此报错。绝不静默改判成界面当前渠道——那会造出
+ *  「看着导入成功、其实永远连不上」的僵尸账号，而用户看不到任何异常。 */
 function parseAccountsJson(text, fallbackChannel) {
-  // MonkeyCode 双站只保留应用内「OAuth 登录」这一路添加账号：它的凭据是 HttpOnly 网页会话、
-  // 没有可粘贴的令牌形态（见 AGENTS.md「MonkeyCode 渠道」）。这里连同后端一并关掉导入，
-  // 避免"界面上藏了、接口还能灌"的绕过。
-  if (fallbackChannel === "monkeycode" || fallbackChannel === "monkeycode_intl") {
-    return { list: [], invalid: 0, reason: "oauth-only" };
-  }
   let parsed;
   try {
     parsed = JSON.parse(String(text || ""));
@@ -154,13 +151,26 @@ function parseAccountsJson(text, fallbackChannel) {
   }
   const arr = Array.isArray(parsed) ? parsed : Array.isArray(parsed && parsed.accounts) ? parsed.accounts : [parsed];
   const list = [];
+  const unknownChannels = new Set();
   let invalid = 0;
   for (const item of arr) {
+    // 空白 channel 视为「没写」→ 仍按界面选中渠道（fallbackChannel）导入；写了就必须认得出来
+    const claimed = String((item && item.channel) || "").trim();
+    if (claimed && !adapters.get(claimed)) {
+      unknownChannels.add(claimed);
+      continue;
+    }
     const acc = normalizeAccountJson(item, fallbackChannel);
     if (acc) list.push(acc);
     else invalid++;
   }
-  return { list, invalid };
+  const out = { list, invalid };
+  if (unknownChannels.size) {
+    // 整批拒绝：连已解析出的账号一并清空——调用方即便漏判 unknownChannels，也不会把它们静默入库（双保险）
+    out.list = [];
+    out.unknownChannels = [...unknownChannels];
+  }
+  return out;
 }
 
 // 桌面元数据包 vs 凭据包：报错必须说清「文件本来就没有 token」，否则用户会反复换文件格式。
@@ -168,9 +178,8 @@ const METADATA_ONLY_MESSAGE =
   "这是旧版桌面端导出的账号元数据（不含 token），不能用于灌号。请改用：" +
   "① 粘贴含 token/refreshToken 的凭据 JSON（新版桌面端号池「导出」按钮的产物已含明文凭据）；" +
   "② 管理 API POST /api/accounts/import";
-// MonkeyCode 双站只保留应用内「OAuth 登录」添加账号（凭据是 HttpOnly 网页会话，没有可粘贴的令牌形态）
-const OAUTH_ONLY_MESSAGE =
-  "MonkeyCode 只支持用「OAuth 登录」添加账号：请在号池页点该渠道的「OAuth 登录」，在弹出的窗口里登录即可（不支持粘贴 / 导入凭据）。";
+/** 文件里写了渠道名但认不出（已下线 / 已删除的自定义提供商 / 名字写错）：整批拒绝，不静默改判到界面当前渠道。 */
+const unknownChannelMessage = (channels) => `文件里的渠道名无法识别：${channels.join("、")}。可能该渠道已下线，或名字写错了。请把文件里的 channel 字段改成正确渠道名，或删掉该字段（删掉后按界面上选中的渠道导入）。`;
 // ZCode 已下线「从本机软件导入」：凭据只能走「OAuth 登录」（可选 Z.ai / BigModel）或「粘贴凭据导入」。
 // 这是后端闸（界面同时隐藏该页签），绕过界面直接调 proxy_scan_import 也必须被拒。
 const SCAN_IMPORT_DISABLED_MESSAGE = (channel) => `${store.channelDisplay(channel)} 不支持「从本机软件导入」：请在号池页点该渠道的「OAuth 登录」完成登录（可选 Z.ai / BigModel），或改用「粘贴凭据」导入。`;
@@ -1242,9 +1251,9 @@ function register(ipcMain) {
   // ===== 凭据接入：粘贴 JSON / 从 JSON/ZIP 文件添加（批量，字段容忍别名） =====
   ipcMain.handle("proxy_account_import_json", handle(({ channel, json }) => {
     const fallback = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
-    const { list, invalid, reason } = parseAccountsJson(json, fallback);
+    const { list, invalid, reason, unknownChannels } = parseAccountsJson(json, fallback);
     if (reason === "metadata-only") return fail(METADATA_ONLY_MESSAGE);
-    if (reason === "oauth-only") return fail(OAUTH_ONLY_MESSAGE);
+    if (unknownChannels && unknownChannels.length) return fail(unknownChannelMessage(unknownChannels));
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];
@@ -1277,7 +1286,11 @@ function register(ipcMain) {
     } else {
       texts = [buf.toString("utf8")];
     }
-    let added = 0, dup = 0, invalid = 0, metaOnly = 0, oauthOnly = 0;
+    let added = 0, dup = 0, invalid = 0, metaOnly = 0;
+    const unknown = new Set();
+    const parsedList = [];
+    // 两阶段：先把整包解析完（任一文件含认不出的渠道名 → 整批拒绝），确认无误再入库。
+    // 否则压缩包里前几个文件已经落库、后面才报错，「一条都不导入」就不成立了。
     for (const text of texts) {
       let parsed;
       try {
@@ -1290,26 +1303,25 @@ function register(ipcMain) {
         metaOnly += parsed.invalid;
         continue;
       }
-      if (parsed.reason === "oauth-only") {
-        oauthOnly++;
-        continue;
-      }
+      if (parsed.unknownChannels) parsed.unknownChannels.forEach((c) => unknown.add(c));
+      parsedList.push(parsed);
+    }
+    if (unknown.size) return fail(unknownChannelMessage([...unknown]));
+    for (const parsed of parsedList) {
       invalid += parsed.invalid;
       const r2 = importAccounts(parsed.list);
       added += r2.added;
       dup += r2.dup;
     }
-    if (!added && !dup && oauthOnly) return fail(OAUTH_ONLY_MESSAGE);
     if (!added && !dup && metaOnly) return fail(METADATA_ONLY_MESSAGE);
     if (!added && !dup) return fail(`没有可导入的账号（${invalid ? `${invalid} 条记录无效` : "文件为空"}）`);
     const parts = [`成功导入 ${added} 个账号`];
     if (dup) parts.push(`${dup} 个同 UID 已存在跳过`);
     if (invalid) parts.push(`${invalid} 条记录无效忽略`);
     if (metaOnly) parts.push(`${metaOnly} 条元数据（无凭据）已跳过`);
-    if (oauthOnly) parts.push(`${oauthOnly} 份 MonkeyCode 凭据已跳过（请用 OAuth 登录添加）`);
     const message = parts.join("，");
     oplog.log("info", "号池账号", `文件导入（${path.basename(file)}）：${message}`);
-    return ok({ added, dup, invalid, metaOnly, oauthOnly, file: path.basename(file), message });
+    return ok({ added, dup, invalid, metaOnly, file: path.basename(file), message });
   }));
   // 浏览器端「选择 JSON 文件」上传：文件框由渲染层 <input type="file"> 弹（浏览器到不了主进程弹框，
   // 也不新增文件上传接口），读成文本走本命令——解析入库复用粘贴 JSON 同一份 parseAccountsJson +
@@ -1317,9 +1329,9 @@ function register(ipcMain) {
   ipcMain.handle("proxy_account_import_text", handle(({ channel, text }) => {
     if (!String(text ?? "").trim()) return fail("导入内容为空：请选择包含账号凭据的 .json 文件");
     const fallback = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
-    const { list, invalid, reason } = parseAccountsJson(text, fallback);
+    const { list, invalid, reason, unknownChannels } = parseAccountsJson(text, fallback);
     if (reason === "metadata-only") return fail(METADATA_ONLY_MESSAGE);
-    if (reason === "oauth-only") return fail(OAUTH_ONLY_MESSAGE);
+    if (unknownChannels && unknownChannels.length) return fail(unknownChannelMessage(unknownChannels));
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];

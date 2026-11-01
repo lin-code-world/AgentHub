@@ -214,17 +214,17 @@ const CHANNELS = [
   // Loomy（讯飞）：无状态 OpenAI 兼容，HMAC-SHA1 签名（账号域），手机验证码登录，每日签到
   // 刷赠送积分。无地区分叉。
   { id: "loomy", display: "Loomy（讯飞）", domain: "loomyad.xunfei.cn", costTier: "low" },
-  // MonkeyCode（长亭科技）双站：同套协议、两个站点，因此是两个渠道而不是一个渠道的开关项——
-  // 账号池与模型清单都按站点分份，合成一格会让两站同名模型互相覆盖（与 Qoder / AutoClaw 双区同口径）。
-  // 凭据只有「粘贴 session」一路：session 30 天硬上限、上游无续期接口，过期只能重新粘贴。
-  { id: "monkeycode", display: "MonkeyCode 国内版", domain: "monkeycode-ai.com" },
-  { id: "monkeycode_intl", display: "MonkeyCode 国际版", domain: "monkeycode-ai.net" },
 ];
 
 // 内置渠道 id 的只读名单：凡是「这一行是不是提供商」的判定都走它，而不是看 kind 列——
 // 老库里那几行由 ALTER 的 DEFAULT 补成 'builtin'，但一条被手改脏的内置行若只按 kind 判，
 // 会同时出现在渠道列表与提供商列表里（见 listProviders 的第二道挡）。
 const BUILTIN_IDS = new Set(CHANNELS.map((c) => c.id));
+
+/** 已下线渠道：整体移除的渠道 id。open() 每次启动按它清理旧库残留的 agents / accounts 行（幂等）。
+ *  必须清理而不是放任：`INSERT OR IGNORE` 只增不删，账号查询也不按渠道表过滤——不删就会在号池页
+ *  留下「看得见但用不了」的孤儿渠道。凭据随之删除且**不可恢复**（升级前请用号池页「导出凭据」留底）。 */
+const REMOVED_CHANNELS = ["monkeycode", "monkeycode_intl"];
 
 /** 打开数据库（幂等）；建表 + WAL + 三渠道种子 + 90 天流水 GC */
 function open() {
@@ -334,6 +334,9 @@ function open() {
     updDisplay.run(c.display, c.id);
     if (c.costTier) updTier.run(c.costTier, c.id);
   }
+  // 已下线渠道的库存清理（幂等，见 REMOVED_CHANNELS 注释）：种子只增不删、账号查询不按渠道表过滤，
+  // 不清理就会在号池页留下「看得见但用不了」的孤儿渠道。
+  purgeRemovedChannels();
   gc();
   return db;
 }
@@ -353,6 +356,16 @@ function migrateProviders(d) {
   ];
   for (const c of cols) {
     try { d.exec(`ALTER TABLE agents ADD COLUMN ${c}`); } catch { /* 已存在 */ }
+  }
+}
+
+/** 已下线渠道的库存清理（幂等）：删掉 REMOVED_CHANNELS 在 agents / accounts 里的残留行。
+ *  由 open() 每次启动调用；同时导出给"移除守卫"自测直接断言真实行为（而不是只看代码里有这段）。 */
+function purgeRemovedChannels() {
+  open();
+  for (const id of REMOVED_CHANNELS) {
+    db.prepare("DELETE FROM agents WHERE id = ?").run(id);
+    db.prepare("DELETE FROM accounts WHERE channel = ?").run(id);
   }
 }
 
@@ -1802,6 +1815,7 @@ module.exports = {
   QODER_INTL_ENABLED,
   AUTOCLAW_INTL_ENABLED,
   isBuiltinChannel,
+  purgeRemovedChannels,
   channelList, invalidateChannels,
   channelDisplay,
   listProviders, getProvider, saveProvider, deleteProvider, accountRows,

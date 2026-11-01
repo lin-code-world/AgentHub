@@ -13,7 +13,7 @@
 //   2 合法账号 JSON 导入 added=1，并触发额度刷新、写一条操作日志；
 //   3 同 channel:uid 再导入计为 dup（只新增不更新）；
 //   4 format=agenthub-accounts 元数据包被拒（提示「只有元数据」语义），号池不变；
-//   5 channel 为不存在的提供商时回落到 fallback（store.CHANNELS[0]），JSON 里未知渠道归当前选中渠道；
+//   5 界面渠道不在册时回落到 fallback（store.CHANNELS[0]）；文件里写明的渠道名认不出则整批拒绝；
 //   6 空文本 / 非法 JSON / 缺 token 均返回明确失败（ok=false 且有可读 message）；
 //   7 前端入口接线（input[type=file] 只收 .json、调 proxyAccountImportText）与 Ruling 29 文案；
 // 解析与入库复用 parseAccountsJson + importAccounts（不新写），故断言口径与桌面导入逐字一致。
@@ -113,18 +113,23 @@ async function main() {
   }
 
   console.log("");
-  console.log("=== 5 不存在的提供商回落 fallback（断言 4）===");
+  console.log("=== 5 界面渠道不在册回落 fallback；文件里写明的渠道名认不出则整批拒绝 ===");
   {
+    // 界面选中的渠道本身不在册：fallback 兜底到内置渠道表的第一个（文件没写渠道名时才走这条）
     const fallback = store.CHANNELS[0].id;
-    const r = await run({ channel: "ghost_provider", text: JSON.stringify({ channel: "ghost_provider", uid: "g1", name: "幽灵提供商号", token: "tk-g1" }) });
+    const r = await run({ channel: "ghost_provider", text: JSON.stringify({ uid: "g1", name: "幽灵提供商号", token: "tk-g1" }) });
     ok("导入成功 added=1", r.ok === true && r.added === 1, JSON.stringify(r));
     const hit = store.listAccounts().find((a) => a.uid === "g1");
-    ok(`回落到 fallback（${fallback}）`, !!hit && hit.channel === fallback, hit && hit.channel);
+    ok(`界面渠道不在册 → 回落到 fallback（${fallback}）`, !!hit && hit.channel === fallback, hit && hit.channel);
   }
   {
-    // provider 不存在的账号（JSON 里的 channel 是已删除的自定义提供商）：归到当前选中渠道（既有行为）
-    const r = await run({ channel: "trae", text: JSON.stringify({ channel: "gone_provider", uid: "g2", name: "自定义提供商号", token: "tk-g2" }) });
-    ok("JSON 里未知渠道归当前选中渠道（先建提供商再导账号）", r.ok === true && r.added === 1 && !!store.listAccounts().find((a) => a.uid === "g2" && a.channel === "trae"), JSON.stringify(r));
+    // 文件里写明了渠道名但认不出（已下线渠道 / 已删除的自定义提供商 / 名字写错）：整批拒绝，
+    // 不再静默改判到界面当前渠道——那会造出「看着导入成功、其实永远连不上」的僵尸账号且无任何提示。
+    const before = store.listAccounts().length;
+    const r = await run({ channel: "trae", text: JSON.stringify({ channel: "gone_provider", uid: "g2", name: "认不出的渠道号", token: "tk-g2" }) });
+    ok("整批拒绝（ok=false 且给出可读原因）", r.ok === false && /无法识别/.test(r.message || ""), JSON.stringify(r));
+    ok("提示里点名了那个渠道名", /gone_provider/.test(r.message || ""), r.message);
+    ok("号池不变（一条都没入库）", store.listAccounts().length === before, `${before} -> ${store.listAccounts().length}`);
   }
 
   console.log("");

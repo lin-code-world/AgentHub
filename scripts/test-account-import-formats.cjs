@@ -71,6 +71,21 @@ try {
     ok(/JSON 解析失败/.test(err), "非法 JSON 仍抛出可读错误", err);
   }
 
+  console.log("\n[4] 记录自带渠道名认不出 → 整批拒绝（不再静默改判到界面当前渠道）");
+  {
+    const ghost = parse(JSON.stringify([{ channel: "ghost_offline", uid: "x1", token: "tk" }]), "loomy");
+    ok(Array.isArray(ghost.unknownChannels) && ghost.unknownChannels.includes("ghost_offline"), "如实回报无法识别的渠道名", ghost);
+    ok(ghost.list.length === 0, "不产出任何可导入账号（整批拒绝）", ghost);
+    const mix = parse(JSON.stringify([{ channel: "loomy", uid: "ok1", token: "tk" }, { channel: "ghost_x", uid: "bad1", token: "tk" }]), "loomy");
+    ok(mix.list.length === 0 && mix.unknownChannels.includes("ghost_x"), "混合文件（一半能认）同样整批拒绝", mix);
+    const dedup = parse(JSON.stringify([{ channel: "ghost_x", uid: "d1", token: "tk" }, { channel: "ghost_x", uid: "d2", token: "tk" }]), "loomy");
+    ok(Array.isArray(dedup.unknownChannels) && dedup.unknownChannels.length === 1, "同一个认不出的渠道名只报一次", dedup);
+    const noChannel = parse(JSON.stringify({ uid: "n1", name: "无渠道名", token: "tk" }), "loomy");
+    ok(noChannel.list.length === 1 && noChannel.list[0].channel === "loomy" && !noChannel.unknownChannels, "文件未写渠道名 → 仍按界面选中渠道（既有路径不变）", noChannel);
+    const known = parse(JSON.stringify({ channel: "modelscope", uid: "m1", token: "ms-token" }), "loomy");
+    ok(known.list.length === 1 && known.list[0].channel === "modelscope" && !known.unknownChannels, "文件写了且在册的渠道名 → 按写的来（既有路径不变）", known);
+  }
+
   console.log(`\n${failed ? "\u2717" : "OK"} 账号导入格式自测：${pass} 项通过，${failed} 项失败`);
 } finally {
   fs.rmSync(TMP, { recursive: true, force: true });
