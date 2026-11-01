@@ -609,6 +609,45 @@ async function main() {
     assert.ok(isCaptcha, "能够通过正则表达式从响应体捕获 3007 验证码挑战标记");
   });
 
+  // ===== T37 ZCode 业务码映射：3012 风控必须与 401 凭证失效分开 =====
+  await T("T37 3012 风控拦截不得归成 401（否则有效账号被连罚三次后永久需重登）", () => {
+    const map = adapters.zcodeMapBizError;
+    assert.ok(typeof map === "function", "zcodeMapBizError 必须导出以便锁住口径");
+
+    // 实测现场：start-plan 对 GLM-5.3-Flash 回 405 + code 3012
+    const risk = map(405, { code: 3012, msg: "request has been blocked due to unusual activity." }, "");
+    assert.ok(risk.modelBlocked === true, "3012 必须标记 modelBlocked（交给模型级冷却分支）");
+    assert.strictEqual(risk.code, 3012, "业务码要原样带给分类器");
+    assert.notStrictEqual(risk.status, 401, "绝不能是 401：401 会让 server 走 relogin 判废账号");
+
+    // 真正的凭证失效仍必须是 401（1006 与裸 401 都是）
+    assert.strictEqual(map(401, { code: 401 }, "").status, 401, "code 401 仍是凭证失效");
+    assert.strictEqual(map(200, { code: 1006 }, "").status, 401, "code 1006 仍是凭证失效");
+    assert.ok(!map(401, { code: 401 }, "").modelBlocked, "凭证失效不得被标成风控");
+
+    // 额度尽 / 验证码 / 参数 的分类不受本次改动影响
+    assert.ok(map(429, { code: 1113, msg: "[1113][余额不足或无可用资源包,请充值。]" }, "").planLimit === true, "1113 仍是额度尽");
+    assert.ok(map(200, { code: 3007 }, "").needCaptcha === true, "3007 仍是验证码挑战");
+    assert.strictEqual(map(400, { code: 3001 }, "").status, 400, "3001 仍是参数错误");
+  });
+
+  // ===== T38 连续凭证失效计数可复位（刷新复活后不该一次失败就秒回需重登）=====
+  await T("T38 resetSessionDead：额度刷新成功必须复位连续失效计数", () => {
+    // 计数是内存态、按账号 id 存；这里只锁行为契约，不碰真实账号
+    const pool = require("../electron/backend/proxy/pool.cjs");
+    assert.ok(typeof pool.resetSessionDead === "function", "pool 必须导出 resetSessionDead");
+    const id = "selftest-reset-session-" + Date.now();
+    assert.strictEqual(pool.noteSessionDead(id), false, "第 1 次未达阈值");
+    assert.strictEqual(pool.noteSessionDead(id), false, "第 2 次未达阈值");
+    assert.strictEqual(pool.noteSessionDead(id), true, "第 3 次达到判废阈值");
+    // 复位后重新从 0 累计：这是「刷新变在线、一发请求又需重登」的根因修复
+    pool.resetSessionDead(id);
+    assert.strictEqual(pool.noteSessionDead(id), false, "复位后第 1 次不应立刻判废");
+    assert.strictEqual(pool.noteSessionDead(id), false, "复位后第 2 次仍未达阈值");
+    assert.strictEqual(pool.noteSessionDead(id), true, "复位后仍需连满 3 次才判废");
+    pool.resetSessionDead(id);
+  });
+
   // ===== T19 ZCode 官方 system 前缀（官方客户端检测，防 405/3012）=====
   await T("T19 官方前缀：内置常量有效 / 注入语义（补前缀·保留下游·不重复·数组块）", () => {
     const zos = require("../electron/backend/proxy/zcodeOfficialSystem.cjs");

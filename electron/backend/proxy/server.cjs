@@ -472,6 +472,12 @@ function classifyUpstream(e, planLimit, channel) {
     }
   }
   if (planLimit || (e && e.status === 402)) return { kind: "credit", switchable: true, status: 402 };
+  // 上游风控「异常活动」（适配器标记 modelBlocked；ZCode 3012 实证）：与凭证无关，属「该账号×该模型」
+  // 被拦——同账号同端点换个模型立刻 200。处置为**模型级**冷却并换号：账号保持在线，别的模型照常可用。
+  // ⚠ 不能落进下面的 401 → relogin：实测两个凭据有效的账号被连罚三次后永久停用，请求全被挤到别的渠道。
+  // 也不并入 model_rate：那个类别在 DEGRADABLE 里，连续两次会把**整条渠道**降级，
+  // 而这里的故障只属于一个模型，降级会误伤同渠道的其它模型。
+  if (e && e.modelBlocked) return { kind: "model_risk", switchable: true, status: 429 };
   const msg = String((e && e.message) || "");
   const code = Number(e && e.code) || 0;
   if (code === 4001 || /model config is empty|config.*is empty/i.test(msg)) {
@@ -658,6 +664,9 @@ function applyCool(accId, model, cls, message) {
     // model_rate（6004）只罚「账号×模型」：错误原因已随模型级冷却一起落库（号池悬浮明细可查），
     // 再写账号 lastError 会让冷却/重置结束后卡片仍挂着旧 429，被读成「额度一直没恢复」
     cls.kind === "model_rate" ||
+    // model_risk（上游风控 3012）同理：原因已随模型级冷却落库，再写账号 lastError 会让
+    // 冷却结束后卡片仍挂着「被风控」的旧错误，被读成账号一直有问题
+    cls.kind === "model_risk" ||
     (cls.kind === "model_denied" && !cls.channelLevel);
   if (!silent && message) {
     store.noteError(accId, message);
@@ -674,6 +683,11 @@ function applyCool(accId, model, cls, message) {
       return;
     case "model_rate":
       pool.coolAccountModel(accId, model, cls.resetMs || Date.now() + 600000, message); // 6004：对齐墙钟优先，缺省 10min
+      return;
+    case "model_risk":
+      // 上游风控拦截：只罚「账号×模型」（缺省 10 分钟），账号与渠道都保持可用。
+      // 与 model_rate 的差别只有「不进 DEGRADABLE」——单模型的拦截不该把整条渠道降级。
+      pool.coolAccountModel(accId, model, Date.now() + 600000, message);
       return;
     case "model_blocked":
       pool.coolAccountModel(accId, model, 6 * 3600000, message, { backoff: true, baseMs: 6 * 3600000, capMs: 24 * 3600000 }); // 11102：6h 起指数封顶 24h

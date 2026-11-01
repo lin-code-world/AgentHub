@@ -3746,7 +3746,8 @@ function getPendingCaptcha(accountId) {
 
 /** zcode 业务码 → HTTP 语义（quota.rs classify_biz_err 口径）：
  *  1005→402 额度尽；3002/3008/3009/3010→429 限流；3007→502 验证码挑战（双重特征检测，如实报，不冷却号）；
- *  401/1006/3012→401；3001/3006/3102→400 参数；2007→502 服务端 */
+ *  3012→403 modelBlocked（上游风控「unusual activity」，只拦该账号×该模型）；401/1006→401 凭证失效；
+ *  3001/3006/3102→400 参数；2007→502 服务端 */
 function zcodeMapBizError(status, data, text) {
   // 业务码可能在顶层 code，也可能裹在 message 前缀里（实测形态 "[1113][Insufficient balance…]"）
   const rawMsg = String((data && (data.message || data.msg || (data.error && data.error.message))) || text || "");
@@ -3761,7 +3762,15 @@ function zcodeMapBizError(status, data, text) {
   if (isCaptcha) {
     return { status: 502, code: 3007, needCaptcha: true, message: "触发上游人机校验（阿里云验证码）：请在号池列表中点击该账号的「过码」按钮完成验证" };
   }
-  if (status === 401 || status === 403 || [401, 1006, 3012].includes(code)) return { status: 401, message: msg || "凭证失效" };
+  // 3012 = 上游「unusual activity」风控。实测与凭据无关：同一账号、同一端点、同一份请求头，
+  // GLM-5.3-Flash 稳定 405/3012，把 model 换成 GLM-5.3 立刻 200；加设备头、改 system 前缀、
+  // 改流式与否都不影响。它是「该账号 × 该模型」被拦，不是凭证失效——归到 401 会让好账号连吃
+  // 三次后被永久打成「需重登」并把请求挤到别的渠道（实测：两个有效账号被整条下线）。
+  // 单独标记 modelBlocked，交给 server 的模型级拦截分支：只冷却该模型，账号保持在线。
+  if (code === 3012) {
+    return { status: 403, code: 3012, modelBlocked: true, message: msg || "上游风控拦截（unusual activity）" };
+  }
+  if (status === 401 || status === 403 || [401, 1006].includes(code)) return { status: 401, message: msg || "凭证失效" };
   if (status === 400 || [3001, 3006, 3102].includes(code)) return { status: 400, message: msg || "参数错误" };
   return { status: status >= 400 && status < 600 ? status : 502, message: msg || `上游错误 ${status || code}` };
 }
@@ -3889,6 +3898,9 @@ const zcode = {
           const err = new Error(mapped.message);
           err.status = mapped.status;
           if (mapped.code) err.code = mapped.code;
+          // 风控拦截要原样带给分类器：server 侧据此走「只冷却该账号×该模型」的分支，
+          // 不能让它落进 401 → relogin 把好账号打死
+          if (mapped.modelBlocked) err.modelBlocked = true;
           err.zcodePlan = plan;
           throw err;
         }
@@ -3937,8 +3949,11 @@ const zcode = {
       try {
         return await doChat("coding-plan");
       } catch (e) {
-        // 付费套餐欠费/额度尽（402/1113）：若该号还有 jwt，带 jwt 重试 start-plan 一次
-        if ((e && e.status === 402) && secrets.token) {
+        // 402 欠费/额度尽、401 凭证被拒：两种都该换另一条额度线再试。
+        // coding-plan key 与 jwt 是两份**独立**凭据：实测同一账号的 key 在 open 平台可用
+        // 但没有付费套餐余额（429/1113），而它的 jwt 在 start-plan 上仍有免费额度。
+        // 只对 402 兜底会让「key 被吊销/无套餐」的账号连同可用的免费额度一起被判死。
+        if ((e && (e.status === 402 || e.status === 401)) && secrets.token) {
           try {
             return await doChat("start-plan");
           } catch (e2) {
@@ -5003,6 +5018,8 @@ module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAlia
   tokenLimit,
   // 供自测校验「逐包积分」的三条映射（到期日历的数据源）：都是纯函数，喂合成样本即可，不出网
   traeCredits, zcodeCreditPackages, lobsterCreditPackages, parseWbResource,
+  // 供自测校验 ZCode 业务码 → HTTP 语义的映射：3012 风控必须与 401 凭证失效分开
+  zcodeMapBizError,
   // 供自测校验「首个 SSE 事件必须解除首字节预算」（issue #107：漏解除 → 长回答被 30s 掐断）：
   // 自测用真 fetchStream + 真 pumpSse + 缩短的 firstByteBudgetMs + 假上游复现现场
   fetchStream, pumpSse,

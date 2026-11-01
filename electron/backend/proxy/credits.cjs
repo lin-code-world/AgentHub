@@ -152,6 +152,10 @@ async function refreshAccount(id) {
     ...(revive ? { status: "online", coolUntil: 0, coolReason: "" } : {}),
   });
   store.snapshotCredits(acc.channel, acc.id, credits, expiresAt || 0);
+  // 本次额度查询成功 = 凭据确实可用：复位「连续凭证失效」计数。
+  // 否则历史 401 的累计会残留下来——账号被刷新复活成 online 后，下一次偶发失败立刻又满 3 次，
+  // 用户看到的就是「点刷新变在线、一发请求马上又需重登」。
+  pool.resetSessionDead(acc.id);
   return { id: acc.id, credits, expiresAt: expiresAt || 0 };
 }
 

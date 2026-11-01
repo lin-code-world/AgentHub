@@ -334,6 +334,16 @@ function noteSessionDead(id) {
   return n >= 3;
 }
 
+/** 复位「连续凭证失效」计数。
+ *  为什么需要它：这个计数原本只有 noteSuccess（一次真正成功的请求）才清。可额度刷新/复活
+ *  也会把账号从 relogin 拉回 online——此时计数还停在 ≥3，用户点一次刷新看到「在线」，
+ *  下一次偶发失败立刻又满 3 次，账号瞬间重回「需重登」，表现为「刷新根本没用」。
+ *  拿到额度就说明凭据本身可用，历史 401 不该继续累计。
+ *  只清这一项：服务器熔断与模型级冷却各有各的语义，不能顺带清掉。 */
+function resetSessionDead(id) {
+  if (id != null) sessionDeadFails.delete(id);
+}
+
 /** 5xx/网络熔断（breaker：连续 3 次起 30m 指数封顶 6h）。
  *  返回冷却截止时刻；未达触发阈值返回 0（调用方走基础冷却） */
 function noteServerError(id) {
@@ -422,7 +432,7 @@ function poolSummary(channel) {
 module.exports = {
   effectiveStatus, deriveAccountCredits, decoratePackageStates, setExpiringSoonDays, expiringSoonMs, poolAccounts, pickAccount, coolAccount, coolAccountMs,
   coolAccountModel, isModelCooled, accountModelCool, poolSummary, nextDay4AM,
-  acquireAccount, releaseAccount, inFlightCount, softBackoffMs, noteSessionDead, noteServerError, noteSuccess,
+  acquireAccount, releaseAccount, inFlightCount, softBackoffMs, noteSessionDead, resetSessionDead, noteServerError, noteSuccess,
   releaseCool, zeroBalanceUsable,
   // 渠道路由插件（tools/proxy-channel-defer-selftest.cjs 断言用）
   accountRank, channelDeferred,
