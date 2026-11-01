@@ -83,6 +83,12 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 环境与发布
 
+- **部署目标（渠道反代逻辑的硬约束）**：本地调通后 `npm run electron:build` 打包成 exe，装到
+  `192.168.2.129` 那台远程 Windows 上运行。**那台机器没有安装任何渠道对应的桌面客户端**，所以渠道
+  相关代码不得依赖本机客户端文件：号池切号 / 从本机客户端读登录态 / 从客户端 bundle 提取提示词或模型
+  元数据 / 依赖客户端进程的这些能力，在目标环境里一律不可用。需要的这类数据只有两条路——随包内置到
+  `electron/backend/proxy/assets/`，或者运行时从上游拉取并落盘到数据目录（`config.dataDir()`），
+  读不到时必须能降级且如实告警，不能因此让请求失败或让账号被误判。
 - 本地打包 exe：`npm run electron:build`（类型检查 + 前端构建 + electron-builder）→ `release/` 下出
   `AgentApiGateway-Setup-x.y.z.exe`（NSIS 安装版，`win.target` 只配了 nsis），版本号取 package.json 的 `version`；
   `npm run electron:pack` 只出未打包目录（`--dir`）。
