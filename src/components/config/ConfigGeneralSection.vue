@@ -1,5 +1,5 @@
 <!-- 设置弹窗 · 通用：外观（主题）+ 应用行为（自启 / 托盘）+ 关于
-     网关的操作设置在反代网关右上「配置」按钮切换的配置页里 -->
+     网关的操作设置在同属设置弹窗的「反代网关」板块里 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
@@ -50,6 +50,7 @@ async function openDataDir() {
     /* 网页端无此能力 */
   }
 }
+
 </script>
 
 <template>
@@ -112,7 +113,6 @@ async function openDataDir() {
           <span><button class="btn btn-ghost" :disabled="dataDirGate.disabled" @click="openDataDir">打开目录</button></span>
         </el-tooltip>
       </div>
-      
     </div>
 
 

@@ -483,7 +483,7 @@ async function main() {
     return;
   }
   const server = require("../electron/backend/proxy/server.cjs");
-  const settings = () => ({ port: 19527, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: true });
+  const settings = () => ({ port: 19527, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 8, routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {} });
   const sr = await server.start(settings);
   assert(sr.ok, "网关启动: " + (sr.message || ""));
   const base = "http://127.0.0.1:19527";
@@ -498,9 +498,14 @@ async function main() {
   assert(errBody.error && errBody.error.code === "invalid_api_key", "OpenAI 同构错误");
   r = await fetch(base + "/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + k.secret }, body: JSON.stringify({ model: "deepseek-v4-flash", messages: [] }) });
   assert(r.status === 400, "messages 空 400");
+  // /status：默认开放但需管理令牌（与局域网管理页同一令牌）；无/错令牌 401
+  const cfgmod = require("../electron/backend/config.cjs");
+  const adminTok = cfgmod.resetAdminToken().token;
   r = await fetch(base + "/status");
+  assert(r.status === 401, "/status 无令牌 401 — 实际: " + r.status);
+  r = await fetch(base + "/status", { headers: { "x-admin-token": adminTok } });
   const stBody = await r.text();
-  assert(r.ok, "debugStatus 开启时 /status 可访问（回环）— 实际: " + r.status + " " + stBody.slice(0, 120));
+  assert(r.ok, "/status 带管理令牌可访问 — 实际: " + r.status + " " + stBody.slice(0, 120));
   // 有效 Key + 无可用账号 → 503（账号冷却中）
   r = await fetch(base + "/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + k.secret }, body: JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] }) });
   assert(r.status === 503 || r.status === 200, "号池无可用账号 503（流式则 200+错误chunk）: " + r.status);

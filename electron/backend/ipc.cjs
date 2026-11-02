@@ -18,6 +18,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const config = require("./config.cjs");
+const crashlog = require("./crashlog.cjs");
+// 浏览器端导出上限：压缩包超过它就走桌面窗口（浏览器内存与加密通道都不适合整包大文件）
+const BROWSER_EXPORT_LIMIT = 10 * 1024 * 1024;
 
 // load_config 的内存快照：按 config.json 的 mtime+size 签名失效——proxy_config_save、渠道启闭、
 // 按渠道签到等独立 IPC 各自写盘后，快照必须跟着重读；否则桌面拿旧值再整份保存（切主题等）
@@ -116,6 +119,31 @@ function registerCommands(handle, deps) {
   handle("browse_dir", wrap(async () => {
     const r = await api(deps, "dialog").showOpenDialog(api(deps, "BrowserWindow").getAllWindows()[0], { properties: ["openDirectory"] });
     return { ok: true, canceled: r.canceled, path: r.canceled ? null : r.filePaths[0] };
+  }));
+  // 导出崩溃日志：全部 crash.log 分段 + info.txt 打成 zip，弹「另存为」让用户选位置
+  handle("export_crash_logs", wrap(async () => {
+    const built = crashlog.buildArchive();
+    if (!built.ok) return { ok: false, message: built.message }; // 暂无崩溃日志
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const r = await api(deps, "dialog").showSaveDialog(api(deps, "BrowserWindow").getAllWindows()[0], {
+      title: "导出崩溃日志",
+      defaultPath: path.join(api(deps, "app").getPath("downloads"), `crash-logs-${stamp}.zip`),
+      filters: [{ name: "压缩包", extensions: ["zip"] }],
+    });
+    if (!r || r.canceled || !r.filePath) return { ok: true, canceled: true };
+    fs.writeFileSync(r.filePath, built.buffer);
+    return { ok: true, path: r.filePath, count: built.count, bytes: built.buffer.length };
+  }));
+  // 浏览器形态没有本机对话框：把压缩包数据回传，前端用 Blob 触发下载（导出的是**网关所在机器**的日志）。
+  // 压缩后超过上限就明确拒绝，提示改用桌面窗口——浏览器内存与加密通道都不适合整包大文件
+  handle("export_crash_logs_data", wrap(() => {
+    const built = crashlog.buildArchive();
+    if (!built.ok) return { ok: false, message: built.message }; // 暂无崩溃日志
+    if (built.buffer.length > BROWSER_EXPORT_LIMIT) {
+      return { ok: false, message: `日志压缩后约 ${Math.round(built.buffer.length / 1024 / 1024)}MB，超过网页端上限（${BROWSER_EXPORT_LIMIT / 1024 / 1024}MB），请在桌面窗口导出` };
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    return { ok: true, name: `crash-logs-${stamp}.zip`, base64: built.buffer.toString("base64"), count: built.count, bytes: built.buffer.length };
   }));
 
   // ===== 局域网管理访问（管理地址与令牌；管理 HTTP 服务另行提供） =====

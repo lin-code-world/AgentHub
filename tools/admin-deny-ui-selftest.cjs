@@ -68,7 +68,7 @@ function browserCapsPayload() {
 
 async function main() {
   // ===== 1 服务端 deny 清单核查（简报逐字点名的命令） =====
-  const NAMED = ["proxy_start", "proxy_stop", "proxy_restart", "proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_ide_status", "proxy_ide_switch", "proxy_open_data_dir", "proxy_open_rules_dir", "proxy_account_import_file", "proxy_oplog_export", "proxy_scan"];
+  const NAMED = ["proxy_start", "proxy_stop", "proxy_restart", "proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_ide_status", "proxy_ide_switch", "proxy_account_import_file", "proxy_oplog_export", "proxy_scan"];
   const ZCODE = Object.keys(commandTable.DENY_BROWSER).filter((c) => c.startsWith("proxy_zcode_"));
   ok(
     "简报点名的命令在 browser 形态全部 deny（含 proxy_oauth_submit_callback）",
@@ -132,13 +132,14 @@ async function main() {
   );
 
   // ===== 4 页面接线：入口按钮必须消费 denyState 并展示 reason =====
+  // 注：重启服务与令牌操作已移到「设置 · 局域网访问」，该板块只在桌面窗口出现（浏览器端被设置弹窗过滤），
+  // 无需门控，故不再点名 ConfigLanSection.vue；打开反代数据目录 / 规则目录的入口已移除，
+  // 也不再点名 ConfigProxySection.vue。
   const WIRE = [
     ["src/components/Sidebar.vue", ["proxy_start", "proxy_stop"]],
-    ["src/components/config/ConfigProxySection.vue", ["proxy_restart", "proxy_open_data_dir", "proxy_open_rules_dir"]],
     ["src/components/config/ConfigGeneralSection.vue", ["open_data_dir"]],
     ["src/views/proxy/ProxyLogView.vue", ["proxy_oplog_export"]],
     ["src/views/proxy/ProxyAgentsView.vue", ["proxy_oauth_begin", "proxy_oauth_submit_callback", "proxy_account_import_file", "proxy_scan", "proxy_scan_import", "proxy_ide_switch", "proxy_zcode_solve_captcha", "proxy_zcode_claim_mode", "proxy_zcode_device_status", "proxy_zcode_device_repair", "proxy_zcode_restore_mid", "proxy_zcode_switch_rollback"]],
-    ["src/components/config/ConfigLanSection.vue", ["admin_reset_token"]],
   ];
   for (const [file, cmds] of WIRE) {
     const src = fs.readFileSync(path.join(ROOT, file), "utf8");

@@ -11,7 +11,8 @@
 // 管理服务骨架自测：admin.start / admin.stop 与 Express 挂载面（任务 5）。
 // 覆盖：/api/capabilities（browser 形态命令清单 + 文案不含容器形态措辞）、/api/status（轻量状态，
 // 不跑全量 proxy_status）、静态资源与 SPA 回退、/api 路径不回退 index.html、/api/rpc 未鉴权 401、
-// 反代端口 0 / 65535 拒绝、端口联动的先停后启、并发 start 不泄漏端口、启动失败后旧端口可重新拉起。
+// 反代端口 0 / 65535 拒绝、端口联动的先停后启、绑定地址联动（127.0.0.1 仅本机 / 0.0.0.0 开放 / 缺省与意外值兜底）、
+// 并发 start 不泄漏端口、启动失败后旧端口可重新拉起。
 // 纯 Node 跑（不加载 electron）：命令表只收集不执行。用法：node tools/admin-server-selftest.cjs
 "use strict";
 const fs = require("node:fs");
@@ -31,6 +32,7 @@ const PROXY_PORT_A = 19529; // 简报指定的测试反代端口：管理端口 
 const PROXY_PORT_B = 19549; // 端口联动用例的第二个反代端口
 const PROXY_PORT_C = 19569; // 并发 start 用例的第二个反代端口
 const PROXY_PORT_D = 19589; // /api/status 轻量断言用例的反代端口
+const PROXY_PORT_E = 19599; // 绑定地址联动用例的反代端口
 
 let pass = 0,
   fail = 0;
@@ -111,8 +113,7 @@ async function reachable(p) {
     proxy_start: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
     proxy_stop: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
     proxy_restart: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
-    proxy_open_data_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
-    proxy_open_rules_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+    proxy_set_listen: "浏览器访问时不可用：监听端口与绑定地址请在桌面窗口修改",
     proxy_account_import_file: "浏览器访问时不可用：请改用「选择 JSON 文件上传，或粘贴 JSON」导入",
     proxy_scan_import: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
     proxy_scan: "浏览器访问时不可用：扫描本机登录态请在桌面窗口操作",
@@ -133,8 +134,9 @@ async function reachable(p) {
     open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
     get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",
     get_app_version: "浏览器访问时不可用：版本信息请在桌面窗口查看",
-    load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
-    save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
+    export_crash_logs: "浏览器访问时不可用：导出崩溃日志请在桌面窗口操作",
+    load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
+    save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
   };
   const forbidden = ["容器", "编排", "docker", "宿主机", "gateway-data", "/api/accounts/import"];
   const denyCmds = Object.keys(commandTable.DENY_BROWSER);
@@ -197,6 +199,33 @@ async function reachable(p) {
   const second = await admin.start({ port: PROXY_PORT_B, commandTable, staticDir: STATIC_DIR });
   ok("换端口 start 后新端口可用", !!second && second.port === PROXY_PORT_B + 1 && (await reachable(second.port)), JSON.stringify(second));
   ok("换端口 start 后旧端口已关闭", !(await reachable(first.port)));
+
+  // ===== 绑定地址联动：监听地址与反代一致（显式 127.0.0.1 仅本机 / 0.0.0.0 开放 / 缺省与意外值兜底 0.0.0.0） =====
+  // 端口固定只换 bind：除返回的监听地址外，再用本机回环 / 局域网 IP 各探一次，确认「仅本机」真的外面连不上
+  const lanIf = Object.values(os.networkInterfaces() || {})
+    .flat()
+    .find((a) => a && (a.family === "IPv4" || a.family === 4) && !a.internal);
+  const probe = async (port, host) => {
+    try {
+      await fetch(`http://${host}:${port}/api/capabilities`, { signal: AbortSignal.timeout(1500) });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const b127 = await admin.start({ port: PROXY_PORT_E, bind: "127.0.0.1", commandTable, staticDir: STATIC_DIR });
+  ok("bind=127.0.0.1 → 监听地址为 127.0.0.1", !!b127 && b127.host === "127.0.0.1", JSON.stringify(b127));
+  ok("bind=127.0.0.1 → 本机回环可访问", await probe(b127.port, "127.0.0.1"));
+  if (lanIf) ok("bind=127.0.0.1 → 局域网 IP 不可访问（真的只有本机）", !(await probe(b127.port, lanIf.address)));
+  const b0000 = await admin.start({ port: PROXY_PORT_E, bind: "0.0.0.0", commandTable, staticDir: STATIC_DIR });
+  ok("bind=0.0.0.0 → 监听地址为 0.0.0.0", !!b0000 && b0000.host === "0.0.0.0", JSON.stringify(b0000));
+  ok("bind=0.0.0.0 → 本机回环可访问", await probe(b0000.port, "127.0.0.1"));
+  const bDefault = await admin.start({ port: PROXY_PORT_E, commandTable, staticDir: STATIC_DIR });
+  ok("不传 bind → 缺省 0.0.0.0（向后兼容）", !!bDefault && bDefault.host === "0.0.0.0", JSON.stringify(bDefault));
+  const bJunk = await admin.start({ port: PROXY_PORT_E, bind: "1.2.3.4", commandTable, staticDir: STATIC_DIR });
+  ok("bind 为意外值 → 兜底 0.0.0.0", !!bJunk && bJunk.host === "0.0.0.0", JSON.stringify(bJunk));
+  await admin.stop();
+  ok("bind 用例结束后端口关闭", !(await reachable(bJunk.port)));
 
   // ===== 并发 start 不泄漏端口（模块内串行化，评审 Important 2） =====
   const [concA, concB] = await Promise.all([admin.start({ port: PROXY_PORT_A, commandTable, staticDir: STATIC_DIR }), admin.start({ port: PROXY_PORT_C, commandTable, staticDir: STATIC_DIR })]);

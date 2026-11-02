@@ -10,7 +10,7 @@
 -->
 <!-- 左栏双卡片：上 = 品牌 + 模块入口；下 = 当前模块的总览概况
      概况数据全部来自真实统计：proxy 走号池/Keys/网关状态
-     版本 / 署名 / GitHub / 亮暗 / 设置入口统一收在最左下角 -->
+     版本 / 署名 / GitHub 收在最左下角；亮暗与设置入口在页签条右侧 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useAppStore } from "../stores/app";
@@ -18,7 +18,7 @@ import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
 import type { ModuleKey } from "../types";
 import * as api from "../api/ipc";
-import { denyState, settingsUnavailable } from "../api/caps";
+import { denyState, isWebTransport } from "../api/caps";
 import { coalesceAsync } from "../utils/timing";
 import { toast } from "../utils/toast";
 import ProxyUpstreamDialog from "./ProxyUpstreamDialog.vue";
@@ -31,10 +31,9 @@ const version = `v${pkg.version}`;
 const gwBusy = ref(false);
 /** 网关启停门控：浏览器形态被服务端 deny 时置灰并展示下发原因，桌面（无 caps）不置灰 */
 const gwGate = denyState("proxy_start", "proxy_stop");
-/** 设置弹窗入口（左下角齿轮）在 Web 托管形态整体隐藏（I3）：通用 / 刷新周期都依赖整份配置读写，
- *  浏览器形态拿不到真值（load_config 被 deny，容器命令表只有 proxy_*），显示出来的只是前端默认值。
- *  不逐控件置灰——一整块「不可用」的表单只会误导；反代配置仍走「配置」页的 proxy_config_get/save */
-const settingsHidden = settingsUnavailable();
+/** Web 托管形态：load_config 被 deny，下面 onMounted 用 proxy_config_get 取一次真实端口；
+ *  主题切换按钮的显隐由 PageTabs 判断，侧栏不再放设置入口 */
+const webForm = isWebTransport();
 
 /** 网关服务开关（覆盖在反代网关卡右上角）：启停 + 状态经 proxy status 事件回流 */
 async function toggleGw() {
@@ -70,7 +69,7 @@ onMounted(async () => {
   refreshStatsForEnabled();
   // Web 托管形态 load_config 被 deny，app.config.proxy.port 只是前端默认值，端口卡片会显示错值——
   // 用浏览器可用的 proxy_config_get 取一次真实端口写回去（失败静默，保留默认显示）
-  if (settingsHidden) {
+  if (webForm) {
     api
       .proxyConfigGet()
       .then((cfg) => {
@@ -218,7 +217,7 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
       </nav>
     </div>
 
-    <!-- 下卡片：当前模块的总览概况 + 左下角全局操作 -->
+    <!-- 下卡片：当前模块的总览概况 -->
     <div class="side-overview glass">
       <div class="ov-head">
         <span class="ov-title">{{ OVERVIEW[app.activeModule].title }}</span>
@@ -243,25 +242,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
         <div v-if="!visibleChannels.length" class="ov-row">
           <div class="grow"><div class="ov-meta">{{ channels.length ? "无可用余额渠道（已过期或额度耗尽）" : "号池尚未接入或加载中" }}</div></div>
         </div>
-      </div>
-
-      <!-- 左下角全局操作：亮暗 / 设置（侧栏收缩入口统一在页签条最左） -->
-      <div class="side-foot">
-        <!-- 主题切换：浏览器形态拿不到整份配置读写（save_config 被 deny），主题改了也记不住——
-             切换入口隐藏为禁用态，tooltip 指到桌面窗口改（桌面不受影响） -->
-        <el-tooltip :content="settingsHidden ? '请在桌面窗口修改主题' : '切换亮暗主题'" placement="top">
-          <!-- disabled 按钮不派发鼠标事件，tooltip 要弹原因得垫一层 span（同 ConfigLanSection 的做法） -->
-          <span>
-            <button class="btn btn-ghost" :disabled="settingsHidden" @click="!settingsHidden && app.toggleTheme()">
-              <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
-            </button>
-          </span>
-        </el-tooltip>
-        <el-tooltip v-if="!settingsHidden" content="设置" placement="top">
-          <button class="btn btn-ghost settings-btn" @click="app.openSettings('general')">
-            <i class="ph ph-gear-six"></i>
-          </button>
-        </el-tooltip>
       </div>
     </div>
 
@@ -322,15 +302,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   color: var(--text-3);
   margin-top: 8px;
 }
-/* 左下角的图标按钮用项目统一按钮（.btn.btn-ghost），这里只管图标字号与呼吸间距 */
-.side-foot .ph {
-  font-size: 15px;
-}
-/* 设置齿轮：承载「有更新」红点的定位上下文（红点样式见 global.css 的 .dot-ping） */
-.side-foot .settings-btn {
-  position: relative;
-}
-
 /* 模块卡片（顺序自定义入口在「设置 · 通用」，支持拖拽排序） */
 .modules {
   display: flex;
@@ -487,22 +458,6 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
   color: var(--accent-strong);
   border-color: var(--accent-strong);
   background: var(--accent-dim);
-}
-/* 左下角全局操作条（概况卡底部，常驻可见） */
-.side-foot {
-  margin-top: 8px;
-  border-top: 1px solid var(--line);
-  padding: 10px 4px 2px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end; /* 全部操作按钮居右 */
-  gap: 6px;
-  flex-shrink: 0;
-}
-.foot-ver {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-2);
 }
 .foot-author {
   font-size: 10px;

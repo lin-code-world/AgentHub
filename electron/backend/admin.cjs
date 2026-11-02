@@ -318,12 +318,13 @@ function serialize(fn) {
   return run;
 }
 
-/** 启动管理服务：port 是反代端口（监听 port + 1，0.0.0.0）；已在运行则先停旧再启新（端口联动语义） */
-function start({ port, commandTable, staticDir } = {}) {
-  return serialize(() => doStart({ port, commandTable, staticDir }));
+/** 启动管理服务：port 是反代端口（监听 port + 1）；bind 是监听地址（"127.0.0.1" 仅本机 / "0.0.0.0" 局域网开放，缺省 0.0.0.0）；
+ *  已在运行则先停旧再启新（端口 / 绑定联动语义） */
+function start({ port, commandTable, staticDir, bind } = {}) {
+  return serialize(() => doStart({ port, commandTable, staticDir, bind }));
 }
 
-async function doStart({ port, commandTable, staticDir }) {
+async function doStart({ port, commandTable, staticDir, bind }) {
   const adminPort = adminPortOf(port); // 端口非法先拒绝，别碰已在跑的服务
   if (!commandTable || typeof commandTable.collect !== "function" || typeof commandTable.modeOf !== "function" || typeof commandTable.denyReason !== "function") {
     const e = new Error("命令表不合法：需要 { collect, modeOf, denyReason }（见 electron/backend/commandTable.cjs）");
@@ -331,9 +332,11 @@ async function doStart({ port, commandTable, staticDir }) {
     throw e;
   }
   if (server) await doStop(); // 链内重入必须走 doStop：调 stop() 会排到链尾等自己（死锁）
+  // 绑定地址与反代保持一致：只有显式 "127.0.0.1" 算仅本机，其余一律按局域网开放处理（防手工改配置写入意外主机名）
+  const host = bind === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
   const app = buildApp({ commandTable, staticDir });
   await new Promise((resolve, reject) => {
-    const srv = app.listen(adminPort, "0.0.0.0", () => {
+    const srv = app.listen(adminPort, host, () => {
       srv.removeListener("error", onError);
       server = srv;
       listenPort = adminPort;
@@ -346,7 +349,7 @@ async function doStart({ port, commandTable, staticDir }) {
     };
     srv.once("error", onError);
   });
-  return { port: adminPort };
+  return { port: adminPort, host };
 }
 
 /** 停止管理服务：未启动时幂等 */

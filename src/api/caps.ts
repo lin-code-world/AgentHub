@@ -33,13 +33,6 @@ export function isWebTransport(): boolean {
   return caps !== null;
 }
 
-/** 全局设置弹窗在 Web 托管形态不可用：通用 / 刷新周期都依赖整份配置读写
- *  （load_config / save_config 在 browser 形态被 deny，容器命令表只有 proxy_*），
- *  界面拿不到真值，展示的只会是前端默认值。入口由调用方整块隐藏，不逐控件置灰 */
-export function settingsUnavailable(): boolean {
-  return caps !== null;
-}
-
 /** 探测网关托管形态：3 秒超时；无后端或接口不可用时返回 null（调用方据此不挂载主界面） */
 export async function probeCaps(): Promise<Caps | null> {
   try {

@@ -456,7 +456,7 @@ body {
   font-size: 11.5px;
 }
 
-/* ===== 主行动按钮（CTA）：顶栏「立即同步」与各配置页「保存配置」等主操作统一用它 =====
+/* ===== 主行动按钮（CTA）：顶栏「立即同步」与设置弹窗的保存等主操作统一用它 =====
    与 .btn 组合（继承高度 / 圆角 / 涟漪 / 禁用态），只覆盖配色与过渡：
    背景做 200% 宽的三段渐变，靠 background-position 位移让亮斑匀速横扫，悬停过渡不生硬也不跳色 */
 .btn-cta {
@@ -966,33 +966,7 @@ body {
   }
 }
 
-/* ===== 设置：配置页 / 设置弹窗共用的 section 版式（各 Config*Section 与 SkillsWebdavView 外的配置页） ===== */
-/* section 的标题行：标题 + 说明 + 右侧动作（保存 / 状态标签） */
-.cfg-sec-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 2px 2px 14px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 18px;
-}
-.cfg-sec-title {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-}
-.cfg-sec-sub {
-  font-size: 11.5px;
-  color: var(--text-3);
-  margin-top: 3px;
-}
-.cfg-sec-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-shrink: 0;
-}
+/* ===== 设置弹窗的 section 版式（各 Config*Section 共用） ===== */
 /* section 内纵向节奏：相邻块固定 12px（与 .page-body 一致） */
 .cfg-sec > * + * {
   margin-top: 12px;
@@ -1017,54 +991,6 @@ body {
   position: relative;
   display: inline-flex;
 }
-/* 配置页主体：与 .page-body 同宽同节奏（App.vue 里与 .page 组合成页壳） */
-.cfg-body {
-  padding: 18px var(--pad-page-x) 26px;
-}
-/* 模块配置页内的二级子板块 tab：页面顶部切换，不占横条菜单的位置（视觉与横条 .tab 一致，多一道描边） */
-.cfg-subtabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.cfg-subtab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: var(--ctl-h);
-  padding: 0 14px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 550;
-  line-height: 1;
-  font-family: var(--font-ui);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
-}
-.cfg-subtab .ph {
-  font-size: 14px;
-}
-.cfg-subtab:hover {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
-}
-:root[data-theme="light"] .cfg-subtab:hover {
-  background: rgba(15, 23, 42, 0.045);
-}
-.cfg-subtab.active {
-  color: var(--accent-strong);
-  background: var(--accent-dim);
-  border-color: var(--accent-line);
-}
-.cfg-subtab:focus-visible {
-  outline: 2px solid var(--accent-line);
-  outline-offset: 2px;
-}
-
 /* ===== 模块内弹窗（反代网关的添加账号 / 生成 Key / 移出确认等）：遮罩 + 液态玻璃对话框 =====
    全站共用这一套，各视图不再各写一份（写两份必然会走形） */
 .p-mask {

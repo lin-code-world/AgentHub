@@ -22,6 +22,8 @@ const ALLOWED_COMMANDS = new Set([
   "open_data_dir",
   "get_is_portable",
   "browse_dir",
+  "export_crash_logs",
+  "export_crash_logs_data",
   // ===== 局域网管理访问（令牌明文只回给本机界面） =====
   "admin_access_info",
   "admin_reset_token",
@@ -30,6 +32,7 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_start",
   "proxy_stop",
   "proxy_restart",
+  "proxy_set_listen",
   "proxy_config_get",
   "proxy_config_save",
   "proxy_keys_list",
@@ -99,9 +102,6 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_oplog_ops",
   "proxy_oplog_export",
   "proxy_oplog_cleanup",
-  "proxy_rules_list",
-  "proxy_open_rules_dir",
-  "proxy_open_data_dir",
   "proxy_vault_status",
 ]);
 

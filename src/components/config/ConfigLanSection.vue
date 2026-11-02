@@ -8,22 +8,27 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 局域网访问：管理地址（反代端口 + 1，只展示局域网地址）与访问令牌
-     （不展示令牌内容，仅提供复制；复制即重置——每次点击都生成新令牌、旧令牌立即失效，
-     浏览器里的管理会话随之作废，需要重新登录）。令牌只有一处来源：config.admin.token。 -->
+<!-- 设置 · 局域网访问：反代端口 / 绑定地址（保存并重启生效）+ 局域网地址（实时跟随端口与绑定）
+     + 访问令牌（不展示令牌内容，仅提供复制；复制即重置——每次点击都生成新令牌、旧令牌立即失效，
+       浏览器里的管理会话随之作废，需要重新登录）。令牌只有一处来源：config.admin.token。 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
-import { denyState, isWebTransport } from "../../api/caps";
 import type { AdminAccessInfo } from "../../api/ipc";
 
 const app = useAppStore();
-/** 浏览器形态（I3）：本页只作只读展示——令牌查看 / 重置在服务端被 deny，
- *  顶部提示直接写明「请在桌面端操作」，不让用户对着置灰按钮猜原因 */
-const webForm = isWebTransport();
-/** 令牌复制（= 重置令牌）的命令门控：浏览器形态服务端 deny 时置灰 + 展示下发原因，桌面（无 caps）不置灰 */
-const tokenGate = denyState("admin_access_info", "admin_reset_token");
+
+/** 端口/绑定的本地草稿：本板块是「改完点保存并重启才生效」的语义，输入只改草稿、
+ *  不直接写全局配置——否则切到别的板块时，那里的「改动即存」会把这里未保存的
+ *  端口/绑定一起落盘（落盘了却没重启，配置与实际监听不一致）。
+ *  每次切回本板块用全局值重置草稿，等价于「切走不保存即丢弃」。 */
+const draftPort = ref<number | string>(app.config.proxy.port);
+const draftBind = ref<string>(app.config.proxy.bind);
+function syncDraft() {
+  draftPort.value = app.config.proxy.port;
+  draftBind.value = app.config.proxy.bind;
+}
 
 const info = ref<AdminAccessInfo | null>(null);
 const resetting = ref(false);
@@ -35,7 +40,10 @@ const active = computed(() => app.settingsOpen && app.settingsTab === "lan");
 watch(
   active,
   (v) => {
-    if (v) refresh();
+    if (v) {
+      syncDraft(); // 重新进入板块：丢弃上次未保存的编辑
+      refresh();
+    }
   },
   { immediate: true }
 );
@@ -47,6 +55,24 @@ async function refresh() {
     info.value = null; /* 拿不到就整块降级为「地址不可用」 */
   }
 }
+
+/** 本机局域网 IP：从后端给的局域网地址里只抠 IP（端口实时跟随输入框，不用后端的旧值） */
+const lanIp = computed(() => {
+  const m = /^http:\/\/([^:]+):\d+$/.exec(info.value?.lanUrl || "");
+  return m ? m[1] : "";
+});
+
+/** 局域网地址实时跟随端口 / 绑定地址：端口 = 输入框的值（管理端口 = 端口 + 1）；
+ *  绑定选「仅本机」时用回环地址，选「局域网开放」时用本机局域网 IP；
+ *  端口非法或没拿到 IP 时给出对应提示，复制按钮同步置灰 */
+const lanAddress = computed(() => {
+  if (!info.value) return { text: "（地址不可用）", usable: false };
+  const port = Math.round(Number(draftPort.value));
+  if (!Number.isFinite(port) || port < 1 || port > 65534) return { text: "（端口非法，地址不可用）", usable: false };
+  const host = draftBind.value === "127.0.0.1" ? "127.0.0.1" : lanIp.value;
+  if (!host) return { text: "（未检测到局域网地址）", usable: false };
+  return { text: `http://${host}:${port + 1}`, usable: true };
+});
 
 function feedback(text: string) {
   saveState.value = text;
@@ -87,13 +113,51 @@ async function resetAndCopyToken() {
     resetting.value = false;
   }
 }
+
+/** 保存并重启监听：只提交端口与绑定地址（proxy_set_listen），别的字段一律不动；
+ *  成功后同进程 stop→listen 秒级重启（不中断应用）。局域网地址由草稿端口计算（端口 + 1），
+ *  改输入框即预览新值，重启后实际监听生效 */
+const savingLan = ref(false);
+async function saveAndRestart() {
+  if (savingLan.value) return;
+  savingLan.value = true;
+  saveState.value = "";
+  try {
+    const port = Math.round(Number(draftPort.value));
+    if (!Number.isFinite(port) || port < 1 || port > 65534) {
+      // 管理端口 = 反代端口 + 1：65535 会让管理端口越界，管理页静默消失（I2）
+      feedback("端口必须是 1-65534 的整数（管理端口 = 端口 + 1，65535 会越界）");
+      return;
+    }
+    const r = await api.proxySetListen(port, draftBind.value).catch((e: Error) => ({ ok: false, port: undefined, bind: undefined, message: String(e.message || e) }));
+    if (r && r.ok === false) {
+      feedback(`保存失败：${r.message}`);
+      return;
+    }
+    // 后端以磁盘值为底只写这两个字段；这里同步内存快照，避免其他板块随后的整份保存用旧端口覆盖
+    app.config.proxy.port = port;
+    app.config.proxy.bind = draftBind.value;
+    const rr = await api.proxyRestart().catch((e: Error) => ({ ok: false, port: undefined, message: String(e.message || e) }));
+    if (rr && rr.ok === false) {
+      feedback(`已保存，但重启监听失败：${rr.message}`);
+      return;
+    }
+    feedback(`已保存并重启监听（端口 ${rr.port ?? port}）`);
+    await refresh();
+  } finally {
+    savingLan.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="lan-sec">
     <div class="tg-head">
-      <span class="tg-hint">{{ webForm ? "管理地址来自桌面端的反代端口；令牌的复制请在桌面窗口操作。" : info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
-      <span v-if="saveState" class="tg-state">{{ saveState }}</span>
+      <span class="tg-hint">{{ info && !info.available ? info.message : "局域网内的浏览器访问管理地址并输入令牌，即可管理反代网关。" }}</span>
+      <div class="lan-ctl">
+        <span v-if="saveState" class="tg-state">{{ saveState }}</span>
+        <button class="btn btn-cta" :disabled="savingLan" @click="saveAndRestart">{{ savingLan ? "保存中…" : "保存并重启" }}</button>
+      </div>
     </div>
 
     <!-- 安全提示（I7）：页面本身没有 HTTPS，别把「内网能用」误解成「可以对外」 -->
@@ -106,12 +170,29 @@ async function resetAndCopyToken() {
     <div class="card">
       <div class="set-row">
         <div class="set-info">
+          <div class="set-name">反代端口</div>
+          <div class="set-desc">默认 9527；改端口需点「保存并重启」生效（秒级，不中断应用） · 管理端口 = 端口 + 1，所以最大只能填 65534</div>
+        </div>
+        <input v-model.number="draftPort" class="input mono" style="width: 100px" type="number" min="1" max="65534" />
+      </div>
+      <div class="set-row">
+        <div class="set-info">
+          <div class="set-name">绑定地址</div>
+          <div class="set-desc">选「仅本机」时下面地址是 127.0.0.1；选「局域网开放」会强制要求 Key 鉴权，注意风险</div>
+        </div>
+        <el-select v-model="draftBind" class="f-el-select" popper-class="glass-popper" style="width: 208px">
+          <el-option value="127.0.0.1" label="127.0.0.1（仅本机）" />
+          <el-option value="0.0.0.0" label="0.0.0.0（局域网开放）" />
+        </el-select>
+      </div>
+      <div class="set-row">
+        <div class="set-info">
           <div class="set-name">局域网地址</div>
-          <div class="set-desc">局域网内其他设备用这个地址访问管理页</div>
+          <div class="set-desc">局域网内其他设备用这个地址访问管理页；改端口或绑定地址会立即预览新值，点「保存并重启」后才真正生效</div>
         </div>
         <div class="lan-ctl">
-          <span class="mono lan-text">{{ info?.lanUrl || (info && info.available ? "（未检测到局域网地址）" : "（地址不可用）") }}</span>
-          <button class="btn btn-ghost" :disabled="!info?.lanUrl" @click="info && info.lanUrl && copyText(info.lanUrl, '局域网地址')">复制</button>
+          <span class="mono lan-text">{{ lanAddress.text }}</span>
+          <button class="btn btn-ghost" :disabled="!lanAddress.usable" @click="copyText(lanAddress.text, '局域网地址')">复制</button>
         </div>
       </div>
       <div class="set-row">
@@ -119,11 +200,9 @@ async function resetAndCopyToken() {
           <div class="set-name">访问令牌</div>
           <div class="set-desc">登录管理页用；每次点击复制都会生成新令牌，旧令牌立即失效，浏览器需重新登录</div>
         </div>
-        <el-tooltip :content="tokenGate.reason || ''" :disabled="!tokenGate.disabled" placement="top">
-          <div class="lan-ctl">
-            <button class="btn btn-ghost" :disabled="!info || tokenGate.disabled || resetting" @click="resetAndCopyToken">{{ resetting ? "生成中…" : "复制" }}</button>
-          </div>
-        </el-tooltip>
+        <div class="lan-ctl">
+          <button class="btn btn-ghost" :disabled="!info || resetting" @click="resetAndCopyToken">{{ resetting ? "生成中…" : "复制" }}</button>
+        </div>
       </div>
     </div>
   </div>

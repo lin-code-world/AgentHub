@@ -15,7 +15,7 @@ import type {
   ProxyConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow, ProxyStatsRange, ProxyStatsPoint,
-  ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
+  ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
   ProxyCheckinRow, ZcodeDeviceStatusResult, ZcodeClaimModeResult,
   ProxyProvider, ProxyProviderKind, ProxyProviderModel, ProxyProviderTestResult,
   ProxyOpLogList,
@@ -25,7 +25,7 @@ export type {
   AppConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
   ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow,
-  ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRuleFile, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
+  ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
   ProxyAccountStatus, ProxyEvent, ProxyCheckinRow,
   ProxyOpLogList, ProxyOpLogRow,
 } from "../types";
@@ -113,10 +113,17 @@ export const getDataDir = () => call<string>("get_data_dir");
 export const openDataDir = () => call<void>("open_data_dir");
 // 等用户操作原生目录选择框，时长不可控，关掉看门狗
 export const browseDir = () => call<{ ok: boolean; canceled?: boolean; path: string | null }>("browse_dir", {}, 0);
+/** 导出全部崩溃日志（当前段 + 历史分段）为 zip，弹「另存为」：桌面专用（浏览器 deny） */
+/** 桌面形态：弹「另存为」等用户操作，超时设 0（同 browseDir，用户思考多久都不该被判超时） */
+export const exportCrashLogs = () => call<{ ok: boolean; canceled?: boolean; path?: string; count?: number; bytes?: number; message?: string }>("export_crash_logs", {}, 0);
+/** 浏览器形态：回传压缩包数据（base64），由前端触发下载；桌面走 exportCrashLogs 弹「另存为」。
+ *  压缩包上限 10MB、base64 与加密后体积更大，超时放宽到 120s */
+export const exportCrashLogsData = () => call<{ ok: boolean; name?: string; base64?: string; count?: number; bytes?: number; message?: string }>("export_crash_logs_data", {}, 120_000);
 export const getIsPortable = () => call<boolean>("get_is_portable");
 
 /** 局域网管理访问信息（令牌明文只交本机设置页展示 / 复制）：
- *  url 优先局域网地址、取不到回退回环；loopbackUrl / lanUrl 是两个原始地址；
+ *  url 优先局域网地址、取不到回退回环；loopbackUrl / lanUrl 是两个原始地址，
+ *  设置页用 lanUrl 自行拼展示地址（跟随输入框端口），另两个供调用方与自测使用；
  *  端口非法（0 / 65535 之类）时 available=false、地址为空 */
 export type AdminAccessInfo = { available: boolean; message: string; url: string; loopbackUrl: string; lanUrl: string; token: string };
 export const adminAccessInfo = () => call<AdminAccessInfo>("admin_access_info");
@@ -143,9 +150,12 @@ export const proxyStatus = () => call<ProxyGatewayStatus>("proxy_status");
 export const proxyStart = () => call<{ ok: boolean; port?: number; already?: boolean; message?: string }>("proxy_start");
 export const proxyStop = () => call<{ ok: boolean }>("proxy_stop");
 export const proxyRestart = () => call<{ ok: boolean; port?: number; message?: string }>("proxy_restart");
+/** 只改监听端口与绑定地址（「设置 · 局域网访问」的「保存并重启」专用）：
+ *  只提交这两个字段，其他配置一律不动（不会把别处的中间值带走）；浏览器形态被 deny */
+export const proxySetListen = (port: number, bind: string) => call<{ ok: boolean; port?: number; bind?: string; message?: string }>("proxy_set_listen", { port, bind });
 
 /** 反代配置段读写（浏览器托管形态专用）：load_config / save_config 在 browser 形态被 deny，
- *  配置页改走这一对只操作 config.proxy 的命令；桌面仍走整份 load_config / save_config。
+ *  「设置 · 反代网关 / 监控与安全」板块改走这一对只操作 config.proxy 的命令；桌面仍走整份 load_config / save_config。
  *  save 只写反代段：out-of-band 字段（上游启闭 / 签到规则 / 协议面止血开关）以磁盘为准，port / bind 被忽略 */
 export const proxyConfigGet = () => call<ProxyConfig>("proxy_config_get");
 export const proxyConfigSave = (cfg: ProxyConfig) => call<{ ok: boolean; message?: string }>("proxy_config_save", { config: JSON.parse(JSON.stringify(cfg)) });
@@ -395,8 +405,4 @@ export const proxyOpLogExport = (filter: Omit<ProxyOpLogFilter, "limit" | "offse
 /** 清理操作日志：all=true 清空整表；否则按保留期（缺省 30 天，与启动 GC 同口径）删旧 */
 export const proxyOpLogCleanup = (days?: number, all?: boolean) =>
   call<{ deleted: number; cutoff: number }>("proxy_oplog_cleanup", { days, all });
-export const proxyRulesList = () => call<ProxyRuleFile[]>("proxy_rules_list");
-
-export const proxyOpenRulesDir = () => call<{ ok: boolean }>("proxy_open_rules_dir");
-export const proxyOpenDataDir = () => call<{ ok: boolean }>("proxy_open_data_dir");
 export const proxyVaultStatus = () => call<{ encrypted: boolean; driver: string; dataDir: string }>("proxy_vault_status");

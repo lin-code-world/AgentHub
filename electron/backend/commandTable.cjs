@@ -25,7 +25,7 @@ const proxyIndex = require("./proxy/index.cjs");
 
 /** 只读命令（无副作用）：监视面板与只读令牌都依赖这份判定。
  *  proxy_config_get 入列（Ruling 24）：只是界面分类口径，本任务不改任何鉴权判定 */
-const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_rules_list", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_series", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
+const READ = new Set(["proxy_status", "proxy_config_get", "proxy_keys_list", "proxy_pool", "proxy_channel_list", "proxy_models", "proxy_oplog_list", "proxy_oplog_ops", "proxy_recent", "proxy_stats_overview", "proxy_stats_detail", "proxy_stats_series", "proxy_stats_top", "proxy_vault_status", "proxy_provider_list", "proxy_checkin_status", "proxy_scan", "proxy_autoclaw_captcha_config", "get_is_portable"]);
 
 /** 网页端不可用命令：值面向用户（原因 + 替代路径），前端提示与服务端 403 共用同一份文案。
  *  含浏览器不可用命令与桌面专用命令：令牌查看 / 重置、目录选择与打开、整份配置读写都只在桌面窗口可用
@@ -35,8 +35,7 @@ const DENY_BROWSER = {
   proxy_start: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
   proxy_stop: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
   proxy_restart: "浏览器访问时不可用：网关启停请在桌面窗口或托盘操作",
-  proxy_open_data_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
-  proxy_open_rules_dir: "浏览器访问时不可用：打开本机目录请在桌面窗口操作",
+  proxy_set_listen: "浏览器访问时不可用：监听端口与绑定地址请在桌面窗口修改",
   // Ruling 22/29：browser 文案不得自指「选择文件」（那正是被本命令禁用的按钮）；任务 10 已加浏览器
   // 上传入口（input[type=file] → proxy_account_import_text），文案随之改指「选择 JSON 文件上传，或粘贴 JSON」，
   // 不提 ZIP——浏览器端只支持单个 JSON，不提前承诺
@@ -64,8 +63,9 @@ const DENY_BROWSER = {
   open_data_dir: "浏览器访问时不可用：请在桌面窗口打开目录",
   get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",
   get_app_version: "浏览器访问时不可用：版本信息请在桌面窗口查看",
-  load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
-  save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用反代配置页",
+  export_crash_logs: "浏览器访问时不可用：导出崩溃日志请在桌面窗口操作",
+  load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
+  save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
 };
 
 /** 网页端命令模式：deny 优先（proxy_scan 虽属只读分类，网页端仍不可用），其余按只读 / 写入分。

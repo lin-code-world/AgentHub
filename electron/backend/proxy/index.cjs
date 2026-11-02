@@ -830,10 +830,25 @@ function register(ipcMain) {
     events.emit({ type: "status" });
     return r.ok ? ok({ port: r.port }) : fail(r.message);
   }));
+  // 只改监听端口与绑定地址（「设置 · 局域网访问」的「保存并重启」专用）：
+  // 以磁盘配置为底**只覆盖这两个字段**，别的字段一律不动——避免把其他板块的中间值一起带走。
+  // 浏览器形态 deny（与 proxy_restart 同口径）：改监听地址属桌面专用能力
+  ipcMain.handle("proxy_set_listen", handle(({ port, bind }) => {
+    const check = config.validateProxyPort(port);
+    if (!check.ok) return fail(check.message);
+    // 绑定地址与反代口径一致：只有显式 "127.0.0.1" 算仅本机，其余按局域网开放
+    const nextBind = bind === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+    const cfg = config.loadConfig();
+    cfg.proxy = { ...(cfg.proxy || {}), port: Math.round(Number(port)), bind: nextBind };
+    config.saveConfig(cfg);
+    // 与 proxy_config_save 同口径广播：桌面渲染层的整份保存会因旧快照把这刚写下的值滚回去
+    events.emit({ event: "config-changed" });
+    return ok({ port: cfg.proxy.port, bind: nextBind });
+  }));
 
-  // ===== 反代配置段读写（浏览器配置页专用）=====
+  // ===== 反代配置段读写（浏览器设置弹窗专用）=====
   // 浏览器形态下整份配置读写被 DENY_BROWSER 禁掉（load_config / save_config 会吐 / 改整份配置），
-  // 反代配置页改走这一对只操作 config.proxy 的命令。{ config } 就是**反代配置段本身**
+  // 「设置 · 反代网关 / 监控与安全」板块改走这一对只操作 config.proxy 的命令。{ config } 就是**反代配置段本身**
   // （Ruling 25，与前端提交、命令名一致），不是整份配置：
   //  · 以磁盘段为底逐键覆盖：只提交部分字段时，没提交的字段保持磁盘值，不会被重置成默认值（Critical 1）；
   //  · out-of-band 字段（上游启闭 / 按渠道签到 / 协议面止血开关）以磁盘为准——页面持有的是旧快照，
@@ -1539,16 +1554,7 @@ function register(ipcMain) {
     store.cleanupOpLogs(Math.round(Number(days)) || 30, !!all)));
   ipcMain.handle("proxy_recent", handle(({ limit }) => store.recentRequests(limit)));
 
-  // ===== 规则文件 / 目录 / 安全 =====
-  ipcMain.handle("proxy_rules_list", handle(() => rules.list()));
-  ipcMain.handle("proxy_open_rules_dir", handle(async () => {
-    await platform.openPath(rules.rulesDir());
-    return ok({});
-  }));
-  ipcMain.handle("proxy_open_data_dir", handle(async () => {
-    await platform.openPath(store.proxyDir());
-    return ok({});
-  }));
+  // ===== 保险库状态 =====
   ipcMain.handle("proxy_vault_status", handle(() => ({
     encrypted: vaultOk(),
     driver: store.driver(),

@@ -27,7 +27,7 @@ if (!process.argv.some((a) => a.startsWith("--user-data-dir"))) {
 // 只能靠重启时间戳反推。这里把 JS 异常 / 子进程死亡 / 退出原因全部落到 userData/logs/crash.log，
 // 并启用本地 crashpad（只落盘不上传）——原生崩溃会留下 minidump，debug.log 的 "not connected" 噪音随之消失。
 const { crashReporter } = require("electron");
-// 行写入与截断逻辑抽到 backend/crashlog.cjs：backend 模块（如会话流水 worker 的父进程侧）
+// 行写入与分段轮转逻辑抽到 backend/crashlog.cjs：backend 模块（如会话流水 worker 的父进程侧）
 // 也要写同一份取证日志——child-process-gone 不覆盖 node 子进程，那边必须自行落痕
 const __crashlog = require("./backend/crashlog.cjs");
 let __crashCount = 0;
@@ -360,11 +360,12 @@ function createTray() {
   tray.on("double-click", showWindow);
 }
 
-// ===== 局域网管理服务（端口 = 反代端口 + 1） =====
+// ===== 局域网管理服务（端口 = 反代端口 + 1，绑定地址与反代一致） =====
 // 管理页是辅助入口：启动失败只提示留痕，绝不影响反代网关本身。
-// 端口联动：反代启停/换端口都会广播 status 事件，这里按配置端口先停旧服务再启新服务，
-// 新端口起失败（被占用等）就用旧端口把服务拉回来（回滚），提示里带明确原因。
+// 端口 / 绑定联动：反代启停/换端口/换绑定都会广播 status 事件，这里按配置的先停旧服务再启新服务，
+// 新服务起失败（被占用等）就用旧配置把服务拉回来（回滚），提示里带明确原因。
 let adminProxyPort = 0; // 当前管理服务对应的反代端口（0 = 未启动）
+let adminProxyBind = ""; // 当前管理服务的监听地址（"127.0.0.1" / "0.0.0.0"）
 let adminSyncChain = Promise.resolve();
 function adminStaticDir() {
   // 开发态项目 dist、打包态 app.getAppPath()/dist（vite outDir=dist，打包后在 asar 内）
@@ -382,7 +383,7 @@ let adminInvalidPortNotified = "";
 function notifyInvalidProxyPort(portText) {
   if (adminInvalidPortNotified === String(portText)) return; // 同一非法值只提示一次，status 事件很频繁
   adminInvalidPortNotified = String(portText);
-  const message = `反代端口配置非法（${portText}）：管理端口 = 反代端口 + 1，反代端口需为 1~65534 的整数。请在「配置 · 反代网关」里改回合法端口并保存。`;
+  const message = `反代端口配置非法（${portText}）：管理端口 = 反代端口 + 1，反代端口需为 1~65534 的整数。请在「设置 · 局域网访问」里改回合法端口并保存。`;
   try {
     if (tray && !tray.isDestroyed()) {
       tray.displayBalloon({ title: "AgentApiGateway 局域网管理页已停用", content: message });
@@ -412,26 +413,32 @@ async function syncAdminService(trigger) {
     if (adminProxyPort) {
       await admin.stop().catch(() => {});
       adminProxyPort = 0;
+      adminProxyBind = "";
       __crashLog("admin-stopped-invalid-port", `trigger=${trigger} proxyPort=${proxyPort}`);
     }
     notifyInvalidProxyPort(proxyPort);
     return;
   }
+  // 绑定地址与反代一致：只有显式 "127.0.0.1" 算仅本机，其余按局域网开放（与 admin.cjs 同口径）
+  const proxyBind = cfg.proxy && cfg.proxy.bind === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
   adminInvalidPortNotified = ""; // 端口恢复合法：下次再非法要重新提示
-  if (proxyPort === adminProxyPort) return; // 端口没变：不折腾已在跑的服务
+  if (proxyPort === adminProxyPort && proxyBind === adminProxyBind) return; // 端口 / 绑定都没变：不折腾已在跑的服务
   const oldPort = adminProxyPort;
+  const oldBind = adminProxyBind;
   try {
     await admin.stop();
-    await admin.start({ port: proxyPort, commandTable, staticDir: adminStaticDir() });
+    await admin.start({ port: proxyPort, bind: proxyBind, commandTable, staticDir: adminStaticDir() });
     adminProxyPort = proxyPort;
-    __crashLog("admin-started", `trigger=${trigger} adminPort=${proxyPort + 1}`);
+    adminProxyBind = proxyBind;
+    __crashLog("admin-started", `trigger=${trigger} adminPort=${proxyPort + 1} bind=${proxyBind}`);
   } catch (e) {
     __crashLog("admin-start-failed", `trigger=${trigger} ${__describe(e)}`);
     if (oldPort) {
-      // 回滚：旧端口还能用就把服务拉回来，别让端口联动失败把管理页整个弄没了
+      // 回滚：旧配置还能用就把服务拉回来，别让端口 / 绑定联动失败把管理页整个弄没了
       try {
-        await admin.start({ port: oldPort, commandTable, staticDir: adminStaticDir() });
+        await admin.start({ port: oldPort, bind: oldBind, commandTable, staticDir: adminStaticDir() });
         adminProxyPort = oldPort;
+        adminProxyBind = oldBind;
       } catch (e2) {
         __crashLog("admin-rollback-failed", __describe(e2));
       }

@@ -1692,7 +1692,7 @@ onUnmounted(() => {
           <button class="btn btn-sm" @click="refresh">重试</button>
         </template>
         <template v-else>
-          <div class="pool-empty-text">暂无渠道数据 —— 请在「配置 · 反代网关」检查渠道启用状态，然后点「刷新」</div>
+          <div class="pool-empty-text">暂无渠道数据 —— 请在「设置 · 反代网关」检查渠道启用状态，然后点「刷新」</div>
           <button class="btn btn-sm" @click="refresh">刷新</button>
         </template>
       </div>

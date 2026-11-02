@@ -47,7 +47,6 @@ const defaultConfig: AppConfig = {
     creditsRefreshMin: 30,
     usageRetentionDays: 90,
     expiringSoonDays: 1,
-    debugStatus: false,
     modelOverrides: {},
     humanizeJitter: true,
     disabledModels: [],
@@ -101,7 +100,7 @@ export const useAppStore = defineStore("app", {
     loaded: false,
     activeModule: MODULES[0].key as ModuleKey,
     activePage: MODULES[0].pages[0].id,
-    // ===== 全局设置弹窗（左下角设置按钮）：通用 / 刷新周期 / 局域网访问 =====
+    // ===== 全局设置弹窗（右上角设置按钮）：通用 / 监控与安全 / 局域网访问 / 反代网关 =====
     settingsOpen: false,
     settingsTab: "general" as SettingsTab,
     /** 左栏容器收缩态：收起后主区占满，入口留在页签条最左（状态本机记住） */
@@ -112,8 +111,6 @@ export const useAppStore = defineStore("app", {
         return false;
       }
     })(),
-    /** 模块配置页（各模块右上「配置」按钮切换，id=config）：进入前所在的子页面，完成时回去 */
-    pageBeforeConfig: "",
     /** 号池页 → 日志页的跨页传参：待生效的渠道筛选（日志页切回时消费并清空） */
     pendingLogChannel: "",
   }),
@@ -203,7 +200,7 @@ export const useAppStore = defineStore("app", {
       }
       this.applyTheme(this.config.theme);
     },
-    /** 打开全局设置弹窗：tab 缺省保持当前模块；左下角齿轮给 general，跨模块入口给 timing 等 */
+    /** 打开全局设置弹窗：tab 缺省保持上次板块；右上角「设置」按钮调用 */
     openSettings(tab?: SettingsTab) {
       if (tab) this.settingsTab = tab;
       this.settingsOpen = true;
@@ -211,24 +208,9 @@ export const useAppStore = defineStore("app", {
     closeSettings() {
       this.settingsOpen = false;
     },
-    /** 右上「配置」按钮：切到当前模块的配置页（与左侧 tab 同一套页面切换逻辑，记住来时页） */
-    openModuleConfig() {
-      if (this.activePage === "config") return;
-      this.pageBeforeConfig = this.activePage;
-      this.settingsOpen = false;
-      this.activePage = "config";
-    },
-    /** 配置页点「完成」：回到进配置前的子页面（来路失效则回模块第一页） */
-    closeModuleConfig() {
-      const pages = this.moduleOf(this.activeModule).pages;
-      const back = this.pageBeforeConfig && pages.some((p) => p.id === this.pageBeforeConfig) ? this.pageBeforeConfig : pages[0].id;
-      this.pageBeforeConfig = "";
-      this.activePage = back;
-    },
-    /** 切换大模块：默认进入其第一个子页面；点模块卡 = 离开设置弹窗与配置页 */
+    /** 切换大模块：默认进入其第一个子页面；点模块卡 = 离开设置弹窗 */
     selectModule(key: ModuleKey) {
       this.settingsOpen = false;
-      this.pageBeforeConfig = "";
       if (this.activeModule === key) return;
       this.activeModule = key;
       this.activePage = this.moduleOf(key).pages[0].id;

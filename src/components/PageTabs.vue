@@ -9,15 +9,18 @@
   ============================================================
 -->
 <!-- 主区顶部横条卡片：当前模块的子页面切换（条超宽时可横向滚动）。
-     右侧「配置」按钮与左侧 tab 是同一套页面切换逻辑：切到当前模块的配置页（id=config），
-     配置页内子板块的二级 tab 由配置页自己渲染，不占这里的位置。
+     右侧「设置」按钮打开全局设置弹窗（原「配置」页与右下角「设置」已合并进弹窗）。
      页签右上角红点 = 该页有「待你处理」的东西（待裁决冲突 / 待确认裁决 / 索引不一致），
      没有待处理项时红点自动消失，不占位置提示不需要的文字 -->
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from "vue";
 import { useAppStore } from "../stores/app";
+import { isWebTransport } from "../api/caps";
 
 const app = useAppStore();
+/** Web 托管形态拿不到整份配置读写（save_config 被 deny），主题切换按钮直接不渲染（桌面端仍显示）；
+ *  主题切换从原侧栏左下角迁移到这里；「设置」按钮两种形态都显示，弹窗里再按形态裁剪板块 */
+const themeHidden = isWebTransport();
 const scrollEl = ref<HTMLElement | null>(null);
 
 /** 页签待处理红点：当前无动态数据源（原记忆中枢红点已随模块移除），保留结构备用 */
@@ -75,12 +78,18 @@ onMounted(updateFades);
         </el-tooltip>
       </button>
     </div>
-    <!-- 右侧常驻入口：普通态进配置页，配置态「完成」回到来时页面；不随 tab 条横向滚动 -->
-    <button v-if="app.activePage === 'config'" class="tab tab-config active" @click="app.closeModuleConfig()">
-      <i class="ph ph-check"></i>完成
-    </button>
-    <button v-else class="tab tab-config" @click="app.openModuleConfig()">
-      <i class="ph ph-gear-six"></i>配置
+    <!-- 右侧常驻入口：主题切换 + 设置弹窗入口；不随 tab 条横向滚动。
+         主题切换仅桌面端可见（Web 托管形态拿不到整份配置读写，改了也记不住，直接隐藏）；
+         设置弹窗整合了原侧栏「设置」与右上角「配置」两块内容，Web 端只保留「监控与安全 / 反代网关」 -->
+    <el-tooltip v-if="!themeHidden" content="切换亮暗主题" placement="bottom">
+      <span>
+        <button class="tab tab-config tab-theme" @click="app.toggleTheme()">
+          <i class="ph" :class="app.isDark ? 'ph-moon' : 'ph-sun'"></i>
+        </button>
+      </span>
+    </el-tooltip>
+    <button class="tab tab-config" @click="app.openSettings()">
+      <i class="ph ph-gear-six"></i>设置
     </button>
   </nav>
 </template>
@@ -201,5 +210,10 @@ onMounted(updateFades);
   border-left: 1px solid var(--line);
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
   padding-left: 12px;
+}
+/* 主题切换：纯图标按钮，与「设置」同款但窄些、紧贴设置按钮（两钮间由设置按钮的左边线分隔） */
+.tab-theme {
+  margin-right: 0;
+  padding: 0 11px;
 }
 </style>

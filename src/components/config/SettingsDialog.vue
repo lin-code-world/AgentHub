@@ -8,9 +8,9 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 全局设置弹窗：左下角设置按钮打开。通用 / 刷新周期 / 局域网访问三块，
+<!-- 全局设置弹窗：右上角设置按钮打开。通用 / 监控与安全 / 局域网访问 / 反代网关四块，
      左列模块按钮点击切换，右侧内容定高滚动（弹窗大小固定，不随内容长高）；
-     各模块自己的配置不在弹窗里，在对应板块右上「配置」按钮切换的配置页中 -->
+     反代网关的配置就在「反代网关」板块内，其余配置各自成板块 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
@@ -19,12 +19,13 @@ import { isWebTransport } from "../../api/caps";
 import ConfigGeneralSection from "./ConfigGeneralSection.vue";
 import ConfigTimingSection from "./ConfigTimingSection.vue";
 import ConfigLanSection from "./ConfigLanSection.vue";
+import ConfigProxySection from "./ConfigProxySection.vue";
 
 const app = useAppStore();
 
-/** Web 托管形态（I3）：通用 / 刷新周期依赖整份配置读写，浏览器形态拿不到真值，整块不展示；
- *  只留「局域网访问」（只读展示管理地址，令牌复制仍被服务端 deny 并给出原因） */
-const tabs = computed(() => (isWebTransport() ? SETTINGS_TABS.filter((t) => t.key === "lan") : SETTINGS_TABS));
+/** Web 托管形态：通用 / 局域网访问不可用（通用依赖整份配置读写，局域网访问的令牌操作被服务端 deny），
+ *  只留「监控与安全 + 反代网关」——两者都在反代段，走 proxy_config_get / proxy_config_save 读写 */
+const tabs = computed(() => (isWebTransport() ? SETTINGS_TABS.filter((t) => t.key === "timing" || t.key === "proxy") : SETTINGS_TABS));
 
 /** 模块懒挂载：首次切到才挂载（配置拉取 / 状态探测不白跑），之后 v-show 保活 */
 const visited = ref<Record<string, boolean>>({});
@@ -35,25 +36,31 @@ watch(
   },
   { immediate: true }
 );
+
+// 弹窗打开时确保 settingsTab 在可用 tabs 里：Web 托管形态只有「监控与安全 / 反代网关」，
+// 若上次停在 general / lan（浏览器端不可用），落到第一个可用项，避免内容区显示不可用板块
+watch(
+  () => app.settingsOpen,
+  (open) => {
+    if (open && !tabs.value.some((t) => t.key === app.settingsTab)) {
+      app.settingsTab = tabs.value[0].key;
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
-  <el-dialog v-model="app.settingsOpen" class="settings-dialog" width="780px" align-center append-to-body>
+  <el-dialog v-model="app.settingsOpen" class="settings-dialog" width="1080px" align-center append-to-body>
     <template #header>
       <div>
         <div class="sd-title">设置</div>
-        <div class="sd-sub">通用 · 刷新周期 · 局域网访问（各模块配置在对应板块右上「配置」）</div>
+        <div class="sd-sub">通用 · 监控与安全 · 局域网访问 · 反代网关</div>
       </div>
     </template>
     <div class="sd-layout">
       <div class="sd-nav">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          class="sd-nav-btn"
-          :class="{ active: app.settingsTab === t.key }"
-          @click="app.settingsTab = t.key"
-        >
+        <button v-for="t in tabs" :key="t.key" class="sd-nav-btn" :class="{ active: app.settingsTab === t.key }" @click="app.settingsTab = t.key">
           <i class="ph" :class="t.icon"></i>
           <span class="sd-nav-txt">
             <b>{{ t.name }}</b>
@@ -65,6 +72,7 @@ watch(
         <div v-if="visited.general" v-show="app.settingsTab === 'general'"><ConfigGeneralSection /></div>
         <div v-if="visited.timing" v-show="app.settingsTab === 'timing'"><ConfigTimingSection /></div>
         <div v-if="visited.lan" v-show="app.settingsTab === 'lan'"><ConfigLanSection /></div>
+        <div v-if="visited.proxy" v-show="app.settingsTab === 'proxy'"><ConfigProxySection /></div>
       </div>
     </div>
   </el-dialog>
@@ -113,7 +121,10 @@ watch(
   text-align: left;
   cursor: pointer;
   font-family: var(--font-ui);
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 .sd-nav-btn:hover {
   background: rgba(255, 255, 255, 0.05);

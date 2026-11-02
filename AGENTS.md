@@ -28,8 +28,8 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 管理服务与浏览器会话（桌面网页控制台）
 
-- `backend/admin.cjs`：Express，监听 0.0.0.0，端口 = 反代端口 + 1（`start({ port, commandTable, staticDir })` 传的是反代端口），
-  与反代 `bind` 解耦（反代只绑本机时管理页仍可局域网访问）。
+- `backend/admin.cjs`：Express，端口 = 反代端口 + 1，监听地址与反代 `bind` 一致（`start({ port, bind, commandTable, staticDir })`；
+  只有显式 `"127.0.0.1"` 算仅本机，其余一律按 `0.0.0.0` 处理）——选「仅本机」时管理页也只有本机能访问。
   `/api/rpc` 转发到与桌面 IPC 同一份命令表（`backend/commandTable.cjs` 的 `collect()`），不碰反代调度、选号、冷却、计费。
 - 令牌与会话：单一管理令牌（`backend/config.cjs` 加密落盘，桌面「设置 · 局域网访问」查看 / 修改，≥16 位不可清空）；登录走 ECDH
   P-256 协商派生 12 小时会话密钥（`backend/adminCrypto.cjs` 与 `src/api/adminCrypto.ts` 协议逐字对齐，改动两边一起改），请求 /
@@ -89,6 +89,10 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   元数据 / 依赖客户端进程的这些能力，在目标环境里一律不可用。需要的这类数据只有两条路——随包内置到
   `electron/backend/proxy/assets/`，或者运行时从上游拉取并落盘到数据目录（`config.dataDir()`），
   读不到时必须能降级且如实告警，不能因此让请求失败或让账号被误判。
+- 调试远程实例：网关暴露 `GET /status` 调试接口（返回各渠道号池 / 健康降级 / 今日统计等内部状态，排查问题用）。
+  默认开放但需带管理令牌（`Authorization: Bearer <令牌>` 或 `x-admin-token: <令牌>`，令牌 = 「设置 · 局域网访问」复制的那个），
+  不带或带错令牌返回 401。远程实例要把「绑定地址」设为局域网开放（0.0.0.0）其他电脑才连得上；
+  令牌明文走 HTTP（无 TLS），仅在可信局域网内使用，别暴露到公网。
 - 本地打包 exe：`npm run electron:build`（类型检查 + 前端构建 + electron-builder）→ `release/` 下出
   `AgentApiGateway-Setup-x.y.z.exe`（NSIS 安装版，`win.target` 只配了 nsis），版本号取 package.json 的 `version`；
   `npm run electron:pack` 只出未打包目录（`--dir`）。

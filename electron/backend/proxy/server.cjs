@@ -10,7 +10,7 @@
  */
 // 反代网关 · HTTP 服务：Express @ 127.0.0.1:9527（可配置）
 // 端点：POST /v1/chat/completions、POST /v1/messages、POST /v1/responses（各 SSE 双态）
-//       / POST /v1/messages/count_tokens / GET /v1/models / GET /healthz / GET /status（调试，默认关）
+//       / POST /v1/messages/count_tokens / GET /v1/models / GET /healthz / GET /status（需管理令牌）
 // 错误语义按**入站协议**回：OpenAI 侧 401 invalid_api_key / 429 配额或限流 / 400 参数 / 502 上游 /
 // 503 渠道不可用；Anthropic 侧同样这些状态码，但外壳是 { type:"error", error:{ type, message } }
 // ——Claude Code 只认这个形状，给它一个 OpenAI 的 401 会被直接判成连接失败。
@@ -32,6 +32,7 @@ const responsesOut = require("./protocols/responses-out.cjs");
 const events = require("./events.cjs");
 const oplog = require("./oplog.cjs");
 const inflight = require("./inflight.cjs");
+const config = require("../config.cjs");
 
 let runtime = null; // { server, startedAt, port, bind, active }
 
@@ -257,7 +258,7 @@ function routeOrderOf(key, settings) {
 }
 
 // ===== 跨渠道故障转移规模（纯函数；每模型尝试预算与候选队列上限共用同一口径，导出供自测断言）=====
-const CHANNEL_FAILOVER_MAX_CAP = 10; // 单请求最多尝试渠道数上限（与配置页输入框 max=10 同步）
+const CHANNEL_FAILOVER_MAX_CAP = 10; // 单请求最多尝试渠道数上限（与「设置 · 反代网关」输入框 max=10 同步）
 const UPSTREAM_TRIES_FLOOR = 6;      // 存量固定预算：1~5 档与关闭 failover 一律回到它（零行为变化）
 
 /** 渠道数上限归一化：与旧运行时 Math.max(1, Number(v) || 3) 逐值一致（0/空/NaN → 3），
@@ -1707,12 +1708,16 @@ function buildApp(settings) {
     res.status(healthy ? 200 : 503).json({ ok: healthy });
   });
 
-  // 调试快照：默认关闭（设置里显式开启），且校验回环地址
+  // 调试快照：默认开放，但需带管理令牌（config.admin.token，与局域网管理页同一令牌）；
+  // 令牌经请求头 Authorization: Bearer <token> 或 x-admin-token 传入，无/错令牌返回 401
   app.get("/status", (req, res) => {
-    const cfg = settings();
-    const ip = req.socket.remoteAddress || "";
-    if (!cfg.debugStatus || !/^127\.0\.0\.1$|^::1$|^::ffff:127\.0\.0\.1$/.test(ip)) {
-      return res.status(404).json(util.openaiError("not found", "invalid_request_error", "not_found"));
+    const cfg = config.loadConfig();
+    const token = config.decryptSecret(cfg.admin && cfg.admin.token) || "";
+    const h = req.headers["x-admin-token"] || req.headers.authorization || "";
+    const provided = String(h).replace(/^Bearer\s+/i, "").trim();
+    const ok = token && provided && Buffer.byteLength(token) === Buffer.byteLength(provided) && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(provided));
+    if (!ok) {
+      return res.status(401).json(util.openaiError("invalid token", "invalid_request_error", "invalid_token"));
     }
     res.json({
       uptime: runtime ? Date.now() - runtime.startedAt : 0,

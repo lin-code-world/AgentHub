@@ -17,7 +17,6 @@ import { useAppStore } from "./stores/app";
 import Sidebar from "./components/Sidebar.vue";
 import PageTabs from "./components/PageTabs.vue";
 import SettingsDialog from "./components/config/SettingsDialog.vue";
-import ConfigProxySection from "./components/config/ConfigProxySection.vue";
 import ProxyKeysView from "./views/proxy/ProxyKeysView.vue";
 import ProxyProvidersView from "./views/proxy/ProxyProvidersView.vue";
 import ProxyAgentsView from "./views/proxy/ProxyAgentsView.vue";
@@ -104,11 +103,6 @@ const seen = (mod: string, page: string) => !!visited.value[`${mod}/${page}`];
         <ProxyModelsView v-if="seen('proxy', 'models')" v-show="on('proxy', 'models')" />
         <ProxyStatsView v-if="seen('proxy', 'stats')" v-show="on('proxy', 'stats')" />
         <ProxyLogView v-if="seen('proxy', 'proxylog')" v-show="on('proxy', 'proxylog')" />
-        <!-- 各模块的配置页：右上「配置」按钮切换到这里的页面（page + cfg-body 组合出页壳与留白）；
-             配置页内部的二级子板块 tab 由各 section 自己渲染 -->
-        <div v-if="seen('proxy', 'config')" v-show="on('proxy', 'config')" class="page cfg-body">
-          <ConfigProxySection />
-        </div>
       </div>
     </main>
     <!-- 常驻挂载：显隐交给 el-dialog 自己管 -->

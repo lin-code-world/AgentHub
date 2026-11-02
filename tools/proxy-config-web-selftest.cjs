@@ -71,8 +71,7 @@ console.log("=== 2 磁盘初始状态 ===");
   cfg.proxy.concurrency = 3;
   cfg.proxy.port = 9527;
   cfg.proxy.bind = "127.0.0.1";
-  // 三个「提交后要被改掉」的基准值（都取非默认值，防默认值撞车假绿）+ 一个「不许被重置」的字段
-  cfg.proxy.debugStatus = false;
+  // 两个「提交后要被改掉」的基准值（都取非默认值，防默认值撞车假绿）+ 一个「不许被重置」的字段
   cfg.proxy.usageRetentionDays = 77;
   cfg.proxy.channelCooldownMs = 45000;
   cfg.schedule.minimizeToTray = true;
@@ -119,7 +118,7 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
       port: 9600,
       bind: "0.0.0.0",
       concurrency: 9,
-      debugStatus: true,
+      creditsRefreshMin: 45,
       usageRetentionDays: 30,
     };
     const r = await saveFn(null, { config: stale });
@@ -131,7 +130,7 @@ ok("磁盘已记录 enableAnthropic=false / enableResponses=false", disk0.enable
     ok("enableAnthropic 以磁盘为准（仍 false）", after.enableAnthropic === false, JSON.stringify(after.enableAnthropic));
     ok("enableResponses 以磁盘为准（仍 false）", after.enableResponses === false, JSON.stringify(after.enableResponses));
     ok("concurrency=9 真正落盘", Number(after.concurrency) === 9, String(after.concurrency));
-    ok("debugStatus=true 真正落盘", after.debugStatus === true, String(after.debugStatus));
+    ok("creditsRefreshMin=45 真正落盘", Number(after.creditsRefreshMin) === 45, String(after.creditsRefreshMin));
     ok("usageRetentionDays=30 真正落盘", Number(after.usageRetentionDays) === 30, String(after.usageRetentionDays));
     ok("未提交字段保持磁盘值（channelCooldownMs=45000 不被重置）", Number(after.channelCooldownMs) === 45000, String(after.channelCooldownMs));
     ok("port 被忽略（仍 9527，浏览器改了不生效）", Number(after.port) === 9527, String(after.port));

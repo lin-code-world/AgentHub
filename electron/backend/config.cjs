@@ -132,7 +132,6 @@ function defaultConfig() {
       expiringSoonDays: 1,      // 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）：
                                 // 号池到期徽标与逐包明细的 expiringSoon 共用这一个值
                                 // （默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数）
-      debugStatus: false,       // /status 调试端点（默认关，仅回环地址）
       modelOverrides: {},       // 模型 → 渠道 的 per-model 覆盖（多源重叠时优先）
       humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
       disabledModels: [],       // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
@@ -420,7 +419,8 @@ function lanIPv4() {
 
 /** 管理访问信息（桌面 IPC 专用，返回令牌明文）：
  *  地址由配置计算（反代端口 + 1），不依赖管理服务是否已启动；
- *  url 优先局域网地址、取不到回退回环，loopbackUrl / lanUrl 两个地址都给（界面分别展示）；
+ *  url 优先局域网地址、取不到回退回环，loopbackUrl / lanUrl 两个地址都给
+ *  （设置页用 lanUrl 自行拼展示地址，另两个供调用方与自测使用）；
  *  端口非法（0 / 65535 之类会让 +1 后不是合法端口）时 available=false、地址为空 */
 function adminAccessInfo() {
   const cfg = loadConfig();

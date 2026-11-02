@@ -26,14 +26,16 @@ export interface ModuleDef {
   pages: PageDef[];
 }
 
-// ===== 全局设置弹窗：左下角设置按钮打开的三个模块（弹窗左列按钮切换） =====
+// ===== 全局设置弹窗：右上角设置按钮打开的四个板块（弹窗左列按钮切换） =====
+// 反代网关板块承接原右上「配置」页：只剩服务与路由（监控与安全内容已并入「监控与安全」板块）
 
-export type SettingsTab = "general" | "timing" | "lan";
+export type SettingsTab = "general" | "timing" | "lan" | "proxy";
 
 export const SETTINGS_TABS: { key: SettingsTab; name: string; icon: string; desc: string }[] = [
   { key: "general", name: "通用", icon: "ph-sliders-horizontal", desc: "外观 · 应用行为" },
-  { key: "timing", name: "刷新周期", icon: "ph-clock-countdown", desc: "额度刷新周期 / 自动签到" },
+  { key: "timing", name: "监控与安全", icon: "ph-chart-bar", desc: "额度刷新 · 预警阈值 · 保留期" },
   { key: "lan", name: "局域网访问", icon: "ph-plugs-connected", desc: "管理地址 · 访问令牌" },
+  { key: "proxy", name: "反代网关", icon: "ph-gear-six", desc: "服务 · 路由" },
 ];
 
 // ===== 应用配置：框架（主题 / 行为）=====
@@ -70,7 +72,6 @@ export interface ProxyConfig {
   /** 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）。号池到期徽标与逐包明细共用这一个值，
    *  默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数 */
   expiringSoonDays: number;
-  debugStatus: boolean;
   /** 模型 → 渠道 id 的 per-model 覆盖（渠道可扩充，故为字符串值） */
   modelOverrides: Record<string, string>;
   /** 拟人抖动：每次上游请求前随机停 40~220ms，模拟真实客户端节奏 */
@@ -509,15 +510,6 @@ export interface ProxyScanCandidate {
   imported: boolean;
 }
 
-export interface ProxyRuleFile {
-  file: string;
-  desc: string;
-  size: number;
-  mtimeMs: number;
-  ok: boolean;
-  error: string;
-}
-
 /** 主进程推送的反代网关事件（app:event，event="proxy"）；type 取实际广播的事件类型，
  *  resync 是浏览器形态 SSE 重连后由前端补发的补偿信号（同形分发给各订阅方） */
 export interface ProxyEvent {
@@ -653,7 +645,7 @@ export interface ProxyCheckinRow {
 }
 
 /** 模块 → 子页面映射（内置顺序即默认导航顺序）
- *  各模块的「配置」是隐藏页面（id=config，不走横条菜单），由横条右侧「配置」按钮切换 */
+ *  子页面全部由横条菜单切换；全局设置统一走横条右侧「设置」按钮打开的弹窗 */
 export const MODULES: ModuleDef[] = [
   {
     key: "proxy",
