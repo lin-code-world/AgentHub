@@ -266,5 +266,15 @@ console.log("\n⑨ 按维度分组的序列（statsSeriesByDim）");
   eq(store.statsSeriesByDim({ from: FROM, to: NOW, granularity: "hour", dim: "key" }).range.granularity, "day", "30 天跨度显式要小时 → 降级按天");
 }
 
+// ===== ⑩ TOP 排行默认全量返回（不再被旧上限 50 砍掉）=====
+console.log("\n⑩ TOP 排行默认全量返回");
+{
+  // 夹具此刻有 m1 / m2 / m3 三个模型；再补 55 个请求数最少的模型，凑到 58 个（超过旧上限 50）
+  for (let i = 0; i < 55; i++) put({ ts: NOW - 60000, model: "extra-" + i, status: 200 });
+  const rows = store.statsTopRich("model", NOW - 30 * DAY, NOW);
+  eq(rows.length, 58, "模型数超旧上限 50 时仍全量返回（3 个夹具模型 + 55 个新模型）");
+  ok(rows.some((r) => r.name === "extra-0"), "低频条目（extra-0）也在候选集里——前端按 Token 重排才选得出真正的 Token 大户");
+}
+
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"} 统计自测：${pass} 项通过，${failed} 项失败`);
 process.exit(failed === 0 ? 0 : 1);

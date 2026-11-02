@@ -1509,11 +1509,13 @@ const TOP_GROUP = {
   account: {col: "account_id", nameCol: "account_name"},
 };
 
-/** TOP 排行（富字段）：按 dim 分组，请求数倒序取前 N（前端本地切排序口径再截前 10） */
+/** TOP 排行（富字段）：按 dim 分组，整体回给前端——前端要按「当前点选的列」重排再取前 10 /
+ *  前 8（饼图），若后端先按请求数砍一刀，Token 大户会被提前丢掉（默认视图就错）。
+ *  返回量按分组数走，正常几百条、几十 KB；2000 只作病态数据（模型名带随机后缀等）的保险上限。 */
 function statsTopRich(dim, from, to, limit) {
   open();
   const g = TOP_GROUP[dim] || TOP_GROUP.channel;
-  const n = Math.min(200, Math.max(1, Number(limit) || 50));
+  const n = Math.min(2000, Math.max(1, Number(limit) || 2000));
   const rows = db.prepare(
     `SELECT ${g.col} AS gid, MAX(ts) AS last_ts, ${g.nameCol || g.col} AS name, ${AGG_COLS}
      FROM usage_requests
@@ -1530,13 +1532,14 @@ function statsTopRich(dim, from, to, limit) {
 }
 
 /** 各 Key 用量：按 key_id 分组（Key 名可改，id 才是身份），带最近使用时间。
- *  Key 名透出以当前名优先（Key 已删/未命名回退最后一次请求时的快照名） */
+ *  Key 名透出以当前名优先（Key 已删/未命名回退最后一次请求时的快照名）。
+ *  同样整体回给前端：页面的「各 Key 用量」与筛选取材于此，砍条数会让 Key 凭空消失；2000 只作保险上限。 */
 function statsKeys(from, to) {
   open();
   const rows = db.prepare(
     `SELECT key_id, MAX(ts) AS last_ts, key_name AS name, ${AGG_COLS}
      FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''
-     GROUP BY key_id ORDER BY req DESC LIMIT 100`
+     GROUP BY key_id ORDER BY req DESC LIMIT 2000`
   ).all(from, to);
   const keyNames = currentKeyNames();
   return rows.map((r) => ({
