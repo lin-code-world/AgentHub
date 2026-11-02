@@ -14,12 +14,12 @@
 // main 侧为什么需要它之外还有本模块：app.on("child-process-gone") 只覆盖 Chromium 子进程，
 // ELECTRON_RUN_AS_NODE 子进程（会话流水 worker 等）死亡不触发任何事件——
 // 实测 worker 连崩 25 次（crashpad 25 个同签名 dump）而主进程日志零痕迹。
-// 超 1MB 截断保留尾部（只读尾部 512KB 再重写，不做整文件读取）：取证只服务近期排查，
+// 超 100MB 截断保留尾部（只读尾部 90MB 再重写，不做整文件读取）：取证只服务近期排查，
 // 防止长期累积（文本日志最坏 ~KB/天，上限仅兜底）。
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const MAX_BYTES = 1024 * 1024;
+const MAX_BYTES = 100 * 1024 * 1024;
 
 function logDir() {
   // 测试 / 纯 Node 场景可显式指定目录；否则优先 Electron app（主进程），回落 %APPDATA%\AgentHub
@@ -44,7 +44,7 @@ function write(kind, detail) {
       if (st.size > MAX_BYTES) {
         // 只读尾部（而非整文件）：日志可能因历史版本/异常循环涨到很大，
         // 截断动作本身不能变成一次大分配——取证链路必须永远是最廉价的
-        const keep = MAX_BYTES >> 1;
+        const keep = MAX_BYTES - 10 * 1024 * 1024; // 保留约 90MB，只删最旧约 10MB，尽量贴近上限
         const fd = fs.openSync(file, "r");
         try {
           const buf = Buffer.allocUnsafe(keep);
