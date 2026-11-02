@@ -669,9 +669,6 @@ watch(active, (on) => {
                             <div class="mono model-id">{{ displayId(m) }}</div>
                           </el-tooltip>
                         </div>
-                        <el-tooltip v-if="m.name && m.name !== m.id" :content="m.name" placement="top">
-                          <div class="model-name" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ m.name }}</div>
-                        </el-tooltip>
                         <el-tooltip v-if="m.accountless" content="单来源渠道未配置账号，模型已自动关闭" placement="top">
                           <span class="tag tag-dim accountless-tag">无账号</span>
                         </el-tooltip>
