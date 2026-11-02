@@ -39,7 +39,7 @@ function eq(actual, expect, name) {
 }
 
 // 前置：新增导出没落地时报一条干净的红并退出——基线上跑这份自测能看到它在管真事
-const API = ["normRange", "pickGranularity", "statsOverview", "statsSummary", "statsSeries", "statsTopRich", "statsKeys", "statsStatus", "statsTokenMix", "statsFilteredSeries", "statsDetail"];
+const API = ["normRange", "pickGranularity", "statsOverview", "statsSummary", "statsSeries", "statsTopRich", "statsKeys", "statsStatus", "statsTokenMix", "statsFilteredSeries", "statsSeriesByDim", "statsDetail"];
 const missing = API.filter((n) => typeof store[n] !== "function");
 ok(missing.length === 0, `新增聚合面全部导出（缺：${missing.join(" ") || "无"}）`);
 if (missing.length) { console.log("\nFAIL 统计自测：导出缺失，后续断言无从谈起"); process.exit(1); }
@@ -229,6 +229,41 @@ console.log("\n⑧ 带筛选条件的时间序列（statsFilteredSeries）");
   // 粒度：显式要小时且跨度 > 7 天时后端降级为按天（与 pickGranularity 同口径）
   const degraded = store.statsFilteredSeries({ from: NOW - 30 * DAY, to: NOW, granularity: "hour" });
   eq(degraded.range.granularity, "day", "30 天跨度显式要小时 → 后端降级按天");
+}
+
+// ===== ⑨ 按维度分组的序列（请求趋势折线分线用）：每个分组一条线 =====
+console.log("\n⑨ 按维度分组的序列（statsSeriesByDim）");
+{
+  const FROM = NOW - 30 * DAY;
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+
+  const byKey = store.statsSeriesByDim({ from: FROM, to: NOW, granularity: "day", dim: "key" });
+  eq(byKey.series.length, 3, "Key 维度分 3 条线（k1 / k2 / k3）");
+  eq(byKey.series.map((s) => s.id), ["k3", "k1", "k2"], "按区间内 token 总量倒序（k3 7000 > k1 1830 > k2 430）");
+  eq(byKey.series.map((s) => s.name), ["老 Key", "主 Key", "备用 Key"], "名字用流水快照名（keys 表里没有这些 Key）");
+  eq(byKey.series[0].tokens.length, byKey.buckets.length, "每条线的点数 = 时间轴桶数");
+  eq(sum(byKey.series.flatMap((s) => s.tokens)), 9260, "所有组 token 合计 = 全区间 token 总量 9260");
+  eq(sum(byKey.series.flatMap((s) => s.reqs)), 6, "所有组请求数合计 = 全区间 6 条");
+
+  // 逐组对齐：每组的 token / 请求数分别等于按该组精确筛选的明细合计
+  const k1 = byKey.series.find((s) => s.id === "k1");
+  eq([sum(k1.tokens), sum(k1.reqs)], [1830, 3], "k1 组 token / 请求数分别与明细精确筛选一致");
+  const k3 = byKey.series.find((s) => s.id === "k3");
+  eq([sum(k3.tokens), sum(k3.reqs)], [7000, 1], "k3 组 token / 请求数（失败请求也计入）");
+
+  // 渠道 / 模型维度同样可用
+  const byChannel = store.statsSeriesByDim({ from: FROM, to: NOW, granularity: "day", dim: "channel" });
+  eq([...byChannel.series.map((s) => s.name)].sort(), ["raccoon", "trae", "workbuddy"], "渠道维度按渠道值分组");
+  const byModel = store.statsSeriesByDim({ from: FROM, to: NOW, granularity: "day", dim: "model" });
+  eq(byModel.series.length, 3, "模型维度分 3 条线");
+
+  // 空区间：没有分组 → 空系列，但时间轴仍补零返回
+  const empty = store.statsSeriesByDim({ from: NOW - 500 * DAY, to: NOW - 400 * DAY, granularity: "day", dim: "key" });
+  eq(empty.series.length, 0, "空区间没有分组系列");
+  ok(empty.buckets.length > 0, `空区间仍返回补零时间轴（${empty.buckets.length} 个桶）`);
+
+  // 粒度降级：30 天跨度显式要小时 → 后端按天
+  eq(store.statsSeriesByDim({ from: FROM, to: NOW, granularity: "hour", dim: "key" }).range.granularity, "day", "30 天跨度显式要小时 → 降级按天");
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"} 统计自测：${pass} 项通过，${failed} 项失败`);

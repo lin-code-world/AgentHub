@@ -75,6 +75,8 @@ export function tooltipCard(date: string, rows: TooltipRow[]): string {
 export interface TooltipParam {
   marker?: string;
   seriesName?: string;
+  /** 该点所属系列的序号：多线折线图按序号回查每一项目在此时刻的数值 */
+  seriesIndex?: number;
   dataIndex: number;
   value?: number | string;
 }

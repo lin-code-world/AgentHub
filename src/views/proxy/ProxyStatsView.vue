@@ -10,15 +10,15 @@
 -->
 <!-- 反代网关 · 总览（原「用量统计」页）
      页面结构：顶部时间档位 + 刷新/清理；用量统计表（维度切换 + 可排序列头 + 最新使用 + 筛选下钻）；
-     两张比例饼图（跟随维度切换）；请求明细（筛选行 + 折线图 + 明细表）。
+     两张比例饼图（跟随维度切换）；请求趋势折线图（独立卡片，按当前维度分线）；请求明细（筛选行 + 明细表）。
      口径：不建日聚合冗余表，全部由 usage_requests 流水直查 GROUP BY；流水保留期可配
      （设置 · 反代网关「余额历史 / 请求流水保留」，默认 90 天），本页「清理」按当前值立即删一轮。
-     时间区间统摄全页：用量统计表 / 饼图 / 请求明细吃同一个 { from, to }；
-     折线图另按明细的筛选条件单独取 proxy_stats_series（与明细表逐条对齐）。 -->
+     时间区间统摄全页：用量统计表 / 饼图 / 请求趋势 / 请求明细吃同一个 { from, to }；
+     请求趋势折线图另取 proxy_stats_series（传 dim）：按当前维度分组，每项一条线，只吃时间区间。 -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import * as api from "../../api/ipc";
-import type { ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsAggRow, ProxyStatsPoint } from "../../types";
+import type { ProxyStatsOverview, ProxyStatsDetail, ProxyStatsDim, ProxyStatsAggRow, ProxyStatsBucket, ProxyStatsGroupSeries } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { fmtInt, fmtK, fmtMs, fmtTime, fmtDate, fmtAgo, channelName, statusCls } from "./format";
 import { coalesceAsync } from "../../utils/timing";
@@ -105,7 +105,8 @@ const DIMS = [
 ] as const;
 // 初次进入的默认视角：Key × Token（最常用的「谁在用、用了多少」）
 const dim = ref<ProxyStatsDim>("key");
-/** 排序口径：点列头切换。只在这两列之间切，且恒为降序（看「谁最多」是这个页面的主要用法） */
+/** 排序口径：点列头切换。只在这两列之间切，且恒为降序（看「谁最多」是这个页面的主要用法）。
+ *  同一口径也决定请求趋势折线画哪个指标：点「总 Token」列 → 折线画 token，点「请求数」列 → 画请求数 */
 const sortBy = ref<"req" | "tokens">("tokens");
 function pickSort(k: "req" | "tokens") {
   sortBy.value = k;
@@ -121,8 +122,10 @@ const dimLabel = computed(() => DIMS.find((d) => d.value === dim.value)?.label |
 
 // ===== 数据 =====
 const ov = ref<ProxyStatsOverview | null>(null);
-/** 折线图数据：由 proxy_stats_series 按明细筛选条件返回（不复用 ov.series，那是全量口径） */
-const series = ref<ProxyStatsPoint[]>([]);
+/** 请求趋势折线数据：按「用量统计」当前维度分组（每项一条线），只吃时间区间；
+ *  不与「请求明细」的筛选条件联动 */
+const trendBuckets = ref<ProxyStatsBucket[]>([]);
+const trendSeries = ref<ProxyStatsGroupSeries[]>([]);
 /** 折线图实际使用的粒度：以后端回填为准（后端可能把 hour 降级成 day），
  *  初值同 trendGranularity，取到数据后被覆盖 */
 const seriesGranularity = ref<"hour" | "day">("day");
@@ -193,7 +196,6 @@ function drillToRow(r: ProxyStatsAggRow) {
   filters.status = "";
   page.value = 1;
   loadDetail();
-  loadSeries();
   detailRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -215,24 +217,26 @@ async function refresh() {
   }
 }
 
-/** 折线图数据：与明细同口径吃筛选条件（Key / 模型 / 渠道 / 状态）；都不填就是全量。
+/** 请求趋势取数的递增序号：并发时只认最后一次，丢弃先发后到的旧响应（快速切维度防串数据） */
+let trendSeq = 0;
+
+/** 请求趋势折线数据：按「用量统计」当前维度（Key / 渠道 / 模型）分组取数，每项一条线；
+ *  只吃时间区间，不与「请求明细」的筛选条件联动。
  *  粒度以后端回填的为准——后端在「要小时但跨度 > 7 天」时会降级成按天，
  *  前端若还按自己要的 hour 去切片，标签会全变空字符串（横轴无刻度）。 */
 async function loadSeries() {
   const { from, to } = range.value;
+  const seq = ++trendSeq;
   try {
-    const r = await api.proxyStatsSeries({
-      from,
-      to,
-      granularity: trendGranularity.value,
-      keyId: filters.key || undefined,
-      model: filters.model || undefined,
-      channel: filters.channel || undefined,
-      status: filters.status || undefined,
-    });
-    series.value = r.series || [];
+    const r = await api.proxyStatsSeriesByDim({ from, to, granularity: trendGranularity.value, dim: dim.value });
+    if (seq !== trendSeq) return;
+    const list = r.series || [];
+    trendBuckets.value = r.buckets || [];
+    // 渠道维度的分组名是原始 slug，换成站内展示名（与明细表的渠道列口径一致）
+    trendSeries.value = dim.value === "channel" ? list.map((s) => ({ ...s, name: channelName(s.name) })) : list;
     if (r.range?.granularity) seriesGranularity.value = r.range.granularity;
   } catch (e) {
+    if (seq !== trendSeq) return; // 过期请求的失败也丢弃，别把旧错误挂到当前维度上
     err.value = String((e as Error).message || e);
   }
 }
@@ -273,11 +277,10 @@ function goPage(p: number) {
 // ===== 明细筛选 =====
 const detailRef = ref<HTMLElement | null>(null);
 
-/** 点「查询」/ 回车：把当前填写的条件应用上去并回到第一页（折线图同步按同条件重算） */
+/** 点「查询」/ 回车：把当前填写的条件应用上去并回到第一页（只作用于明细表，不动请求趋势折线） */
 function applyFilter() {
   page.value = 1;
   loadDetail();
-  loadSeries();
 }
 function resetFilters() {
   filters.key = "";
@@ -326,6 +329,8 @@ watch([preset, customRange], () => {
   page.value = 1;
   scheduleRefresh();
 });
+// 维度切换：请求趋势折线按新维度重新分组取数（用量统计表一次拿到全部维度，无需重拉）
+watch(dim, () => loadSeries());
 // 筛选条件只在点「查询」时才生效：下拉 / 输入框改完不自动查，避免与「筛选」按钮下钻叠成两次查询。
 // 回车等同点查询（键盘操作的常规预期），文本输入去掉了原来的 300ms 防抖轮询。
 
@@ -454,7 +459,14 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 请求明细：筛选条件 + 折线图（总 Token 走左轴、总请求数走右轴）+ 明细表 -->
+      <!-- 请求趋势：按当前维度（Key / 渠道 / 模型）分线，纵轴画 token 还是请求数跟随用量统计点选的列；
+           只吃时间区间，不跟下方请求明细的筛选条件联动 -->
+      <div class="card anim" style="margin-top: 12px">
+        <div class="card-title">请求趋势</div>
+        <StatsTrendChart :buckets="trendBuckets" :series="trendSeries" :granularity="seriesGranularity" :metric="sortBy" />
+      </div>
+
+      <!-- 请求明细：筛选条件 + 明细表 -->
       <div ref="detailRef" class="card anim" style="margin-top: 12px">
         <div class="card-title">请求明细</div>
         <div class="detail-filters">
@@ -481,7 +493,6 @@ onUnmounted(() => {
           <button class="btn btn-sm" @click="resetFilters"><i class="ph ph-arrow-counter-clockwise"></i> 重置</button>
           <span class="detail-agg">{{ detail?.agg ? `${fmtInt(detail.agg.req)} 次请求 / 输入 ${fmtK(detail.agg.promptTokens)} token / 输出 ${fmtK(detail.agg.completionTokens)} token / 合计 ${fmtK(detail.agg.tokens)} token` : "" }}</span>
         </div>
-        <StatsTrendChart :points="series" :granularity="seriesGranularity" />
         <div class="tbl-wrap">
           <table class="tbl tbl-c">
             <tbody>
@@ -652,11 +663,6 @@ onUnmounted(() => {
   color: var(--text-3);
   font-family: var(--font-mono);
 }
-/* 折线图夹在筛选行与表格之间：上下留一点间距，别和两边贴在一起 */
-.detail-filters + .trend-chart {
-  margin: 4px 0 10px;
-}
-
 /* 三个表（TOP / 各 Key / 明细）字段值居中；th 全局 .tbl 已居中，这里覆盖默认左对齐的 td */
 .tbl-c th,
 .tbl-c td {

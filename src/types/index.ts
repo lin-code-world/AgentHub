@@ -396,6 +396,21 @@ export interface ProxyStatsPoint {
   latencyAvg: number;
 }
 
+/** 折线图分组序列的时间轴桶（x 轴刻度；各分组共享同一根时间轴） */
+export interface ProxyStatsBucket {
+  t: number;
+  label: string;
+}
+
+/** 按维度分组的序列：每项一条线，值是各时间桶的 token / 请求数。
+ *  纵轴画 token 还是请求数由前端按当前选中列决定，故两者都带 */
+export interface ProxyStatsGroupSeries {
+  id: string;
+  name: string;
+  tokens: number[];
+  reqs: number[];
+}
+
 /** 区间 KPI 汇总 */
 export interface ProxyStatsSummary {
   req: number;
@@ -651,7 +666,7 @@ export const MODULES: ModuleDef[] = [
     key: "proxy",
     name: "反代网关",
     pages: [
-      // 「总览」= 原用量统计页（时间区间 + 用量统计表 + 两个比例饼图 + 请求明细含折线图）；
+      // 「总览」= 原用量统计页（时间区间 + 用量统计表 + 两个比例饼图 + 请求趋势折线图 + 请求明细）；
       // 放第一位：点进模块默认打开它（pages[0] 即默认页）
       { id: "stats", name: "总览" },
       { id: "agents", name: "号池" },

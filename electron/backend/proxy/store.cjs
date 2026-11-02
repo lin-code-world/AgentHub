@@ -1646,6 +1646,74 @@ function statsFilteredSeries(opts) {
   return { range: { from, to, granularity }, series: out };
 }
 
+/** 按维度分组的时间序列（折线图按 Key / 渠道 / 模型分线用）：一根与 statsSeries 同口径的
+ *  时间轴（同粒度、同样补零连续），外加每个分组各自的 token / 请求数数组。
+ *  纵轴画 token 还是请求数由前端按用量统计当前选中的列决定，所以两个指标都回。
+ *  分组口径与 statsTopRich / statsKeys 一致：channel / model 按值分组；key / account 按 id
+ *  分组、名字用当前名（改名 / 删除后回退流水快照名）。序列按区间内 token 总量倒序排列，
+ *  前端配色按此顺序轮转，刷新后颜色不会乱跳。空分组（如未认证请求的 channel=''）不进图。 */
+function statsSeriesByDim(opts) {
+  open();
+  const o = opts || {};
+  const { from, to } = normRange(o.from, o.to);
+  const granularity = pickGranularity(from, to, o.granularity);
+  const g = TOP_GROUP[o.dim] || TOP_GROUP.channel;
+  const col = g.col;
+
+  // 时间轴：与 statsSeries 完全同口径（按粒度步进、到区间终点）
+  const buckets = [];
+  if (granularity === "hour") {
+    const start = new Date(from);
+    start.setMinutes(0, 0, 0);
+    for (let t = start.getTime(); t <= to; t += 3600000) buckets.push({ t, label: hourStr(t) });
+  } else {
+    const start = new Date(from);
+    start.setHours(0, 0, 0, 0);
+    for (let t = start.getTime(); t <= to; t += DAY_MS) buckets.push({ t, label: dayStr(t) });
+  }
+  const bucketAt = new Map(buckets.map((b, i) => [b.label, i]));
+
+  // 分组元信息：id / 快照名 / 区间内 token 总量（排序用）。
+  // MAX(ts) 本身不输出，但必须留在 SELECT 里：SQLite 对带 MAX() 的聚合查询会把裸列（snap）
+  // 取成该极值所在行，即「最后一次请求时的快照名」，与 statsTopRich / statsKeys 同口径；
+  // 去掉它裸列取值就不确定了。
+  const meta = db.prepare(
+    `SELECT ${col} AS gid, MAX(ts), ${g.nameCol || col} AS snap,
+            SUM(prompt_tokens + completion_tokens) AS tokens
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND ${col} != ''
+     GROUP BY ${col} ORDER BY tokens DESC, ${col}`
+  ).all(from, to);
+  if (!meta.length) return { range: { from, to, granularity }, buckets, series: [] };
+
+  const names = g.nameCol === "key_name" ? currentKeyNames()
+    : g.nameCol === "account_name" ? currentAccountNames() : null;
+  const series = meta.map((m) => ({
+    id: m.gid,
+    name: (names && names.get(m.gid)) || m.snap || "",
+    tokens: new Array(buckets.length).fill(0),
+    reqs: new Array(buckets.length).fill(0),
+  }));
+  const at = new Map(meta.map((m, i) => [m.gid, i]));
+
+  const fmt = granularity === "hour" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
+  const rows = db.prepare(
+    `SELECT strftime('${fmt}', ts / 1000, 'unixepoch', 'localtime') AS k,
+            ${col} AS gid,
+            SUM(prompt_tokens + completion_tokens) AS tokens,
+            COUNT(*) AS req
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND ${col} != ''
+     GROUP BY k, gid`
+  ).all(from, to);
+  for (const r of rows) {
+    const i = at.get(r.gid);
+    const j = bucketAt.get(r.k);
+    if (i == null || j == null) continue;
+    series[i].tokens[j] += Number(r.tokens) || 0;
+    series[i].reqs[j] += Number(r.req) || 0;
+  }
+  return { range: { from, to, granularity }, buckets, series };
+}
+
 /** 统计总览：一次返回 KPI / 序列 / 四维排行 / 各 Key / 状态分布 / Token 构成。
  *  四维排行一次给全，前端切维度零延迟、少 3 次 IPC。 */
 function statsOverview(opts) {
@@ -1829,7 +1897,7 @@ module.exports = {
   snapshotCredits,
   insertUsage, statsToday, statsTrend, statsTop, statsDetail, recentRequests,
   normRange, pickGranularity, statsOverview, statsSummary, statsSeries, statsTopRich,
-  statsFilteredSeries,
+  statsFilteredSeries, statsSeriesByDim,
   statsKeys, statsStatus, statsTokenMix,
   cleanupUsage, setUsageRetention, cleanupOpLogs,
 };

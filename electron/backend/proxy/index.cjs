@@ -1536,9 +1536,11 @@ function register(ipcMain) {
   ipcMain.handle("proxy_stats_overview", handle(({ from, to, granularity }) =>
     store.statsOverview({ from, to, granularity })));
   ipcMain.handle("proxy_stats_top", handle(({ dim, days }) => store.statsTop(dim, days)));
-  // 带筛选条件的时间序列（折线图专用）：口径与明细完全一致，筛了什么就只统计什么
-  ipcMain.handle("proxy_stats_series", handle(({ from, to, granularity, channel, keyId, model, status }) =>
-    store.statsFilteredSeries({ from, to, granularity, channel, keyId, model, status })));
+  // 时间序列（折线图专用）：传 dim 时按维度分组（Key / 渠道 / 模型各一条线，只吃时间区间）；
+  // 不传 dim 时保持旧行为——按明细筛选条件统计（口径与明细完全一致）。
+  ipcMain.handle("proxy_stats_series", handle(({ from, to, granularity, dim, channel, keyId, model, status }) =>
+    dim ? store.statsSeriesByDim({ from, to, granularity, dim })
+        : store.statsFilteredSeries({ from, to, granularity, channel, keyId, model, status })));
   ipcMain.handle("proxy_stats_detail", handle(({ from, to, page, pageSize, channel, keyId, model, status }) =>
     store.statsDetail({ from, to, page, pageSize, channel, keyId, model, status })));
   // 手动清理流水：days 缺省取设置里的保留期（实时读，改完设置不必重启），all=true 清空整表。

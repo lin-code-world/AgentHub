@@ -14,7 +14,7 @@ import type {
   AppConfig,
   ProxyConfig,
   ProxyGatewayStatus, ProxyKeyRow, ProxyChannelView, ProxyAccount, ProxyStatsOverview, ProxyStatsDetail,
-  ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow, ProxyStatsRange, ProxyStatsPoint,
+  ProxyStatsDim, ProxyStatsAggRow, ProxyStatsKeyRow, ProxyStatsRange, ProxyStatsBucket, ProxyStatsGroupSeries,
   ProxyUsageRow, ProxyModel, ProxyScanCandidate, ProxyRoute, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier,
   ProxyCheckinRow, ZcodeDeviceStatusResult, ZcodeClaimModeResult,
   ProxyProvider, ProxyProviderKind, ProxyProviderModel, ProxyProviderTestResult,
@@ -358,16 +358,10 @@ export const proxyStatsOverview = (opts?: { from?: number; to?: number; granular
   call<ProxyStatsOverview>("proxy_stats_overview", opts as Record<string, unknown>);
 export const proxyStatsTop = (dim: ProxyStatsDim, days?: number) =>
   call<{ name: string; req: number; tokens: number }[]>("proxy_stats_top", { dim, days });
-/** 带筛选条件的时间序列（折线图用）：条件口径与明细一致，不传筛选 = 全量 */
-export const proxyStatsSeries = (opts: {
-  from?: number;
-  to?: number;
-  granularity?: "auto" | "hour" | "day";
-  channel?: string;
-  keyId?: string;
-  model?: string;
-  status?: string;
-}) => call<{ range: ProxyStatsRange; series: ProxyStatsPoint[] }>("proxy_stats_series", opts as Record<string, unknown>);
+/** 请求趋势折线取数：按「用量统计」当前维度（Key / 渠道 / 模型）分组，每项一条线。
+ *  只吃时间区间，不再跟「请求明细」的筛选条件联动 */
+export const proxyStatsSeriesByDim = (opts: { from?: number; to?: number; granularity?: "auto" | "hour" | "day"; dim: ProxyStatsDim }) =>
+  call<{ range: ProxyStatsRange; buckets: ProxyStatsBucket[]; series: ProxyStatsGroupSeries[] }>("proxy_stats_series", opts as Record<string, unknown>);
 /** 请求明细：channel / keyId / model 均为精确匹配（下拉选择），status 走分桶（ok/4xx/5xx/other） */
 export const proxyStatsDetail = (opts: {
   from?: number;
