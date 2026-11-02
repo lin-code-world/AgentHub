@@ -1318,7 +1318,9 @@ function insertUsage(row) {
   } catch { /* 通知失败不影响落库 */ }
 }
 
-/** 总览指标：今日请求/token/成功率/TTFT 均值 */
+/** 今日统计（调试接口 /status 的 today 字段用）：刻意含全部流水，包括没绑定 Key 的未认证请求——
+ *  排查「谁在拿错 Key / 谁在刷」时要看得到它们。总览页的统计口径相反（排除这类请求，见 statsSummary），
+ *  别为了「口径统一」在这里补 key_id != ''。 */
 function statsToday() {
   open();
   const r = db.prepare(
@@ -1435,15 +1437,17 @@ function shapeAgg(r) {
 
 /** TTFT 中位数：SQLite 无 percentile，按「先数总数、再 OFFSET 取中位那一行」两步取 */
 function statsTtftP50(from, to) {
-  const c = db.prepare("SELECT COUNT(*) AS c FROM usage_requests WHERE ts >= ? AND ts <= ? AND ttft_ms > 0").get(from, to).c || 0;
+  // 口径与 statsSummary 一致：排除没绑定 Key 的请求，否则样本集与 KPI 对不上
+  const c = db.prepare("SELECT COUNT(*) AS c FROM usage_requests WHERE ts >= ? AND ts <= ? AND ttft_ms > 0 AND key_id != ''").get(from, to).c || 0;
   if (!c) return 0;
   const row = db.prepare(
-    "SELECT ttft_ms AS v FROM usage_requests WHERE ts >= ? AND ts <= ? AND ttft_ms > 0 ORDER BY ttft_ms LIMIT 1 OFFSET ?"
+    "SELECT ttft_ms AS v FROM usage_requests WHERE ts >= ? AND ts <= ? AND ttft_ms > 0 AND key_id != '' ORDER BY ttft_ms LIMIT 1 OFFSET ?"
   ).get(from, to, Math.floor((c - 1) / 2));
   return Math.round((row && row.v) || 0);
 }
 
-/** 区间 KPI：请求 / 成功 / 四类 token / 平均与 P50 TTFT / 平均耗时 / 覆盖的去重维度数 */
+/** 区间 KPI：请求 / 成功 / 四类 token / 平均与 P50 TTFT / 平均耗时 / 覆盖的去重维度数。
+ *  统计口径排除没绑定 Key 的请求（未认证 / 拿错 Key 的探测流量）；只有「请求明细」保留它们。 */
 function statsSummary(from, to) {
   open();
   const r = db.prepare(
@@ -1452,7 +1456,7 @@ function statsSummary(from, to) {
             COUNT(DISTINCT NULLIF(model, '')) AS models,
             COUNT(DISTINCT NULLIF(key_id, '')) AS keys,
             COUNT(DISTINCT NULLIF(account_id, '')) AS accounts
-     FROM usage_requests WHERE ts >= ? AND ts <= ?`
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''`
   ).get(from, to);
   const s = shapeAgg(r);
   return {
@@ -1512,8 +1516,8 @@ const TOP_GROUP = {
 /** TOP 排行（富字段）：按 dim 分组，整体回给前端——前端要按「当前点选的列」重排再取前 10 /
  *  前 8（饼图），若后端先按请求数砍一刀，Token 大户会被提前丢掉（默认视图就错）。
  *  返回量按分组数走，正常几百条、几十 KB；2000 只作病态数据（模型名带随机后缀等）的保险上限。
- *  不过滤空分组（未认证请求的 channel='' / key_id='' 等）：让它们单独成组，
- *  排行与饼图的合计才对得上总量，也才能一眼看出「谁在拿错 Key 试探」。 */
+ *  统计口径排除没绑定 Key 的请求（未认证 / 拿错 Key 的探测流量）：那类流量既没有 Key、
+ *  渠道也多半为空，混进排行只会让合计虚高；要看它们去「请求明细」。 */
 function statsTopRich(dim, from, to, limit) {
   open();
   const g = TOP_GROUP[dim] || TOP_GROUP.channel;
@@ -1523,6 +1527,7 @@ function statsTopRich(dim, from, to, limit) {
      FROM usage_requests
      WHERE ts >= ?
        AND ts <= ?
+       AND key_id != ''
      GROUP BY ${g.col}
      ORDER BY req DESC LIMIT ?`
   ).all(from, to, n);
@@ -1535,12 +1540,12 @@ function statsTopRich(dim, from, to, limit) {
 /** 各 Key 用量：按 key_id 分组（Key 名可改，id 才是身份），带最近使用时间。
  *  Key 名透出以当前名优先（Key 已删/未命名回退最后一次请求时的快照名）。
  *  同样整体回给前端：页面的「各 Key 用量」与筛选取材于此，砍条数会让 Key 凭空消失；2000 只作保险上限。
- *  空 key_id（未认证请求）不排除，与渠道维度一致地单独成组。 */
+ *  统计口径同 statsTopRich：排除没绑定 Key 的请求（本来就分不出 Key 来）。 */
 function statsKeys(from, to) {
   open();
   const rows = db.prepare(
     `SELECT key_id, MAX(ts) AS last_ts, key_name AS name, ${AGG_COLS}
-     FROM usage_requests WHERE ts >= ? AND ts <= ?
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''
      GROUP BY key_id ORDER BY req DESC LIMIT 2000`
   ).all(from, to);
   const keyNames = currentKeyNames();
@@ -1665,8 +1670,7 @@ function statsFilteredSeries(opts) {
  *  纵轴画 token 还是请求数由前端按用量统计当前选中的列决定，所以两个指标都回。
  *  分组口径与 statsTopRich / statsKeys 一致：channel / model 按值分组；key / account 按 id
  *  分组、名字用当前名（改名 / 删除后回退流水快照名）。序列按区间内 token 总量倒序排列，
- *  前端配色按此顺序轮转，刷新后颜色不会乱跳。空分组（如未认证请求的 channel=''）也进图，
- *  与排行 / 饼图口径一致——否则折线的合计又会对不上总量。 */
+ *  前端配色按此顺序轮转，刷新后颜色不会乱跳。统计口径同排行 / 饼图：排除没绑定 Key 的请求。 */
 function statsSeriesByDim(opts) {
   open();
   const o = opts || {};
@@ -1695,7 +1699,7 @@ function statsSeriesByDim(opts) {
   const meta = db.prepare(
     `SELECT ${col} AS gid, MAX(ts), ${g.nameCol || col} AS snap,
             SUM(prompt_tokens + completion_tokens) AS tokens
-     FROM usage_requests WHERE ts >= ? AND ts <= ?
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''
      GROUP BY ${col} ORDER BY tokens DESC, ${col}`
   ).all(from, to);
   if (!meta.length) return { range: { from, to, granularity }, buckets, series: [] };
@@ -1716,7 +1720,7 @@ function statsSeriesByDim(opts) {
             ${col} AS gid,
             SUM(prompt_tokens + completion_tokens) AS tokens,
             COUNT(*) AS req
-     FROM usage_requests WHERE ts >= ? AND ts <= ?
+     FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''
      GROUP BY k, gid`
   ).all(from, to);
   for (const r of rows) {

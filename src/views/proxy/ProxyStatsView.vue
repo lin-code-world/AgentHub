@@ -197,7 +197,7 @@ const pieReq = computed(() => pieSlices("req"));
 
 const keyRows = computed(() => [...(ov.value?.keys || [])].sort((a, b) => b.tokens - a.tokens).map((k) => ({ ...k, id: k.keyId || NONE_FILTER, label: groupLabel("key", k.name) })));
 
-/** 用量统计行 → 明细筛选：按当前维度把该行灌进对应筛选条件并滚到明细表 */
+/** 用量统计行 → 明细筛选：把该行灌进对应筛选条件并滚到明细表（查询交给 scheduleDetailQuery） */
 function drillToRow(r: ProxyStatsAggRow) {
   filters.key = "";
   filters.channel = "";
@@ -206,8 +206,7 @@ function drillToRow(r: ProxyStatsAggRow) {
   else if (dim.value === "channel") filters.channel = r.id || NONE_FILTER;
   else if (dim.value === "model") filters.model = r.name || NONE_FILTER;
   filters.status = "";
-  page.value = 1;
-  loadDetail();
+  scheduleDetailQuery(); // 条件与上次相同时 watch 不会触发，这里显式查一次（顺带回第 1 页）
   detailRef.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -289,17 +288,23 @@ function goPage(p: number) {
 // ===== 明细筛选 =====
 const detailRef = ref<HTMLElement | null>(null);
 
-/** 点「查询」/ 回车：把当前填写的条件应用上去并回到第一页（只作用于明细表，不动请求趋势折线） */
-function applyFilter() {
+/** 明细查询：条件一变就查（下拉选中 / 清空 / 下钻都算），并回到第 1 页。
+ *  250ms 合流：连续改两个下拉只发一次请求，避免两次结果互相覆盖。
+ *  只作用于明细表——请求趋势折线已与筛选解耦，不吃这些条件。 */
+const scheduleDetailQuery = coalesceAsync(() => {
   page.value = 1;
-  loadDetail();
-}
+  return loadDetail();
+}, 250);
+watch(filters, () => scheduleDetailQuery());
+
+/** 清空全部条件后重查一次 */
 function resetFilters() {
   filters.key = "";
   filters.model = "";
   filters.channel = "";
   filters.status = "";
-  applyFilter();
+  // 本来就没有筛选条件时 watch 不会触发，这里兜一手（顺带把页码拉回第 1 页）
+  scheduleDetailQuery();
 }
 
 // ===== 清理流水：范围二选一（仅超期=按设置页保留期删旧 / 全部=清空整表），不可恢复所以先问一道 =====
@@ -343,8 +348,7 @@ watch([preset, customRange], () => {
 });
 // 维度切换：请求趋势折线按新维度重新分组取数（用量统计表一次拿到全部维度，无需重拉）
 watch(dim, () => loadSeries());
-// 筛选条件只在点「查询」时才生效：下拉 / 输入框改完不自动查，避免与「筛选」按钮下钻叠成两次查询。
-// 回车等同点查询（键盘操作的常规预期），文本输入去掉了原来的 300ms 防抖轮询。
+// 明细筛选已改为「选中即查」：没有手动「查询」按钮，条件一变就自动查（watch(filters) + 250ms 合流）。
 
 watch(active, (on) => {
   if (on) scheduleRefresh();
@@ -377,6 +381,7 @@ onUnmounted(() => {
   window.clearInterval(liveTimer);
   scheduleRefresh.cancel();
   scheduleLiveRefresh.cancel();
+  scheduleDetailQuery.cancel();
   if (offEvent) offEvent();
 });
 </script>
@@ -484,6 +489,8 @@ onUnmounted(() => {
         <div class="detail-filters">
           <el-select v-model="filters.key" placeholder="全部 Key" clearable class="f-el-select" popper-class="glass-popper">
             <el-option value="" label="全部 Key" />
+            <!-- 固定补一项：明细保留「无 Key」请求，统计里却看不到它们，得能在这里筛出来 -->
+            <el-option :value="NONE_FILTER" label="（无 Key）" />
             <el-option v-for="k in keyRows" :key="k.id" :value="k.id" :label="k.label" />
           </el-select>
           <el-select v-model="filters.model" placeholder="全部模型" clearable filterable class="f-el-select f-el-wide" popper-class="glass-popper">
@@ -501,7 +508,6 @@ onUnmounted(() => {
             <el-option value="5xx" label="服务端 5xx" />
             <el-option value="other" label="无响应" />
           </el-select>
-          <button class="btn btn-sm btn-chip-accent" @click="applyFilter"><i class="ph ph-magnifying-glass"></i> 查询</button>
           <button class="btn btn-sm" @click="resetFilters"><i class="ph ph-arrow-counter-clockwise"></i> 重置</button>
           <span class="detail-agg">{{ detail?.agg ? `${fmtInt(detail.agg.req)} 次请求 / 输入 ${fmtK(detail.agg.promptTokens)} token / 输出 ${fmtK(detail.agg.completionTokens)} token / 合计 ${fmtK(detail.agg.tokens)} token` : "" }}</span>
         </div>

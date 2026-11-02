@@ -277,25 +277,26 @@ console.log("\n⑩ TOP 排行默认全量返回");
   ok(rows.some((r) => r.name === "extra-0"), "低频条目（extra-0）也在候选集里——前端按 Token 重排才选得出真正的 Token 大户");
 }
 
-// ===== ⑪ 空分组（未认证请求）显式成组 + 可筛选 =====
-console.log("\n⑪ 空分组（未认证请求）显式成组");
+// ===== ⑪ 「无 Key」请求：统计与图表排除，只有明细保留 =====
+console.log("\n⑪ 「无 Key」请求的统计口径");
 {
   put({ ts: NOW - 30000, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: "", status: 401 });
 
   const ch = store.statsTopRich("channel", NOW - 30 * DAY, NOW);
-  const emptyCh = ch.find((r) => r.id === "");
-  eq(emptyCh && emptyCh.req, 1, "空渠道单独成组，不再被过滤");
+  ok(!ch.some((r) => r.id === ""), "渠道排行不含空渠道（无 Key 请求被排除）");
   const keys = store.statsKeys(NOW - 30 * DAY, NOW);
-  const emptyKey = keys.find((k) => k.keyId === "");
-  eq(emptyKey && emptyKey.req, 1, "空 Key 单独成组");
+  ok(!keys.some((k) => k.keyId === ""), "各 Key 用量不含空 Key");
   const trend = store.statsSeriesByDim({ from: NOW - 30 * DAY, to: NOW, granularity: "day", dim: "channel" });
-  ok(trend.series.some((s) => s.id === ""), "折线图也含空渠道这一组（合计才对得上总量）");
+  ok(!trend.series.some((s) => s.id === ""), "请求趋势折线不含空分组");
 
-  // 哨兵筛选：__none__ 映射为「该列为空」，与「不筛选」区分开
-  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, channel: "__none__" }).total, 1, "按哨兵筛空渠道 = 1 条（没被当成「全部」）");
-  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, keyId: "__none__" }).total, 1, "按哨兵筛空 Key = 1 条");
-  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, model: "__none__" }).total, 1, "按哨兵筛空模型 = 1 条");
-  ok(store.statsDetail({ from: NOW - 30 * DAY, to: NOW }).total > 1, "不传筛选项仍返回全量（哨兵不误伤正常查询）");
+  // KPI 与明细的条数差，正好是这条无 Key 请求
+  const ov = store.statsOverview({ from: NOW - 30 * DAY, to: NOW });
+  const detail = store.statsDetail({ from: NOW - 30 * DAY, to: NOW, pageSize: 100 });
+  eq(detail.total - ov.summary.req, 1, "明细比概览 KPI 多 1 条（正好是那条无 Key 请求）");
+
+  // 明细仍保留它，且能按哨兵筛出来
+  ok(detail.rows.some((r) => r.keyId === ""), "明细行里仍保留这条无 Key 请求");
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, channel: "__none__" }).total, 1, "明细里可按「空渠道」把它筛出来");
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"} 统计自测：${pass} 项通过，${failed} 项失败`);
