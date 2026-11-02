@@ -67,6 +67,8 @@ function render() {
     tooltip: {
       ...glassTooltip(),
       trigger: "item",
+      // 浮框固定在鼠标右侧：默认跟随鼠标会压在饼图上
+      position: "right",
       formatter: (p: { name?: string; value?: number; color?: string }) => {
         const v = Number(p.value) || 0;
         const pct = ((v / sum) * 100).toFixed(1);

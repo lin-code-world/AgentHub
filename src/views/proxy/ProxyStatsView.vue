@@ -531,7 +531,7 @@ onUnmounted(() => {
                 <td class="mono">{{ r.model || "-" }}</td>
                 <td class="mono">{{ r.modelActual || "-" }}</td>
                 <td class="mono">{{ r.keyName || "-" }}</td>
-                <td>{{ channelName(r.channel) }}</td>
+                <td>{{ groupLabel("channel", r.channel) }}</td>
                 <td>{{ r.accountName || "-" }}</td>
                 <td>
                   <el-tooltip :content="r.error" :disabled="!r.error" placement="top">
