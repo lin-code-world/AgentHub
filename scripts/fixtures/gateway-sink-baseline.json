@@ -483,5 +483,185 @@
         "error": "unknown model"
       }
     ]
+  },
+  "prompt-overflow-jump-channel": {
+    "id": "prompt-overflow-jump-channel",
+    "desc": "413 输入过大：同渠道剩余号不撞，重排后先试上下文最大的备选渠道成功",
+    "status": 200,
+    "body": "data: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"大上下文渠道答了\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":7,\"total_tokens\":16}}\n\ndata: [DONE]\n\n",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy_ai",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "workbuddy_ai",
+        "accountName": "三号",
+        "model": "glm-4.6",
+        "status": 200,
+        "promptTokens": 9,
+        "completionTokens": 7,
+        "error": "failover:trae→workbuddy_ai"
+      }
+    ]
+  },
+  "prompt-overflow-all-fail": {
+    "id": "prompt-overflow-all-fail",
+    "desc": "三个渠道全部输入过大：按上下文声明降序逐渠道试完（零冷却零降级），上游 400 原话透传",
+    "status": 200,
+    "body": "data: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"error\":{\"message\":\"[ah:REQID] 已尝试 2 个渠道（trae(一号) → workbuddy_ai(三号)）均不可用：上游返回 11115\",\"type\":\"upstream_error\",\"param\":null,\"code\":null}}\n\ndata: [DONE]\n\n",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy_ai",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "workbuddy",
+        "accountName": "二号",
+        "model": "glm-4.6",
+        "status": 400,
+        "error": "[ah:REQID] 已尝试 2 个渠道（trae(一号) → workbuddy_ai(三号)）均不可用：上游返回 11115"
+      }
+    ]
+  },
+  "prompt-overflow-stream-jump": {
+    "id": "prompt-overflow-stream-jump",
+    "desc": "流中 error 带输入过大文案且未出线：同渠道不换号，直接跳更大上下文渠道成功（流中路径同口径）",
+    "status": 200,
+    "body": "data: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"流中超限后跳渠道答\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":1,\"total_tokens\":9}}\n\ndata: [DONE]\n\n",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy_ai",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "workbuddy_ai",
+        "accountName": "三号",
+        "model": "glm-4.6",
+        "status": 200,
+        "promptTokens": 8,
+        "completionTokens": 1,
+        "error": "failover:trae→workbuddy_ai"
+      }
+    ]
+  },
+  "prompt-overflow-after-delta": {
+    "id": "prompt-overflow-after-delta",
+    "desc": "正文已出线后流中报输入过大：既有禁令优先（流已输出绝不换渠道重发，防止半截拼接），502 中断收尾",
+    "status": 200,
+    "body": "data: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"已经吐给客户端的正文\"},\"finish_reason\":null}]}\n\ndata: {\"error\":{\"message\":\"prompt is too long\",\"type\":\"upstream_error\",\"param\":null,\"code\":null}}\n\ndata: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"glm-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":1,\"total_tokens\":9}}\n\ndata: [DONE]\n\n",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "trae",
+        "accountName": "一号",
+        "model": "glm-4.6",
+        "status": 200,
+        "promptTokens": 8,
+        "completionTokens": 1,
+        "error": "notice:truncated:prompt is too long"
+      }
+    ]
+  },
+  "prompt-overflow-explicit-bound": {
+    "id": "prompt-overflow-explicit-bound",
+    "desc": "Key 绑定渠道时输入过大不跳渠道（与「显式边界不让位」同口径）：绑定 trae 的 Key 413 后直接终止，错误带可执行修法",
+    "status": 200,
+    "body": "data: {\"id\":\"chatcmpl-REQID\",\"object\":\"chat.completion.chunk\",\"created\":CREATED,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"error\":{\"message\":\"[ah:REQID] request entity too large（输入超过该模型的上下文上限：请缩短提问，或改用上下文更大的模型）\",\"type\":\"upstream_error\",\"param\":null,\"code\":null}}\n\ndata: [DONE]\n\n",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "trae",
+        "accountName": "一号",
+        "model": "deepseek-v4.1-flash",
+        "status": 413,
+        "error": "[ah:REQID] request entity too large（输入超过该模型的上下文上限：请缩短提问，或改用上下文更大的模型）"
+      }
+    ]
+  },
+  "prompt-overflow-nonstream-json": {
+    "id": "prompt-overflow-nonstream-json",
+    "desc": "非流式全部渠道输入过大：HTTP 413 + type=invalid_request_error（不是 server_error，防客户端误判网关故障原样重放）+ 修法提示",
+    "status": 413,
+    "body": "{\"error\":{\"message\":\"[ah:REQID] 已尝试 2 个渠道（trae(一号) → workbuddy_ai(三号)）均不可用：request entity too large（输入超过该模型的上下文上限：请缩短提问，或改用上下文更大的模型）\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":null}}",
+    "followups": [],
+    "coolLog": [],
+    "pickLog": [
+      {
+        "channel": "trae",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy_ai",
+        "strategy": "expire_first",
+        "excluded": ""
+      },
+      {
+        "channel": "workbuddy",
+        "strategy": "expire_first",
+        "excluded": ""
+      }
+    ],
+    "usageRows": [
+      {
+        "channel": "workbuddy",
+        "accountName": "二号",
+        "model": "glm-4.6",
+        "status": 413,
+        "error": "[ah:REQID] 已尝试 2 个渠道（trae(一号) → workbuddy_ai(三号)）均不可用：request entity too large（输入超过该模型的上下文上限：请缩短提问，或改用上下文更大的模型）"
+      }
+    ]
   }
 }

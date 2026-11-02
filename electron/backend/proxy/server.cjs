@@ -403,6 +403,21 @@ function orderCandidateQueue(queue, limit, deferHead) {
   return { queue: deferred ? [...out.slice(0, max - 1), out[out.length - 1]] : out.slice(0, max), deferred };
 }
 
+/** 「输入过大」跳渠道时对剩余候选重排（纯函数，tools/proxy-overflow-failover-selftest.cjs 断言用）。
+ *  同一模型 id 在各渠道的上下文声明不同：按声明降序重排 startIdx 之后的渠道，
+ *  上下文大的先试，压掉「连撞几个同样放不下的渠道」的无效往返；
+ *  声明 0（目录未拉取/未声明）自然沉底且保持原相对顺序（Array.sort 稳定）。
+ *  startIdx 之前的已试渠道不动。ctxOf(channel) 返回该渠道对该模型的有效上下文声明。
+ *  注意：本函数会打乱 orderCandidateQueue 的「让位渠道保末位」约定——输入过大场景下
+ *  上下文声明是更强的前置判据（放不下的渠道排在前面对用户只是干等），刻意如此，勿"修"。 */
+function reorderQueueByContext(queue, startIdx, ctxOf) {
+  if (!Array.isArray(queue) || !Number.isInteger(startIdx) || startIdx < 0 || startIdx >= queue.length - 1) return queue;
+  const rest = queue.splice(startIdx);
+  rest.sort((a, b) => (Number(ctxOf(b)) || 0) - (Number(ctxOf(a)) || 0));
+  queue.push(...rest);
+  return queue;
+}
+
 /** 单账号尝试：401 就地刷新凭证、同渠道重试一次（WB 实证，Trae 同理）。
  *  刷新走 single-flight（并发 401 共享同一次刷新，防 refreshToken 轮换互相践踏）；
  *  刷新失败不立即判废——连续 3 次才 relogin（同语义），中间短冷却重试 */
@@ -495,16 +510,19 @@ function classifyUpstream(e, planLimit, channel) {
     };
   }
   if (/\b11102\b/.test(msg) || /service info not found/i.test(msg)) return { kind: "model_blocked", switchable: true, status: 404 };
-  // 输入过大（413 / 上游的「too long」族文案）：同一份 body 换任何账号都同错，
-  // 归 prompt_too_long 走零动作透传，绝不能冷却账号——否则一次超大 prompt 会把整条池逐个罚掉。
+  // 输入过大（413 / 上游的「too long」族文案）：同一份 body 换**同渠道**任何账号都同错，
+  // 归 prompt_too_long 零动作透传，绝不能冷却账号——否则一次超大 prompt 会把整条池逐个罚掉。
+  // 但**换渠道**是另一回事：同一模型 id 在各渠道的上下文声明不同，换到声明更大的渠道可能放得下，
+  // 故带 channelSwitchable 标记——外层据此跳过本渠道剩余号、把剩余候选按上下文声明降序重排后继续
+  // （channelSwitchable ≠ switchable：switchable 是同渠道换号，这里刻意保持 false）。
   // 词表对齐 trae 的 INPUT_TOO_LARGE_MARKERS（大小写不敏感、中文原样匹配），
   // 那里同时钉住了「413 排在最前」的顺序理由：body 恰好带 "1005…plan" 时不能被 plan 匹配劫持成硬冷却。
   // 顺序：11115 与 402/429 等已有判定在前（它们更具体），本条只兜「其它 4xx 的过大文案」。
   if (code === 413 || (e && e.status === 413) || isInputTooLargeMsg(msg)) {
-    return { kind: "prompt_too_long", switchable: false, status: 413 };
+    return { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 413 };
   }
   if (/\b11115\b/.test(msg) || /prompt is too long|prompt_too_long/i.test(msg)) {
-    return { kind: "prompt_too_long", switchable: false, status: 400 }; // 请求本身超限：零动作透传
+    return { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 400 }; // 请求本身超限：零动作透传（渠道间可跳，见上）
   }
   if (/\b11101\b/.test(msg)) return { kind: "bad_params", switchable: true, status: 400 };
   if (e && e.status === 429) {
@@ -1122,7 +1140,9 @@ async function handleChat(req, res, settings, surface, convNotes) {
       ).queue;
       for (const c of queue) candidateChannels.add(c);
       const primaryChannel = queue[0];
-      for (const chan of queue) {
+      // 索引循环（不是 for...of）：「输入过大」跳渠道时要在循环中途重排剩余候选（见下）
+      for (let qi = 0; qi < queue.length; qi++) {
+        const chan = queue[qi];
         if (done || fatalErr) break;
         if (upstreamTries >= maxTries) break;
         // 渠道降级中（熔断窗口）：跳过不撞墙；每轮重查——备选可能在排队期间刚被并发请求打光降级
@@ -1292,6 +1312,19 @@ async function handleChat(req, res, settings, surface, convNotes) {
               humanizeAccountBlocked(lastErr, cls);
               applyCool(acc.id, targetModel, cls, lastErr.message);
               if (!cls.switchable) {
+                // 输入过大且还有备选渠道：同一模型 id 在各渠道的上下文声明不同，换渠道可能放得下——
+                // 跳过本渠道剩余号（同渠道换号必同错），剩余候选按上下文声明降序重排后继续
+                //（与 catch 路径同口径，见下）。全放不下时由链尾照旧透传上游原错误。
+                // 显式路由（Key 绑定 / fixed 指定）不跳：绑定是用户写下的物理边界（对账 / 合规 /
+                // 控费），与 orderCandidateQueue 的「显式边界不让位」同口径；isExplicitRoute
+                // 传主渠道 resolved.channel（让位可能已改过 queue[0]）。
+                // 全放不下时 fatalErr 照常设置，模型回退链仍会尝试下一个模型——prompt_too_long
+                // 只与上下文窗口有关、与模型基本无关，回退模型收益低；保留简单行为，刻意不特判。
+                if (cls.channelSwitchable && !isExplicitRoute(key, settings, chainModel, resolved.channel) && qi + 1 < queue.length) {
+                  reorderQueueByContext(queue, qi + 1, (ch) => adapters.channelModelContext(settings, ch, chainModel));
+                  streamErr = null;
+                  break;
+                }
                 fatalErr = lastErr;
                 streamErr = null;
                 break;
@@ -1384,6 +1417,18 @@ async function handleChat(req, res, settings, surface, convNotes) {
             }
             applyCool(acc.id, targetModel, cls, e.message);
             if (!cls.switchable) {
+              // 输入过大且还有备选渠道：同一模型 id 在各渠道的上下文声明不同，换渠道可能放得下——
+              // 跳过本渠道剩余号（同渠道换号必同错，switchable 保持 false），剩余候选按上下文声明
+              // 降序重排后继续。全放不下时由链尾照旧透传上游原错误；prompt_too_long 不在
+              // DEGRADABLE，跳渠道不会被误判成渠道故障降级。
+              // 显式路由（Key 绑定 / fixed 指定）不跳：绑定是用户写下的物理边界，与
+              // orderCandidateQueue 的「显式边界不让位」同口径（isExplicitRoute 传主渠道）。
+              // 模型回退链不在此截断：全放不下时 fatalErr 照常设置，下一模型仍会尝试（刻意保留，
+              // 理由见流中路径同款注释）。
+              if (cls.channelSwitchable && !isExplicitRoute(key, settings, chainModel, resolved.channel) && qi + 1 < queue.length) {
+                reorderQueueByContext(queue, qi + 1, (ch) => adapters.channelModelContext(settings, ch, chainModel));
+                break;
+              }
               fatalErr = e;
               break;
             }
@@ -1524,13 +1569,19 @@ async function handleChat(req, res, settings, surface, convNotes) {
     if (/\b6004\b/.test(msg) && !msg.includes("6004 =")) {
       msg += "（6004 = 账号×模型的频率上限，不是积分耗尽；可按上游给的时间等待，或改用其它模型）";
     }
+    // 413（输入过大）：type 标 server_error 会让客户端读成「网关出毛病了」，原样重放同一份
+    // 超大提问，把跳渠道想压掉的无效往返又召回来——改标 invalid_request_error（请求本身的错），
+    // 并补一句可执行的修法。只动 413：11115 形态的 400 与 unknown-model 等 400 共用出口，动了会漂既有基线
+    if (st === 413 && !msg.includes("缩短提问")) {
+      msg += "（输入超过该模型的上下文上限：请缩短提问，或改用上下文更大的模型）";
+    }
     // AgentHub 请求 id 前缀：用户报障时直接引用它，就能在明细里定位到同一行（issue #78）。
     // 同时把上游的 code / request_id 落进记账（客户端消息会截断，长标识常被切掉）
     msg = `[ah:${String(reqId).slice(0, 8)}] ${msg}`;
     if (!wantStream || !ttftMs) {
       // 还没出过内容：流式且头已落地时仍要塞错误帧，否则回标准 JSON 错误状态
       if (wantStream && res.headersSent) sink.endErr(st, msg);
-      else sink.endErr(st === 401 ? 502 : st, msg, st === 402 || st === 429 ? "rate_limit_exceeded" : st === 403 ? "permission_error" : "server_error");
+      else sink.endErr(st === 401 ? 502 : st, msg, st === 402 || st === 429 ? "rate_limit_exceeded" : st === 403 ? "permission_error" : st === 413 ? "invalid_request_error" : "server_error");
     } else {
       sink.endErr(st, msg);
     }
@@ -1778,6 +1829,8 @@ module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSn
   normalizeChannelFailoverMax, perModelUpstreamBudget,
   // 候选渠道队列重排（tools/proxy-channel-defer-selftest.cjs 断言用）
   orderCandidateQueue, isExplicitRoute,
+  // 「输入过大」跳渠道的剩余候选重排（tools/proxy-overflow-failover-selftest.cjs 断言用）
+  reorderQueueByContext,
   // 候选队列耗尽文案（scripts/test-concurrency-message.cjs 行为断言用）
   concurrencyBlockedMessage,
   // 模型名形近提示（scripts/test-model-hint.cjs 行为断言用）

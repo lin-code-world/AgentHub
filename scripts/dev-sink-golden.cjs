@@ -228,6 +228,91 @@ const SCENARIOS = {
     picks: [],
     scripts: [],
   },
+  // —— 「输入过大跳渠道」三场景：上游 413 /「prompt is too long」→ 同渠道不换号，
+  // 跳到上下文声明更大的备选渠道（重排按 modelCustomByChannel 注入的声明值降序：
+  // workbuddy_ai 1M 先于 workbuddy 128K，pickLog 的渠道顺序因此锁定重排语义）——
+  "prompt-overflow-jump-channel": {
+    desc: "413 输入过大：同渠道剩余号不撞，重排后先试上下文最大的备选渠道成功",
+    model: "glm-4.6", channels: ["trae", "workbuddy", "workbuddy_ai"], stream: true,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "glm-4.6": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1", "acc3"],
+    scripts: [
+      [{ throw: { message: "request entity too large", status: 413 } }],
+      [
+        { emit: { type: "delta", delta: { content: "大上下文渠道答了" } } },
+        { emit: { type: "usage", usage: { prompt_tokens: 9, completion_tokens: 7, total_tokens: 16 } } },
+        { emit: { type: "finish", reason: "stop" } },
+        { return: { status: 200, planLimit: false } },
+      ],
+    ],
+  },
+  "prompt-overflow-all-fail": {
+    desc: "三个渠道全部输入过大：按上下文声明降序逐渠道试完（零冷却零降级），上游 400 原话透传",
+    model: "glm-4.6", channels: ["trae", "workbuddy", "workbuddy_ai"], stream: true,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "glm-4.6": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1", "acc3", "acc2"],
+    scripts: [
+      [{ throw: { message: "request entity too large", status: 413 } }],
+      // message 不含「过大」词表文案：走 11115 数字码分支（另一条 prompt_too_long 分类路径），最终 400 透传
+      [{ throw: { message: "上游返回 11115", status: 400 } }],
+      [{ throw: { message: "上游返回 11115", status: 400 } }],
+    ],
+  },
+  "prompt-overflow-stream-jump": {
+    desc: "流中 error 带输入过大文案且未出线：同渠道不换号，直接跳更大上下文渠道成功（流中路径同口径）",
+    model: "glm-4.6", channels: ["trae", "workbuddy", "workbuddy_ai"], stream: true,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "glm-4.6": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1", "acc3"],
+    scripts: [
+      [
+        { emit: { type: "delta", delta: { role: "assistant", content: "" } } },
+        { emit: { type: "error", message: "prompt is too long", status: 400 } },
+        { return: { status: 200, planLimit: false } },
+      ],
+      [
+        { emit: { type: "delta", delta: { content: "流中超限后跳渠道答" } } },
+        { emit: { type: "finish", reason: "stop" } },
+        { return: { status: 200, planLimit: false } },
+      ],
+    ],
+  },
+  "prompt-overflow-after-delta": {
+    desc: "正文已出线后流中报输入过大：既有禁令优先（流已输出绝不换渠道重发，防止半截拼接），502 中断收尾",
+    model: "glm-4.6", channels: ["trae", "workbuddy", "workbuddy_ai"], stream: true,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "glm-4.6": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1"],
+    scripts: [[
+      { emit: { type: "delta", delta: { content: "已经吐给客户端的正文" } } },
+      { emit: { type: "error", message: "prompt is too long", status: 400 } },
+      { return: { status: 200, planLimit: false } },
+    ]],
+  },
+  "prompt-overflow-explicit-bound": {
+    desc: "Key 绑定渠道时输入过大不跳渠道（与「显式边界不让位」同口径）：绑定 trae 的 Key 413 后直接终止，错误带可执行修法",
+    model: "deepseek-v4.1-flash", channels: ["trae", "workbuddy", "workbuddy_ai"], keyRoute: "trae", stream: true,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "deepseek-v4.1-flash": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1"],
+    scripts: [[
+      { throw: { message: "request entity too large", status: 413 } },
+    ]],
+  },
+  "prompt-overflow-nonstream-json": {
+    desc: "非流式全部渠道输入过大：HTTP 413 + type=invalid_request_error（不是 server_error，防客户端误判网关故障原样重放）+ 修法提示",
+    model: "glm-4.6", channels: ["trae", "workbuddy", "workbuddy_ai"], stream: false,
+    accChannel: { acc1: "trae", acc2: "workbuddy", acc3: "workbuddy_ai" },
+    modelCustomByChannel: { "glm-4.6": { workbuddy: { contextLength: 131072 }, workbuddy_ai: { contextLength: 1000000 } } },
+    picks: ["acc1", "acc3", "acc2"],
+    scripts: [
+      [{ throw: { message: "request entity too large", status: 413 } }],
+      [{ throw: { message: "request entity too large", status: 413 } }],
+      [{ throw: { message: "request entity too large", status: 413 } }],
+    ],
+  },
 };
 
 // 客户端刻意用 node:http 而不是 fetch：undici 的全局连接池在 Windows 上退出时会踩
@@ -299,7 +384,7 @@ function runScenario(id) {
     fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
     rules.reload("catalog.json");
   }
-  const gwKey = store.createKey({ name: "golden", route: "auto", dailyQuota: 0, rateLimit: 0 });
+  const gwKey = store.createKey({ name: "golden", route: sc.keyRoute || "auto", dailyQuota: 0, rateLimit: 0 });
 
   // 观测记录：冷却决策与选号顺序，和字节流同等重要（重构最容易悄悄改掉的就是这两条）
   const coolLog = [];
@@ -309,7 +394,12 @@ function runScenario(id) {
   const accounts = {
     acc1: { id: "acc1", channel: sc.channel || "trae", name: "一号", status: "online" },
     acc2: { id: "acc2", channel: sc.channel || "trae", name: "二号", status: "online" },
+    acc3: { id: "acc3", channel: sc.channel || "trae", name: "三号", status: "online" },
   };
+  // 场景声明了账号归属（accChannel）时按它覆盖：跨渠道场景的重排校验靠它——
+  // 渠道取到不属于自己的账号（重排方向写反等）按「该渠道无此号」处理，
+  // 让重排 bug 结构性暴露（pickLog 渠道序必然偏离基线），而不是恰好被 pickLog 顺序抓到
+  for (const [accId, accChannel] of Object.entries(sc.accChannel || {})) if (accounts[accId]) accounts[accId].channel = accChannel;
 
   // —— 打桩：把调度核心与外界的所有接缝接管，场景剧本因此完全确定 ——
   const raw = {
@@ -319,8 +409,13 @@ function runScenario(id) {
     poolPick: pool.pickAccount,
   };
   // 给了 owners 就只认 owners（回退场景要的就是「请求模型无人拥有、回退模型有人拥有」）；
+  // 给了 channels 则是跨渠道场景：请求模型命中时返回整份渠道列表（主渠道由 fixedChannel
+  // 决定，列表整体进候选队列，「输入过大跳渠道」场景用）；
   // 没给则沿用「请求模型即命中渠道」的旧口径，不影响既有场景。
-  adapters.modelOwners = (model) => (sc.channel && (sc.owners ? sc.owners.includes(String(model)) : String(model) === sc.model) ? [sc.channel] : raw.adaptersOwners(model));
+  adapters.modelOwners = (model) => {
+    if (sc.channels) return String(model) === sc.model ? sc.channels : raw.adaptersOwners(model);
+    return sc.channel && (sc.owners ? sc.owners.includes(String(model)) : String(model) === sc.model) ? [sc.channel] : raw.adaptersOwners(model);
+  };
   // 游标必须在 get() 外面：attemptChat 每次尝试都会重新 adapters.get(channel)，
   // 计数跟着归零就会让"第二次尝试"重播第一份剧本 —— 多账号场景于是全部失真。
   let call = 0;
@@ -352,7 +447,9 @@ function runScenario(id) {
     pickLog.push({ channel, strategy, excluded: [...(exclude || [])].join(",") });
     if (!want) return null;
     if ((exclude || []).includes(want)) return null;
-    return accounts[want];
+    if (accounts[want].channel !== channel) return null; // 归属不符 = 该渠道没有这个号（见上方 accChannel 注释）
+    // 跨渠道场景：账号归属随调用时的渠道走（旧场景 chan === sc.channel，行为不变）
+    return Object.assign({}, accounts[want], { channel });
   };
   pool.acquireAccount = () => {};
   pool.releaseAccount = () => {};
@@ -382,6 +479,8 @@ function runScenario(id) {
       port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,
       routeStrategy: "smart", fixedChannel: "trae", modelOverrides: {}, debugStatus: false,
       humanizeJitter: false, disabledModels: [], modelFallback: sc.fallback || {},
+      // 「输入过大跳渠道」场景经它注入各渠道的上下文声明（channelModelContext 的最高优先源）
+      modelCustomByChannel: sc.modelCustomByChannel || {},
     }))
     .then(async (sr) => {
       if (!sr.ok) throw new Error("网关起不来：" + sr.message);

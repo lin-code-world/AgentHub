@@ -211,6 +211,26 @@ function modelReasoningEfforts(model, channel) {
   return meta && Array.isArray(meta.reasoning_effort) ? meta.reasoning_effort.map(String).filter(Boolean) : [];
 }
 
+/** 模型在某渠道的有效上下文声明（渠道自定义 > 渠道目录；查不到 → 0）。
+ *  「输入过大跳更大上下文渠道」的候选重排用：反向映射统一名按映射后的实际名查目录
+ *  （与 mergedModels 的 lookupId 口径一致），渠道自定义与 resolveCustomParams 同源
+ *  （modelCustomByChannel 按「实际模型 id」为键）。0 = 该渠道对此模型没有上下文声明。 */
+function channelModelContext(cfg, channel, model) {
+  if (!get(channel)) return 0;
+  const c = cfg || proxyConfig();
+  const wanted = String(model || "").trim();
+  if (!wanted) return 0;
+  const mapped = reverseAliasTarget(wanted, channel, c);
+  const lookupId = mapped || wanted;
+  const perChan = (c.modelCustomByChannel || {})[lookupId] || {};
+  const custom = perChan[channel];
+  if (custom && typeof custom === "object" && Number(custom.contextLength) > 0) return Number(custom.contextLength);
+  const modelLevel = (c.modelCustom || {})[lookupId] || (c.modelCustom || {})[wanted];
+  if (modelLevel && typeof modelLevel === "object" && Number(modelLevel.contextLength) > 0) return Number(modelLevel.contextLength);
+  const meta = catalogMap(channel).get(lookupId.toLowerCase()) || catalogMap(channel).get(wanted.toLowerCase());
+  return Number(meta && meta.contextLength) || 0;
+}
+
 /** 模型目录地址归一：旧接口 get_detail_param/model_list 拉不到目录（返回空串）；
  *  show_custom_model=true 改成 false（目录不需要自定义模型）。 */
 function normalizeModelsUrl(u) {
@@ -5005,7 +5025,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）
