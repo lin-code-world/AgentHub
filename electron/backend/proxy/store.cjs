@@ -1511,7 +1511,9 @@ const TOP_GROUP = {
 
 /** TOP 排行（富字段）：按 dim 分组，整体回给前端——前端要按「当前点选的列」重排再取前 10 /
  *  前 8（饼图），若后端先按请求数砍一刀，Token 大户会被提前丢掉（默认视图就错）。
- *  返回量按分组数走，正常几百条、几十 KB；2000 只作病态数据（模型名带随机后缀等）的保险上限。 */
+ *  返回量按分组数走，正常几百条、几十 KB；2000 只作病态数据（模型名带随机后缀等）的保险上限。
+ *  不过滤空分组（未认证请求的 channel='' / key_id='' 等）：让它们单独成组，
+ *  排行与饼图的合计才对得上总量，也才能一眼看出「谁在拿错 Key 试探」。 */
 function statsTopRich(dim, from, to, limit) {
   open();
   const g = TOP_GROUP[dim] || TOP_GROUP.channel;
@@ -1521,7 +1523,6 @@ function statsTopRich(dim, from, to, limit) {
      FROM usage_requests
      WHERE ts >= ?
        AND ts <= ?
-       AND ${g.col} != ''
      GROUP BY ${g.col}
      ORDER BY req DESC LIMIT ?`
   ).all(from, to, n);
@@ -1533,12 +1534,13 @@ function statsTopRich(dim, from, to, limit) {
 
 /** 各 Key 用量：按 key_id 分组（Key 名可改，id 才是身份），带最近使用时间。
  *  Key 名透出以当前名优先（Key 已删/未命名回退最后一次请求时的快照名）。
- *  同样整体回给前端：页面的「各 Key 用量」与筛选取材于此，砍条数会让 Key 凭空消失；2000 只作保险上限。 */
+ *  同样整体回给前端：页面的「各 Key 用量」与筛选取材于此，砍条数会让 Key 凭空消失；2000 只作保险上限。
+ *  空 key_id（未认证请求）不排除，与渠道维度一致地单独成组。 */
 function statsKeys(from, to) {
   open();
   const rows = db.prepare(
     `SELECT key_id, MAX(ts) AS last_ts, key_name AS name, ${AGG_COLS}
-     FROM usage_requests WHERE ts >= ? AND ts <= ? AND key_id != ''
+     FROM usage_requests WHERE ts >= ? AND ts <= ?
      GROUP BY key_id ORDER BY req DESC LIMIT 2000`
   ).all(from, to);
   const keyNames = currentKeyNames();
@@ -1593,6 +1595,11 @@ function statusWhere(status) {
   return "";
 }
 
+/** 空分组的筛选哨兵：渠道 / Key / 模型都可能为空（未认证请求、没走到渠道），
+ *  前端要能像筛普通值一样把它们筛出来；空串会被当成「不筛选」，所以用一个不可能撞上真实值的标记。
+ *  （页面 src/views/proxy/ProxyStatsView.vue 用的是同一个字面量，两边一起改。） */
+const NONE_FILTER = "__none__";
+
 /** 明细 / 趋势共用的筛选条件 → { where, vals }：口径只此一处，避免两处查询漂移。
  *  区间缺省 = 不限（保留期自测等旧调用方按「全表」用；统计页总是显式传 from/to）。 */
 function usageWhere(o) {
@@ -1602,9 +1609,13 @@ function usageWhere(o) {
   const to = Number(o.to);
   if (Number.isFinite(from) && from > 0) { where.push("ts >= ?"); vals.push(Math.round(from)); }
   if (Number.isFinite(to) && to > 0) { where.push("ts <= ?"); vals.push(Math.round(to)); }
-  if (o.channel) { where.push("channel = ?"); vals.push(o.channel); }
-  if (o.keyId) { where.push("key_id = ?"); vals.push(o.keyId); }
-  if (o.model) { where.push("model = ?"); vals.push(o.model); }
+  const eq = (col, v) => {
+    if (v === NONE_FILTER) where.push(`${col} = ''`);
+    else { where.push(`${col} = ?`); vals.push(v); }
+  };
+  if (o.channel) eq("channel", o.channel);
+  if (o.keyId) eq("key_id", o.keyId);
+  if (o.model) eq("model", o.model);
   const sw = statusWhere(o.status);
   if (sw) where.push(sw);
   return { where, vals };
@@ -1654,7 +1665,8 @@ function statsFilteredSeries(opts) {
  *  纵轴画 token 还是请求数由前端按用量统计当前选中的列决定，所以两个指标都回。
  *  分组口径与 statsTopRich / statsKeys 一致：channel / model 按值分组；key / account 按 id
  *  分组、名字用当前名（改名 / 删除后回退流水快照名）。序列按区间内 token 总量倒序排列，
- *  前端配色按此顺序轮转，刷新后颜色不会乱跳。空分组（如未认证请求的 channel=''）不进图。 */
+ *  前端配色按此顺序轮转，刷新后颜色不会乱跳。空分组（如未认证请求的 channel=''）也进图，
+ *  与排行 / 饼图口径一致——否则折线的合计又会对不上总量。 */
 function statsSeriesByDim(opts) {
   open();
   const o = opts || {};
@@ -1683,7 +1695,7 @@ function statsSeriesByDim(opts) {
   const meta = db.prepare(
     `SELECT ${col} AS gid, MAX(ts), ${g.nameCol || col} AS snap,
             SUM(prompt_tokens + completion_tokens) AS tokens
-     FROM usage_requests WHERE ts >= ? AND ts <= ? AND ${col} != ''
+     FROM usage_requests WHERE ts >= ? AND ts <= ?
      GROUP BY ${col} ORDER BY tokens DESC, ${col}`
   ).all(from, to);
   if (!meta.length) return { range: { from, to, granularity }, buckets, series: [] };
@@ -1704,7 +1716,7 @@ function statsSeriesByDim(opts) {
             ${col} AS gid,
             SUM(prompt_tokens + completion_tokens) AS tokens,
             COUNT(*) AS req
-     FROM usage_requests WHERE ts >= ? AND ts <= ? AND ${col} != ''
+     FROM usage_requests WHERE ts >= ? AND ts <= ?
      GROUP BY k, gid`
   ).all(from, to);
   for (const r of rows) {
@@ -1717,8 +1729,10 @@ function statsSeriesByDim(opts) {
   return { range: { from, to, granularity }, buckets, series };
 }
 
-/** 统计总览：一次返回 KPI / 序列 / 四维排行 / 各 Key / 状态分布 / Token 构成。
- *  四维排行一次给全，前端切维度零延迟、少 3 次 IPC。 */
+/** 统计总览：一次返回 KPI / 四维排行 / 各 Key。
+ *  四维排行一次给全，前端切维度零延迟、少 3 次 IPC。
+ *  刻意不返回按时间序列、状态分布、Token 构成：页面不展示它们，算了也是白算；
+ *  折线图另有 proxy_stats_series，那三块要用时再按需接回（statsSeries / statsStatus / statsTokenMix 都还在）。 */
 function statsOverview(opts) {
   const o = opts || {};
   const { from, to } = normRange(o.from, o.to);
@@ -1726,7 +1740,6 @@ function statsOverview(opts) {
   return {
     range: { from, to, granularity },
     summary: statsSummary(from, to),
-    series: statsSeries(from, to, granularity),
     tops: {
       channel: statsTopRich("channel", from, to),
       model: statsTopRich("model", from, to),
@@ -1734,8 +1747,6 @@ function statsOverview(opts) {
       account: statsTopRich("account", from, to),
     },
     keys: statsKeys(from, to),
-    status: statsStatus(from, to),
-    tokenMix: statsTokenMix(from, to),
   };
 }
 

@@ -379,23 +379,6 @@ export interface ProxyStatsKeyRow extends ProxyStatsAggRow {
   keyId: string;
 }
 
-/** 时间序列点（后端已按粒度补零，图表 x 轴连续） */
-export interface ProxyStatsPoint {
-  t: number;
-  label: string;
-  req: number;
-  ok: number;
-  err: number;
-  successRate: number;
-  promptTokens: number;
-  completionTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  tokens: number;
-  ttftAvg: number;
-  latencyAvg: number;
-}
-
 /** 折线图分组序列的时间轴桶（x 轴刻度；各分组共享同一根时间轴） */
 export interface ProxyStatsBucket {
   t: number;
@@ -436,11 +419,8 @@ export type ProxyStatsDim = "channel" | "model" | "key" | "account";
 export interface ProxyStatsOverview {
   range: ProxyStatsRange;
   summary: ProxyStatsSummary;
-  series: ProxyStatsPoint[];
   tops: Record<ProxyStatsDim, ProxyStatsAggRow[]>;
   keys: ProxyStatsKeyRow[];
-  status: { name: string; key: string; value: number }[];
-  tokenMix: { name: string; key: string; value: number }[];
 }
 
 export interface ProxyStatsDetail {

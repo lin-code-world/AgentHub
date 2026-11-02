@@ -133,7 +133,7 @@ console.log("\n④ TOP 排行（statsTopRich）");
   const wb = ch.find((r) => r.name === "workbuddy");
   eq([trae.req, trae.promptTokens, trae.completionTokens, trae.tokens], [2, 300, 130, 430], "trae：请求 / 请求 token / 响应 token / 总 token");
   eq([wb.req, wb.ok, wb.err, wb.successRate], [2, 1, 1, 50], "workbuddy：成功失败拆分与成功率");
-  ok(ch.every((r) => r.name !== ""), "空渠道名的行被过滤");
+  eq(ch.length, 2, "此刻只有 trae / workbuddy 两个渠道（空分组的成组行为见 ⑪）");
   const models = store.statsTopRich("model", NOW - 30 * DAY, NOW);
   ok(models.some((m) => m.name === "m3"), "30 天区间能捞到 10 天前的模型 m3");
   const models7 = store.statsTopRich("model", NOW - 6 * DAY, NOW);
@@ -270,10 +270,32 @@ console.log("\n⑨ 按维度分组的序列（statsSeriesByDim）");
 console.log("\n⑩ TOP 排行默认全量返回");
 {
   // 夹具此刻有 m1 / m2 / m3 三个模型；再补 55 个请求数最少的模型，凑到 58 个（超过旧上限 50）
-  for (let i = 0; i < 55; i++) put({ ts: NOW - 60000, model: "extra-" + i, status: 200 });
+  // 显式挂上真实渠道 / Key：put 的默认是空串，否则这 55 条会混进「空分组」、污染 ⑪ 的断言
+  for (let i = 0; i < 55; i++) put({ ts: NOW - 60000, model: "extra-" + i, keyId: "k1", channel: "trae", status: 200 });
   const rows = store.statsTopRich("model", NOW - 30 * DAY, NOW);
   eq(rows.length, 58, "模型数超旧上限 50 时仍全量返回（3 个夹具模型 + 55 个新模型）");
   ok(rows.some((r) => r.name === "extra-0"), "低频条目（extra-0）也在候选集里——前端按 Token 重排才选得出真正的 Token 大户");
+}
+
+// ===== ⑪ 空分组（未认证请求）显式成组 + 可筛选 =====
+console.log("\n⑪ 空分组（未认证请求）显式成组");
+{
+  put({ ts: NOW - 30000, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: "", status: 401 });
+
+  const ch = store.statsTopRich("channel", NOW - 30 * DAY, NOW);
+  const emptyCh = ch.find((r) => r.id === "");
+  eq(emptyCh && emptyCh.req, 1, "空渠道单独成组，不再被过滤");
+  const keys = store.statsKeys(NOW - 30 * DAY, NOW);
+  const emptyKey = keys.find((k) => k.keyId === "");
+  eq(emptyKey && emptyKey.req, 1, "空 Key 单独成组");
+  const trend = store.statsSeriesByDim({ from: NOW - 30 * DAY, to: NOW, granularity: "day", dim: "channel" });
+  ok(trend.series.some((s) => s.id === ""), "折线图也含空渠道这一组（合计才对得上总量）");
+
+  // 哨兵筛选：__none__ 映射为「该列为空」，与「不筛选」区分开
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, channel: "__none__" }).total, 1, "按哨兵筛空渠道 = 1 条（没被当成「全部」）");
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, keyId: "__none__" }).total, 1, "按哨兵筛空 Key = 1 条");
+  eq(store.statsDetail({ from: NOW - 30 * DAY, to: NOW, model: "__none__" }).total, 1, "按哨兵筛空模型 = 1 条");
+  ok(store.statsDetail({ from: NOW - 30 * DAY, to: NOW }).total > 1, "不传筛选项仍返回全量（哨兵不误伤正常查询）");
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"} 统计自测：${pass} 项通过，${failed} 项失败`);

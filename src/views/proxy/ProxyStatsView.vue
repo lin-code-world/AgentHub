@@ -137,11 +137,23 @@ const err = ref("");
 const busy = ref(false);
 const filters = reactive({ key: "", model: "", channel: "", status: "" }); // key 存 Key 的 keyId（明细筛选是下拉精确选择）
 
+/** 空分组的筛选哨兵：与后端 store.cjs 的 NONE_FILTER 是同一个字面量，两边要一起改 */
+const NONE_FILTER = "__none__";
+
+/** 分组展示名：渠道 / Key / 模型都可能为空（未认证请求、没走到渠道），统一在这里命名，
+ *  排行 / 饼图 / 下拉 / 折线共用，保证各处叫法一致。 */
+function groupLabel(d: ProxyStatsDim, name: string): string {
+  if (d === "channel") return name ? channelName(name) : "未认证 / 未知渠道";
+  if (name) return name;
+  return d === "key" ? "（无 Key）" : "（空模型）";
+}
+
 const s = computed(() => ov.value?.summary);
 
-const channelOptions = computed(() => (ov.value?.tops.channel || []).map((r) => ({ id: r.name, label: channelName(r.name) })));
+/** 下拉的「全部」项 value 是空串，空分组不能也传空串（会被当成「不筛选」），统一换成哨兵 */
+const channelOptions = computed(() => (ov.value?.tops.channel || []).map((r) => ({ id: r.name || NONE_FILTER, label: groupLabel("channel", r.name) })));
 /** 模型下拉选项：来自当前区间的模型排行（与渠道下拉同源），选中即按模型精确匹配 */
-const modelOptions = computed(() => (ov.value?.tops.model || []).map((r) => ({ id: r.name, label: r.name || "（空模型）" })));
+const modelOptions = computed(() => (ov.value?.tops.model || []).map((r) => ({ id: r.name || NONE_FILTER, label: groupLabel("model", r.name) })));
 
 const topRows = computed(() => {
   const rows = [...(ov.value?.tops[dim.value] || [])];
@@ -149,7 +161,7 @@ const topRows = computed(() => {
   rows.sort((a, b) => (key === "tokens" ? b.tokens - a.tokens : b.req - a.req));
   return rows.slice(0, 10).map((r) => ({
     ...r,
-    label: dim.value === "channel" ? channelName(r.name) : r.name || "（未命名）",
+    label: groupLabel(dim.value, r.name),
   }));
 });
 
@@ -160,7 +172,7 @@ const topRows = computed(() => {
 const PIE_TOP = 8;
 function pieSlices(metric: "tokens" | "req"): { name: string; value: number }[] {
   const rows = [...(ov.value?.tops[dim.value] || [])];
-  const labelOf = (r: ProxyStatsAggRow) => (dim.value === "channel" ? channelName(r.name) : r.name || "（未命名）");
+  const labelOf = (r: ProxyStatsAggRow) => groupLabel(dim.value, r.name);
   // 先按该指标排序再截断：「其他」必须是真正排在后面的那些，不能按别的口径先挑
   rows.sort((a, b) => (metric === "tokens" ? b.tokens - a.tokens : b.req - a.req));
   const limit = dim.value === "model" ? PIE_TOP : rows.length;
@@ -183,16 +195,16 @@ function pieSlices(metric: "tokens" | "req"): { name: string; value: number }[] 
 const pieTokens = computed(() => pieSlices("tokens"));
 const pieReq = computed(() => pieSlices("req"));
 
-const keyRows = computed(() => [...(ov.value?.keys || [])].sort((a, b) => b.tokens - a.tokens));
+const keyRows = computed(() => [...(ov.value?.keys || [])].sort((a, b) => b.tokens - a.tokens).map((k) => ({ ...k, id: k.keyId || NONE_FILTER, label: groupLabel("key", k.name) })));
 
 /** 用量统计行 → 明细筛选：按当前维度把该行灌进对应筛选条件并滚到明细表 */
 function drillToRow(r: ProxyStatsAggRow) {
   filters.key = "";
   filters.channel = "";
   filters.model = "";
-  if (dim.value === "key") filters.key = r.id;
-  else if (dim.value === "channel") filters.channel = r.id;
-  else if (dim.value === "model") filters.model = r.name;
+  if (dim.value === "key") filters.key = r.id || NONE_FILTER;
+  else if (dim.value === "channel") filters.channel = r.id || NONE_FILTER;
+  else if (dim.value === "model") filters.model = r.name || NONE_FILTER;
   filters.status = "";
   page.value = 1;
   loadDetail();
@@ -232,8 +244,8 @@ async function loadSeries() {
     if (seq !== trendSeq) return;
     const list = r.series || [];
     trendBuckets.value = r.buckets || [];
-    // 渠道维度的分组名是原始 slug，换成站内展示名（与明细表的渠道列口径一致）
-    trendSeries.value = dim.value === "channel" ? list.map((s) => ({ ...s, name: channelName(s.name) })) : list;
+    // 分组名统一走 groupLabel（渠道 slug 转展示名，空分组单独命名），与排行 / 饼图叫法一致
+    trendSeries.value = list.map((s) => ({ ...s, name: groupLabel(dim.value, s.name) }));
     if (r.range?.granularity) seriesGranularity.value = r.range.granularity;
   } catch (e) {
     if (seq !== trendSeq) return; // 过期请求的失败也丢弃，别把旧错误挂到当前维度上
@@ -420,7 +432,7 @@ onUnmounted(() => {
                 <th>响应 Token</th>
                 <th class="th-sort" :class="{ 'is-sort': sortBy === 'req' }" @click="pickSort('req')">请求数 <i class="ph ph-caret-down"></i></th>
                 <th>成功率</th>
-                <th>平均 TTFT</th>
+                <th title="仅统计有首字时间的请求（首字耗时大于 0 的才计入平均）">平均 TTFT</th>
                 <th>最新使用</th>
                 <th></th>
               </tr>
@@ -472,7 +484,7 @@ onUnmounted(() => {
         <div class="detail-filters">
           <el-select v-model="filters.key" placeholder="全部 Key" clearable class="f-el-select" popper-class="glass-popper">
             <el-option value="" label="全部 Key" />
-            <el-option v-for="k in keyRows" :key="k.keyId" :value="k.keyId" :label="k.name || k.keyId" />
+            <el-option v-for="k in keyRows" :key="k.id" :value="k.id" :label="k.label" />
           </el-select>
           <el-select v-model="filters.model" placeholder="全部模型" clearable filterable class="f-el-select f-el-wide" popper-class="glass-popper">
             <el-option value="" label="全部模型" />
