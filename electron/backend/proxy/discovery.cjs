@@ -607,6 +607,18 @@ function isScanImportAllowed(channel) {
   return String(channel || "") !== "zcode";
 }
 
+/**
+ * 「网页（OAuth）登录」的能力开关。
+ *
+ * Qoder 双区已下线该入口：多账号「每日签到」必须各用自己那台机器的设备身份，而 OAuth 登录**拿不到设备身份**，
+ * 登进来的账号签不了到（见 qoderAdapter.boundDeviceOf）。与界面隐藏页签是两道独立的门——
+ * 绕过界面直接调 proxy_oauth_begin 也必须被拒（只关界面会留下"藏了入口但接口还能登"的绕过）。
+ */
+function isOAuthAllowed(channel) {
+  const ch = String(channel || "");
+  return ch !== "qoder" && ch !== "qoder_intl";
+}
+
 /** AutoClaw 本机登录态扫描：新版两个官方目录按地区归属；旧版共享来源仍同时产出双区候选。 */
 function scanAutoclaw() {
   const out = [];
@@ -3708,6 +3720,7 @@ module.exports = {
   scanTrae,
   scanZcode,
   isScanImportAllowed,
+  isOAuthAllowed,
   currentLocalLogins,
   importCandidate,
   beginOAuth,

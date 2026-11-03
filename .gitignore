@@ -57,3 +57,13 @@ tmp/
 docs/
 
 .playwright-cli/
+
+# qoder-export 工具的导出产物（含明文账号凭据，绝不入库）
+qoder-export-*.json
+
+# 签名器缓存：打包时由 scripts/stage-qoder-signer.cjs 放进 build/qoder-signer/，
+# 再由 electron-builder 以 extraResources 放进安装目录 resources/qoder-signer（33MB，不入库）
+/build/qoder-signer/
+
+# qoder-export 的编译产物（源码入库，exe 不入库）
+tools/qoder-export/*.exe

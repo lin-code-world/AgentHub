@@ -42,11 +42,13 @@ async function main() {
 
   // 用 stub 覆盖 rules/auth/httpJson，端到端验证领取逻辑（不发真实请求、不消耗额度）
   const { makeQoder } = require("../electron/backend/proxy/qoderAdapter.cjs");
-  const RISK = { machineToken: "tok", machineType: "ty", machineCode: "co" };
-  function mkAd(httpJson, risk = RISK) {
+  // 账号绑定的设备身份（qoderAdapter.checkin 现在只认它，不再现场调本机组件）
+  const DEV = { machineToken: "tok", machineType: "ty", machineCode: "co", machineId: "MID", clientVersion: "0.5.3", hostname: "HOST", os: "10.0.22621" };
+  const acct = (over) => ({ uid: "u", meta: { machineId: "MID", qoderDevice: DEV }, ...over });
+  function mkAd(httpJson) {
     return makeQoder("qoder", {
       rules: { get: () => ({ qoder: { openApi: "https://openapi.test", userAgent: "Qoder", cosyVersion: "0.4.3" } }), rulesDir: () => os.tmpdir() },
-      auth: { readRiskIdentity: () => risk },
+      auth: require("../electron/backend/proxy/qoderAuth.cjs"),
       httpJson,
       util: require("../electron/backend/proxy/util.cjs"),
     });
@@ -55,14 +57,14 @@ async function main() {
   const CLM = { campaignId: "11111111-2222-3333-4444-555555555555", campaignKey: "act-1", actionType: "CLAIM_BENEFIT", claimStatus: "CLAIMABLE", benefit: { kind: "CREDITS", amount: 100 } };
   const VIEW = { campaignId: "66666666-7777-8888-9999-000000000000", campaignKey: "act-2", actionType: "VIEW_DETAILS", claimStatus: "CLAIMED" };
 
-  // 无风控身份（客户端未装）：不降级尝试，如实回报
+  // 未绑定设备身份：不回退本机组件，如实回报
   {
-    const r = await mkAd(async () => mkCampaigns([]), null).checkin({ uid: "u" }, { token: "t" });
-    assert(r.unavailable === true && /客户端/.test(r.message), "风控身份不可用 → unavailable（不降级盲试）");
+    const r = await mkAd(async () => mkCampaigns([])).checkin({ uid: "u" }, { token: "t" });
+    assert(r.unavailable === true && /未绑定/.test(r.message), "未绑定设备身份 → unavailable（不回退本机组件）");
   }
   // 无可领活动
   {
-    const r = await mkAd(async () => mkCampaigns([VIEW])).checkin({ uid: "u" }, { token: "t" });
+    const r = await mkAd(async () => mkCampaigns([VIEW])).checkin(acct(), { token: "t" });
     assert(r.ok === true && r.already === true, "无可领（只有 VIEW_DETAILS）→ already（不报错）");
   }
   // 正常领取：验证请求形态（URL 含 campaignId、POST、必需头）
@@ -72,7 +74,7 @@ async function main() {
       seen.push({ url, opts });
       if (url.endsWith("/claim")) return { status: 200, ok: true, data: { grantId: "g1", status: "CLAIMED", replayed: false, benefit: { kind: "CREDITS", amount: 100 } } };
       return mkCampaigns([CLM]);
-    }).checkin({ uid: "u", meta: { machineId: "MID" } }, { token: "TOK" });
+    }).checkin(acct(), { token: "TOK" });
     assert(r.ok === true && /\+100/.test(r.message), "领取成功且文案含额度（+100 Credits）");
     const claim = seen.find((x) => x.url.endsWith("/claim"));
     assert(!!claim, "发出了 claim 请求");
@@ -88,25 +90,25 @@ async function main() {
   {
     const r = await mkAd(async (url) => (url.endsWith("/claim")
       ? { status: 200, ok: true, data: { status: "CLAIMED", replayed: true, benefit: { amount: 100 } } }
-      : mkCampaigns([CLM]))).checkin({ uid: "u" }, { token: "t" });
+      : mkCampaigns([CLM]))).checkin(acct(), { token: "t" });
     assert(r.ok === true && r.already === true, "replayed=true → already 且 ok（幂等不报错）");
   }
   // GRANT_NOT_FOUND 是可重试分支，不应被当作致命错误
   {
     const r = await mkAd(async (url) => (url.endsWith("/claim")
       ? { status: 404, ok: false, data: { errorCode: "GRANT_NOT_FOUND" } }
-      : mkCampaigns([CLM]))).checkin({ uid: "u" }, { token: "t" });
+      : mkCampaigns([CLM]))).checkin(acct(), { token: "t" });
     assert(r.ok === false && /尚未就绪|稍后重试/.test(r.message), "GRANT_NOT_FOUND → 提示稍后重试（非致命文案）");
   }
   // 401 → authError（触发刷新/relogin）
   {
-    const r = await mkAd(async () => ({ status: 401, ok: false, data: null })).checkin({ uid: "u" }, { token: "t" });
+    const r = await mkAd(async () => ({ status: 401, ok: false, data: null })).checkin(acct(), { token: "t" });
     assert(r.authError === true, "活动接口 401 → authError");
   }
   // checkinStatus 只读：绝不发 POST
   {
     const seen = [];
-    const st = await mkAd(async (url, opts) => { seen.push(opts.method); return mkCampaigns([CLM]); }).checkinStatus({ uid: "u" }, { token: "t" });
+    const st = await mkAd(async (url, opts) => { seen.push(opts.method); return mkCampaigns([CLM]); }).checkinStatus(acct(), { token: "t" });
     assert(st.ok === true && st.claimable === 1, "checkinStatus 报告可领数量");
     assert(seen.every((m) => m === "GET"), "checkinStatus 只发 GET（不触发领取）");
   }
@@ -115,20 +117,29 @@ async function main() {
   // 永久错过当日窗口的 100 Credits。
   {
     const future = Math.floor(Date.now() / 1000) + 3600;
-    const r = await mkAd(async () => mkCampaigns([{ ...CLM, claimStatus: "CLAIMED", endAt: future }])).checkin({ uid: "u" }, { token: "t" });
-    assert(r.deferred === true && r.already === true, "窗口未开（CLAIMED+endAt 未来）→ deferred + already");
+    const r = await mkAd(async () => mkCampaigns([{ ...CLM, claimStatus: "CLAIMED", endAt: future }])).checkin(acct(), { token: "t" });
+    assert(r.deferred === true && r.already === false, "本轮已领（CLAIMED+endAt 未来）→ deferred（不当已领、留给到点重试）");
     assert(r.retryAt >= future * 1000 && r.retryAt <= future * 1000 + 6 * 60000, "retryAt = endAt + 5min 抖动");
+  }
+  // 窗口尚未开放（CLAIMABLE 但 startAt 在未来）：不得去领（会在窗口未开时白失败、把当天标记成已跑过），
+  // 要按 startAt 排到点重试
+  {
+    const start = Math.floor(Date.now() / 1000) + 1800;
+    const seen = [];
+    const r = await mkAd(async (url, opts) => { seen.push(opts.method); return mkCampaigns([{ ...CLM, claimStatus: "CLAIMABLE", startAt: start, endAt: start + 3600 }]); }).checkin(acct(), { token: "t" });
+    assert(r.deferred === true && r.already === false && r.retryAt >= start * 1000, "窗口未开（CLAIMABLE+startAt 未来）→ deferred、不当已领");
+    assert(seen.every((m) => m === "GET"), "窗口未开时绝不发 claim（只 GET）");
   }
   {
     const past = Math.floor(Date.now() / 1000) - 3600;
-    const r = await mkAd(async () => mkCampaigns([{ ...VIEW, endAt: past }])).checkin({ uid: "u" }, { token: "t" });
+    const r = await mkAd(async () => mkCampaigns([{ ...VIEW, endAt: past }])).checkin(acct(), { token: "t" });
     assert(r.already === true && r.deferred !== true, "endAt 已过且无 CLAIMABLE → 普通 already（不延后）");
   }
   {
     // 加固回归：非 CLAIM_BENEFIT 的远期 CLAIMED（详情类等其它活动）不得触发延后，
     // 否则自动签到会被带偏到几天后，连累其它渠道的每日签到
     const far = Math.floor(Date.now() / 1000) + 86400 * 3;
-    const r = await mkAd(async () => mkCampaigns([{ ...VIEW, claimStatus: "CLAIMED", endAt: far }])).checkin({ uid: "u" }, { token: "t" });
+    const r = await mkAd(async () => mkCampaigns([{ ...VIEW, claimStatus: "CLAIMED", endAt: far }])).checkin(acct(), { token: "t" });
     assert(r.already === true && r.deferred !== true, "非 CLAIM_BENEFIT 的远期 CLAIMED 不触发延后");
   }
   {
@@ -138,7 +149,7 @@ async function main() {
     const r = await mkAd(async () => mkCampaigns([
       { ...VIEW, claimStatus: "CLAIMED", endAt: far },
       { ...CLM, claimStatus: "CLAIMED", endAt: near },
-    ])).checkin({ uid: "u" }, { token: "t" });
+    ])).checkin(acct(), { token: "t" });
     assert(r.deferred === true && r.retryAt >= near * 1000 && r.retryAt <= near * 1000 + 6 * 60000, "混合活动时 retryAt 取 CLAIM_BENEFIT 最早的未来 endAt");
   }
 

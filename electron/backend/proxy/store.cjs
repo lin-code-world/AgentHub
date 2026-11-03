@@ -1071,6 +1071,7 @@ function noteCheckin(id, result, action) {
       ok: r.ok === true,
       already: r.already === true,
       unavailable: r.unavailable === true,
+      deferred: r.deferred === true,
       needCaptcha: r.needCaptcha === true,
       deviceBurned: r.deviceBurned === true,
       credit: Number(r.credit || 0) || 0,

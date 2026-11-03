@@ -49,7 +49,10 @@ async function ensureFreshSecrets(acc, secrets) {
   if (!adapter || !secrets || !secrets.token || !secrets.refreshToken) return secrets;
   const windowSec = Number(adapter.refreshWindowSec) > 0 ? Number(adapter.refreshWindowSec) : 86400;
   const dec = util.jwtDecode(secrets.token);
-  if (!(dec.exp && dec.exp * 1000 < Date.now() + windowSec * 1000)) return secrets;
+  // 令牌非 JWT（如 Qoder 的 dt-）：本地 exp 拿不到，改问适配器（按落库的到期回答；0=未知→不刷新）
+  let expMs = dec.exp ? dec.exp * 1000 : 0;
+  if (!expMs && typeof adapter.tokenExpiryMs === "function") expMs = Number(adapter.tokenExpiryMs(acc, secrets)) || 0;
+  if (!(expMs && expMs < Date.now() + windowSec * 1000)) return secrets;
   const rr = await adapters.refreshTokenLocked(acc.channel, acc, secrets).catch(() => ({ ok: false }));
   if (!rr.ok) return secrets;
   if (!rr.noPersist) store.updateAccount(acc.id, { token: rr.token, refreshToken: rr.refreshToken });

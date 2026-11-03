@@ -108,6 +108,15 @@ const DEFAULT_SCENE = "assistant";
 /** 单个会话/请求 id：Qoder 要求 request_id 唯一（重复会被 code 103 拒绝） */
 const newId = () => crypto.randomUUID();
 
+/** 账号绑定的设备身份（qoder-export 导入时写入 meta.qoderDevice）。
+ *  多账号要各自签到，必须各用自己绑定的身份——不再现场调本机组件（那会让同机多号共用一套设备身份、
+ *  第二个账号永远领不到）。拿不到绑定身份就如实回报，不回退本机。 */
+function boundDeviceOf(account) {
+  const d = account && account.meta && account.meta.qoderDevice;
+  if (!d || typeof d !== "object" || !d.machineToken) return null;
+  return d;
+}
+
 /** 把 OpenAI messages 转成 Qoder 的 content 数组格式 */
 function toQoderMessages(messages) {
   const out = [];
@@ -314,6 +323,8 @@ function makeQoder(product, deps) {
     __creditPackagesForTest: creditPackagesOf,
     id: product,
     refreshWindowSec: 86400, // token 30 天；提前 24h 预刷新（dt- 非 JWT，靠落库的 expiresAt 判断）
+    // 模型目录跟着账号走（各账号的客户端缓存/导出块可能不同）：拉取目录时聚合全部账号取交集
+    modelsPerAccount: true,
 
     cfg,
 
@@ -336,21 +347,22 @@ function makeQoder(product, deps) {
     async fetchModels(account, secrets) {
       const uid = (account && account.uid) || "";
       if (!uid) return { ok: false, message: "缺少 uid，无法定位模型目录缓存" };
-      const blob = auth.readCatalogBlob(product, uid);
-      if (!blob) return { ok: false, message: "本机无模型目录缓存（该客户端尚未登录使用过）" };
-      let entry;
-      try {
-        entry = await acquireSession(account, secrets);
-      } catch (e) {
-        return { ok: false, message: `签名器不可用：${String((e && e.message) || e).slice(0, 120)}` };
+      // ① 本机客户端缓存 → ② 导入随附的目录块（目标机没装客户端时靠它）
+      let blob = auth.readCatalogBlob(product, uid);
+      let source = "本机客户端缓存";
+      if (!blob && typeof auth.readStoredCatalogBlob === "function") {
+        blob = auth.readStoredCatalogBlob(product, uid);
+        source = "导入文件随附";
+      }
+      if (!blob) {
+        return { ok: false, message: "本机无模型目录缓存，且导入文件里没有带模型目录：请在登录过该账号的机器上用 qoder-export 重新导出（会自动带上模型目录）后再导入" };
       }
       let json;
       try {
-        json = JSON.parse(entry.session.modelCacheDecrypt(blob, uid));
+        // 纯算法解密（QMC 信封，密钥由 uid 派生）：不依赖客户端/签名器，目标机没装客户端也能读
+        json = JSON.parse(auth.decryptCatalog(blob, uid));
       } catch (e) {
-        return { ok: false, message: `目录解密失败：${String((e && e.message) || e).slice(0, 120)}` };
-      } finally {
-        entry.release();
+        return { ok: false, message: `目录解密失败（来源：${source}）：${String((e && e.message) || e).slice(0, 160)}` };
       }
       const scene = json[DEFAULT_SCENE] || json.chat || [];
       const seen = new Map();
@@ -395,7 +407,7 @@ function makeQoder(product, deps) {
       return {
         "content-type": "application/json",
         accept: "text/event-stream",
-        "user-agent": c.userAgent || "qoder/0.4.3",
+        "user-agent": c.userAgent || "qoder/0.5.3",
       };
     },
 
@@ -591,7 +603,7 @@ function makeQoder(product, deps) {
         const url = `${String(base).replace(/\/+$/, "")}${c.quotaPath || "/api/v2/quota/usage"}?requestId=${newId()}`;
         const r = await httpJson(url, {
           method: "GET",
-          headers: { Authorization: `Bearer ${secrets.token}`, Accept: "application/json", "user-agent": c.userAgent || "qoder/0.4.3" },
+          headers: { Authorization: `Bearer ${secrets.token}`, Accept: "application/json", "user-agent": c.userAgent || "qoder/0.5.3" },
         }).catch((e) => ({ ok: false, status: 0, data: null, message: String((e && e.message) || e) }));
         if (r.status === 401) return { authError: true, message: "凭证失效（token is not active）" };
         if (r.ok && r.data) {
@@ -629,7 +641,8 @@ function makeQoder(product, deps) {
      *   · 路径参数是 **campaignId（UUID）**，不是 campaignKey（用 key 会 400 FIELD_VALIDATION_FAILED）
      *   · 必须带 **Cosy-ClientType** 这一组头，否则服务端**静默**返回 claimable:false
      *     （表现为"今天没有可领活动"，实际是鉴权降级——极易误判为无活动）
-     *   · Cosy-Machine{Token,Type,Code} 由客户端自带 runtime-info.exe 生成（见 qoderAuth.readRiskIdentity）
+     *   · Cosy-Machine{Token,Type,Code} 走**账号绑定的设备身份**（qoder-export 导入时写入 meta.qoderDevice）；
+     *     多账号必须各用自己那台机器的身份，未绑定的账号如实回报「未绑定」、不签（见 boundDeviceOf）
      *
      * 幂等性：重复领取返回 replayed:true 且 status:"CLAIMED" —— 这是**成功**语义（已领过），
      * 必须按 already 处理，不能报错，否则每天第二次调用会误报失败。
@@ -638,24 +651,24 @@ function makeQoder(product, deps) {
       const c = this.cfg();
       // 兜底对齐 chat（auth.PRODUCTS[product].openApi）：INTL 配置缺失时不再拿 INTL token 打 CN 域必 401
       const base = c.openApi || c.quotaBase || auth.PRODUCTS[product].openApi || "https://openapi.qoder.com.cn";
-      const uid = (account && account.uid) || "";
-      const risk = auth.readRiskIdentity ? auth.readRiskIdentity(product, uid) : null;
-      if (!risk) {
-        // 风控身份拿不到（客户端未装/已卸载）→ 如实回报，不降级尝试（降级必然 401/静默 false）
-        return { ok: false, unavailable: true, message: "需安装 Qoder 客户端（领取接口要求其风控身份 runtime-info.exe）" };
+      // 用账号绑定的设备身份（见 boundDeviceOf）：多账号必须各用自己那台机器的身份，
+      // 绝不现场调本机组件——那会让同机多号共用一套身份、第二个账号永远领不到
+      const dev = boundDeviceOf(account);
+      if (!dev) {
+        return { ok: false, unavailable: true, message: "该账号未绑定设备身份：请用 tools/qoder-export 在该账号的登录机器上导出，再经号池「从文件导入」绑定" };
       }
       const hdrs = {
         Authorization: `Bearer ${secrets.token}`,
         Accept: "application/json",
         "User-Agent": c.userAgent || "Qoder",
         "Cosy-ClientType": "10",
-        "Cosy-Version": c.cosyVersion || "0.4.3",
-        "Cosy-MachineId": (account.meta && account.meta.machineId) || account.machineId || "",
-        "Cosy-MachineOS": osVersion(),
-        "Cosy-MachineHostname": U.byteSafeHeaderValue(os.hostname()),
-        "Cosy-MachineToken": risk.machineToken,
-        "Cosy-MachineType": risk.machineType,
-        "Cosy-MachineCode": risk.machineCode,
+        "Cosy-Version": dev.clientVersion || c.cosyVersion || "0.5.3",
+        "Cosy-MachineId": dev.machineId || (account.meta && account.meta.machineId) || account.machineId || "",
+        "Cosy-MachineOS": dev.os || osVersion(),
+        "Cosy-MachineHostname": U.byteSafeHeaderValue(dev.hostname || os.hostname()),
+        "Cosy-MachineToken": dev.machineToken,
+        "Cosy-MachineType": dev.machineType,
+        "Cosy-MachineCode": dev.machineCode,
       };
       const listUrl = `${String(base).replace(/\/+$/, "")}/sash/api/v1/me/campaigns?forceRefresh=true`;
       let list;
@@ -667,38 +680,43 @@ function makeQoder(product, deps) {
       if (list.status === 401 || list.status === 403) return { authError: true, message: "凭证失效（活动接口不接受该 token）" };
       if (!list.ok || !list.data) return { ok: false, message: `活动列表 HTTP ${list.status}` };
       const campaigns = Array.isArray(list.data.campaigns) ? list.data.campaigns : [];
-      const claimable = campaigns.filter((x) => x && x.actionType === "CLAIM_BENEFIT" && x.claimStatus === "CLAIMABLE" && x.campaignId);
+      const nowSec = Math.floor(Date.now() / 1000);
+      // 只在**活动窗口内**领取：上游列表会带上尚未开始/已结束的场次，拿它们去 claim 会在窗口未开时白失败；
+      // 而自动签到一旦把当天标记成"已跑过"就会漏掉这次领取。窗口 = startAt ≤ 现在 < endAt。
+      const inWindow = (x) => {
+        const a = Number(x.startAt);
+        const b = Number(x.endAt);
+        return (!a || nowSec >= a) && (!b || nowSec < b);
+      };
+      const benefit = campaigns.filter((x) => x && x.actionType === "CLAIM_BENEFIT" && x.campaignId);
+      const claimable = benefit.filter((x) => x.claimStatus === "CLAIMABLE" && inWindow(x));
       if (!claimable.length) {
-        // 无 CLAIMABLE：先判「窗口未开」再判「已领完」。
-        // 每日 Credits 的领取窗口每天 10:00（UTC+8）重置：10:00 前昨日实例仍显示 CLAIMED，
-        // 此时若自动签到照常标记"今日已完成"，就会错过 10:05 起的新窗口（一天只跑一次的设计）。
-        // 判据：存在与可领活动同类型（CLAIM_BENEFIT）且 endAt 在未来的已领实例
-        //   → 返回 deferred + retryAt（= endAt + 5 分钟抖动），调度器据此延后重试。
-        // 取**最早**的未来 endAt：列表混有其它活动的远期实例时，取错会把重试时刻
-        // 带偏到几天后，连累其它渠道的每日签到一起停摆。
-        const claimed = campaigns.filter((x) => x && x.claimStatus === "CLAIMED");
-        const nowSec = Math.floor(Date.now() / 1000);
-        let nextWindowSec = Infinity;
-        for (const x of campaigns) {
-          if (!x || x.claimStatus !== "CLAIMED" || x.actionType !== "CLAIM_BENEFIT") continue;
-          const end = Number(x.endAt);
-          if (end > nowSec && end < nextWindowSec) nextWindowSec = end;
+        // 没有可领的：算出「下一个可领时刻」，让自动签到**延后重试**，而不是把当天当已完成（一天只跑一次）。
+        //   · 本轮已领（CLAIMED）→ 等本轮结束（endAt 即下一窗口开放）
+        //   · 本轮尚未开放（CLAIMABLE 但 startAt 在未来）→ 等它开放
+        // 取**最早**的一个：列表混有其它活动的远期实例时，取错会把重试带偏到几天后，连累其它渠道的每日停摆。
+        let nextSec = Infinity;
+        for (const x of benefit) {
+          if (x.claimStatus === "CLAIMED") {
+            const end = Number(x.endAt);
+            if (end > nowSec) nextSec = Math.min(nextSec, end);
+          } else if (x.claimStatus === "CLAIMABLE") {
+            const start = Number(x.startAt);
+            if (start > nowSec) nextSec = Math.min(nextSec, start);
+          }
         }
-        if (Number.isFinite(nextWindowSec)) {
-          const retryAt = nextWindowSec * 1000 + 5 * 60000;
+        if (Number.isFinite(nextSec)) {
+          const retryAt = nextSec * 1000 + 5 * 60000;
           return {
             ok: true,
-            already: true,
+            already: false,
             deferred: true,
             retryAt,
-            message: `当前窗口已领取；下一窗口开放后（每日 10:00 UTC+8）自动重试`,
+            message: "当前不在领取窗口（每日 10:00 UTC+8 刷新，或本轮已领）；到点自动重试",
           };
         }
-        return {
-          ok: true,
-          already: true,
-          message: claimed.length ? "今日已领取" : "当前没有可领取的活动",
-        };
+        const claimed = benefit.filter((x) => x.claimStatus === "CLAIMED");
+        return { ok: true, already: true, message: claimed.length ? "今日已领取" : "当前没有可领取的活动" };
       }
       let claimedAny = 0;
       let replayedAny = 0;
@@ -754,31 +772,42 @@ function makeQoder(product, deps) {
     async checkinStatus(account, secrets) {
       const c = this.cfg();
       const base = c.openApi || auth.PRODUCTS[product].openApi || "https://openapi.qoder.com.cn";
-      const uid = (account && account.uid) || "";
-      const risk = auth.readRiskIdentity ? auth.readRiskIdentity(product, uid) : null;
-      if (!risk) return { unavailable: true, message: "需安装 Qoder 客户端（风控身份不可用）" };
+      // 同 checkin：用账号绑定的设备身份，不回退本机组件
+      const dev = boundDeviceOf(account);
+      if (!dev) return { unavailable: true, message: "该账号未绑定设备身份（请用 qoder-export 导出后从文件导入）" };
       const hdrs = {
         Authorization: `Bearer ${secrets.token}`,
         Accept: "application/json",
         "User-Agent": c.userAgent || "Qoder",
         "Cosy-ClientType": "10",
-        "Cosy-Version": c.cosyVersion || "0.4.3",
-        "Cosy-MachineId": (account.meta && account.meta.machineId) || account.machineId || "",
-        "Cosy-MachineOS": osVersion(),
-        "Cosy-MachineHostname": U.byteSafeHeaderValue(os.hostname()),
-        "Cosy-MachineToken": risk.machineToken,
-        "Cosy-MachineType": risk.machineType,
-        "Cosy-MachineCode": risk.machineCode,
+        "Cosy-Version": dev.clientVersion || c.cosyVersion || "0.5.3",
+        "Cosy-MachineId": dev.machineId || (account.meta && account.meta.machineId) || account.machineId || "",
+        "Cosy-MachineOS": dev.os || osVersion(),
+        "Cosy-MachineHostname": U.byteSafeHeaderValue(dev.hostname || os.hostname()),
+        "Cosy-MachineToken": dev.machineToken,
+        "Cosy-MachineType": dev.machineType,
+        "Cosy-MachineCode": dev.machineCode,
       };
       try {
         const list = await httpJson(`${String(base).replace(/\/+$/, "")}/sash/api/v1/me/campaigns?forceRefresh=true`, { method: "GET", headers: hdrs });
         if (list.status === 401 || list.status === 403) return { authError: true, message: "凭证失效" };
         if (!list.ok || !list.data) return { unavailable: true, message: `活动列表 HTTP ${list.status}` };
         const campaigns = Array.isArray(list.data.campaigns) ? list.data.campaigns : [];
-        const n = campaigns.filter((x) => x && x.actionType === "CLAIM_BENEFIT" && x.claimStatus === "CLAIMABLE").length;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const inWindow = (x) => {
+          const a = Number(x.startAt);
+          const b = Number(x.endAt);
+          return (!a || nowSec >= a) && (!b || nowSec < b);
+        };
+        const benefit = campaigns.filter((x) => x && x.actionType === "CLAIM_BENEFIT" && x.campaignId);
+        const n = benefit.filter((x) => x.claimStatus === "CLAIMABLE" && inWindow(x)).length;
         if (n > 0) return { ok: true, claimable: n, message: `有 ${n} 个活动可领取` };
-        const claimed = campaigns.filter((x) => x && x.claimStatus === "CLAIMED").length;
-        return { ok: true, already: true, message: claimed ? "今日已领取" : "当前无可领取活动" };
+        // 窗口未开 / 本轮已领：如实说"当前不在领取窗口"，不误报"今日已领取"
+        const claimedInWindow = benefit.some((x) => x.claimStatus === "CLAIMED" && inWindow(x));
+        if (!claimedInWindow && benefit.some((x) => x.claimStatus === "CLAIMABLE")) {
+          return { ok: true, deferred: true, message: "当前不在领取窗口（每日 10:00 UTC+8 刷新）" };
+        }
+        return { ok: true, already: true, message: claimedInWindow ? "今日已领取" : "当前无可领取活动" };
       } catch (e) {
         return { unavailable: true, message: `活动列表请求失败：${(e && e.message) || e}` };
       }
@@ -793,7 +822,24 @@ function makeQoder(product, deps) {
       const machineId = (account.meta && account.meta.machineId) || account.machineId || "";
       const r = await auth.refreshDeviceToken(product, secrets.refreshToken, machineId);
       if (!r.ok) return { ok: false, message: r.message || `刷新失败 HTTP ${r.status}` };
+      // 令牌到期落 meta.qoderAuth（顶层键避开 store 的 meta 脱敏正则）：dt-/drt- 非 JWT，本地解不出到期，
+      // 通用「临期预刷新」只能靠这个值判断（见 tokenExpiryMs / credits.ensureFreshSecrets）。
+      // 每次续期都必须刷新它——存着旧到期会让预刷新每轮都触发，比不刷新更糟。
+      try {
+        if (store && store.updateAccount && account.id) {
+          const cur = store.getAccount ? store.getAccount(account.id) : null;
+          const base = (cur && cur.meta) || account.meta || {};
+          store.updateAccount(account.id, { meta: { ...base, qoderAuth: { tokenExpiresAt: r.expiresAt || 0, refreshTokenExpiresAt: r.refreshTokenExpiresAt || 0 } } });
+        }
+      } catch { /* 落库失败不阻断续期 */ }
       return { ok: true, token: r.token, refreshToken: r.refreshToken, expiresAt: r.expiresAt, refreshTokenExpiresAt: r.refreshTokenExpiresAt };
+    },
+
+    /** 令牌到期（毫秒）：dt-/drt- 非 JWT，通用临期预刷新靠它判断（0 = 未知、按不刷新处理）。
+     *  值由导入解析与本适配器的 refreshToken 写入 meta.qoderAuth.tokenExpiresAt。 */
+    tokenExpiryMs(account) {
+      const qa = account && account.meta && account.meta.qoderAuth;
+      return qa && Number(qa.tokenExpiresAt) > 0 ? Number(qa.tokenExpiresAt) : 0;
     },
   };
 }

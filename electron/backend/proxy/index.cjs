@@ -133,6 +133,51 @@ function normalizeAccountJson(raw, fallbackChannel) {
   return out;
 }
 
+/** qoder-export 工具（tools/qoder-export）的产物：{ tool:"qoder-export v1", machine:{…}, results:[{channel, account:{…}, device:{…}, machineId, clientVersion}] }。
+ *  一次导出「账号凭据 + 该机器的设备身份」——多账号要各自签到，就必须各自用绑定的身份（见 qoderAdapter.checkin）。
+ *  故把设备身份一并转成账号的 meta.qoderDevice：顶层键取名 qoderDevice 以避开 store 的 meta 脱敏正则，
+ *  否则 machineToken 这类键名会被 stripSensitiveMeta 当凭据清掉。 */
+function parseQoderExportResults(parsed) {
+  const list = [];
+  let invalid = 0;
+  const osKernel = /Version ([\d.]+)/.exec(String((parsed.machine && parsed.machine.os) || ""));
+  for (const r of parsed.results) {
+    const channel = String((r && (r.channel || r.product)) || "").trim();
+    const acc = r && r.account;
+    const dev = (r && r.device) || {};
+    if (!channel || !adapters.get(channel) || !acc || !acc.token || !dev.machineToken) {
+      invalid++;
+      continue;
+    }
+    list.push({
+      channel,
+      uid: String(acc.uid || "").trim(),
+      name: String(acc.name || "").trim(),
+      token: String(acc.token).trim(),
+      refreshToken: String(acc.refreshToken || "").trim(),
+      expiresAt: util.toMs(acc.expiresAt),
+      source: "json",
+      meta: {
+        machineId: String(r.machineId || "").trim(),
+        // 令牌到期落 meta（顶层键 qoderAuth 避开脱敏正则）：Qoder 令牌非 JWT，通用临期预刷新靠它判断
+        qoderAuth: { tokenExpiresAt: util.toMs(acc.expiresAt), refreshTokenExpiresAt: util.toMs(acc.refreshTokenExpiresAt) },
+        qoderDevice: {
+          machineToken: String(dev.machineToken || ""),
+          machineType: String(dev.machineType || ""),
+          machineCode: String(dev.machineCode || ""),
+          machineId: String(r.machineId || "").trim(),
+          clientVersion: String(r.clientVersion || "").trim(),
+          hostname: String((parsed.machine && parsed.machine.hostname) || "").trim(),
+          os: osKernel ? osKernel[1] : "",
+        },
+      },
+      // 导出随附的模型目录（base64 的 QMC 信封）：目标机没装客户端时，fetchModels 靠它
+      ...(r.catalog && r.catalog.data ? { catalog: { name: String(r.catalog.name || ""), data: String(r.catalog.data) } } : {}),
+    });
+  }
+  return { list, invalid };
+}
+
 /** 解析 JSON 文本（对象 / 数组 / {accounts:[...]} 包装），返回 { list, invalid, reason?, unknownChannels? }。
  *  记录自带 channel 但**认不出**（已下线渠道 / 已删除的自定义提供商 / 名字写错）时**整批拒绝**：
  *  回报 unknownChannels 且 list 为空，调用方据此报错。绝不静默改判成界面当前渠道——那会造出
@@ -148,6 +193,10 @@ function parseAccountsJson(text, fallbackChannel) {
   // 它与明文凭据包的语义不同，直接按「缺 token」报错会把用户引向错误方向。
   if (parsed && parsed.format === "agenthub-accounts") {
     return { list: [], invalid: Array.isArray(parsed.accounts) ? parsed.accounts.length : 0, reason: "metadata-only" };
+  }
+  // qoder-export 工具产物（账号 + 设备身份）：单独一条解析路径（嵌套结构与普通凭据包不同）
+  if (parsed && typeof parsed === "object" && parsed.tool === "qoder-export v1" && Array.isArray(parsed.results)) {
+    return parseQoderExportResults(parsed);
   }
   const arr = Array.isArray(parsed) ? parsed : Array.isArray(parsed && parsed.accounts) ? parsed.accounts : [parsed];
   const list = [];
@@ -184,12 +233,35 @@ const unknownChannelMessage = (channels) => `文件里的渠道名无法识别�
 // 这是后端闸（界面同时隐藏该页签），绕过界面直接调 proxy_scan_import 也必须被拒。
 const SCAN_IMPORT_DISABLED_MESSAGE = (channel) => `${store.channelDisplay(channel)} 不支持「从本机软件导入」：请在号池页点该渠道的「OAuth 登录」完成登录（可选 Z.ai / BigModel），或改用「粘贴凭据」导入。`;
 
-/** 批量入池：同渠道同 uid 已存在则跳过；入池即后台查一次额度 */
+/** 批量入池：同渠道同 uid 已存在则跳过（带设备身份的 qoder-export 包除外——重导要能刷新身份与凭据）；
+ *  入池即后台查一次额度 */
 function importAccounts(list) {
   const existing = store.listAccounts();
-  let added = 0, dup = 0;
+  let added = 0, dup = 0, updated = 0;
   for (const acc of list) {
-    if (acc.uid && existing.some((a) => a.channel === acc.channel && a.uid === acc.uid)) {
+    // 导出文件里带的模型目录：先落数据目录（目标机没装客户端时，fetchModels 靠它解密）
+    if (acc.catalog && acc.catalog.data) {
+      try { require("./qoderAuth.cjs").writeCatalogBlob(acc.channel, acc.uid, acc.catalog.data); } catch { /* 写失败不影响入库 */ }
+    }
+    const hit = acc.uid ? existing.find((a) => a.channel === acc.channel && a.uid === acc.uid) : null;
+    // qoder-export 的导入是「账号 + 设备身份」的绑定：重导必须更新，否则改了身份/换了机器再导也不生效
+    if (hit && acc.meta && acc.meta.qoderDevice) {
+      const curMeta = hit.meta && typeof hit.meta === "object" ? hit.meta : {};
+      store.updateAccount(hit.id, {
+        token: acc.token,
+        refreshToken: acc.refreshToken || undefined,
+        expiresAt: acc.expiresAt || undefined,
+        // qoderAuth（令牌到期，临期预刷新靠它）也要跟着重导一起更新，否则会留着旧到期时间
+        meta: { ...curMeta, machineId: acc.meta.machineId || curMeta.machineId, qoderAuth: acc.meta.qoderAuth || curMeta.qoderAuth, qoderDevice: acc.meta.qoderDevice },
+        status: "online",
+        coolUntil: 0,
+        coolReason: "",
+      });
+      credits.refreshAccount(hit.id).catch(() => {}); // 重导也刷一次余额，与新增分支同口径
+      updated++;
+      continue;
+    }
+    if (hit) {
       dup++;
       continue;
     }
@@ -197,8 +269,8 @@ function importAccounts(list) {
     credits.refreshAccount(id).catch(() => {}); // 入池即查一次额度（失败不阻塞）
     added++;
   }
-  if (added) emitPool();
-  return { added, dup };
+  if (added || updated) emitPool();
+  return { added, dup, updated };
 }
 
 /** 号池结构变更通知（I5）：账号增删改 / 导入落库 / 渠道启闭后广播 {type:"pool"}。
@@ -267,8 +339,9 @@ async function checkinBatch({ channel, accountId, action, interactive }) {
         continue;
       }
       const useAct = act === "checkin" && acc.channel === "workbuddy_ai" ? "trial" : act;
-      // 自动签到预检：当天已成功过就不再 claim，省一次请求也少撞一次设备级限流
-      if (useAct === "checkin" && !interactive && acc.checkin && acc.checkin.day === store.dayStr() && acc.checkin.ok === true) {
+      // 自动签到预检：当天已成功过就不再 claim，省一次请求也少撞一次设备级限流。
+      // deferred（窗口未开 → 已约好到点重试）不算"已成功"，否则重试会被这条预检跳过、当天漏签。
+      if (useAct === "checkin" && !interactive && acc.checkin && acc.checkin.day === store.dayStr() && acc.checkin.ok === true && acc.checkin.deferred !== true) {
         rows.push({ accountId: acc.id, channel: acc.channel, name: acc.name, uid: acc.uid, ok: true, already: true, message: "今日已签到（预检跳过）" });
         continue;
       }
@@ -1155,6 +1228,9 @@ function register(ipcMain) {
   }));
   ipcMain.handle("proxy_oauth_begin", handle(async ({ channel, captchaVerifyParam, vendor, zcodeProvider }) => {
     const ch = adapters.get(channel) ? String(channel) : store.CHANNELS[0].id;
+    // Qoder 双区已下线网页登录：OAuth 拿不到设备身份、登进来的账号签不了到。
+    // 这是后端闸（界面同时隐藏页签），绕过界面直接调本命令也必须被拒。
+    if (!discovery.isOAuthAllowed(ch)) return fail(`${store.channelDisplay(ch)} 不支持网页登录：请用 tools/qoder-export 在该账号的登录机器上导出后，经号池「从文件导入」绑定设备身份`);
     const r = await discovery.beginOAuth(ch, (result) => {
       if (result.ok) {
         credits.refreshAccount(result.id).catch(() => {});
@@ -1272,6 +1348,7 @@ function register(ipcMain) {
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];
+    if (r.updated) parts.push(`${r.updated} 个已存在账号更新了设备身份/凭据`);
     if (r.dup) parts.push(`${r.dup} 个同 UID 已存在跳过`);
     if (invalid) parts.push(`${invalid} 条记录缺 token 忽略`);
     const message = parts.join("，");
@@ -1301,7 +1378,7 @@ function register(ipcMain) {
     } else {
       texts = [buf.toString("utf8")];
     }
-    let added = 0, dup = 0, invalid = 0, metaOnly = 0;
+    let added = 0, dup = 0, updated = 0, invalid = 0, metaOnly = 0;
     const unknown = new Set();
     const parsedList = [];
     // 两阶段：先把整包解析完（任一文件含认不出的渠道名 → 整批拒绝），确认无误再入库。
@@ -1327,16 +1404,18 @@ function register(ipcMain) {
       const r2 = importAccounts(parsed.list);
       added += r2.added;
       dup += r2.dup;
+      updated += r2.updated;
     }
-    if (!added && !dup && metaOnly) return fail(METADATA_ONLY_MESSAGE);
-    if (!added && !dup) return fail(`没有可导入的账号（${invalid ? `${invalid} 条记录无效` : "文件为空"}）`);
+    if (!added && !dup && !updated && metaOnly) return fail(METADATA_ONLY_MESSAGE);
+    if (!added && !dup && !updated) return fail(`没有可导入的账号（${invalid ? `${invalid} 条记录无效` : "文件为空"}）`);
     const parts = [`成功导入 ${added} 个账号`];
+    if (updated) parts.push(`${updated} 个已存在账号更新了设备身份/凭据`);
     if (dup) parts.push(`${dup} 个同 UID 已存在跳过`);
     if (invalid) parts.push(`${invalid} 条记录无效忽略`);
     if (metaOnly) parts.push(`${metaOnly} 条元数据（无凭据）已跳过`);
     const message = parts.join("，");
     oplog.log("info", "号池账号", `文件导入（${path.basename(file)}）：${message}`);
-    return ok({ added, dup, invalid, metaOnly, file: path.basename(file), message });
+    return ok({ added, dup, updated, invalid, metaOnly, file: path.basename(file), message });
   }));
   // 浏览器端「选择 JSON 文件」上传：文件框由渲染层 <input type="file"> 弹（浏览器到不了主进程弹框，
   // 也不新增文件上传接口），读成文本走本命令——解析入库复用粘贴 JSON 同一份 parseAccountsJson +
@@ -1350,6 +1429,7 @@ function register(ipcMain) {
     if (!list.length) return fail(invalid ? `没有可导入的账号（${invalid} 条记录缺 token）` : "没有可导入的账号");
     const r = importAccounts(list);
     const parts = [`成功导入 ${r.added} 个账号`];
+    if (r.updated) parts.push(`${r.updated} 个已存在账号更新了设备身份/凭据`);
     if (r.dup) parts.push(`${r.dup} 个同 UID 已存在跳过`);
     if (invalid) parts.push(`${invalid} 条记录缺 token 忽略`);
     const message = parts.join("，");
@@ -1403,27 +1483,51 @@ function register(ipcMain) {
     // 目录接口是否需要登录态：未显式声明 modelsNeedAuth 的渠道一律按「需要」处理（行为与既有一致）；
     // Cline 的 recommended-models 实测无需鉴权（modelsNeedAuth:false），可在无账号时先同步目录
     const needAuth = adapter.modelsNeedAuth !== false;
-    const acc = needAuth ? pool.poolAccounts(ch).find((a) => a.status === "online" && a.hasToken) : null;
-    if (needAuth && !acc) return fail(`${store.channelDisplay(ch)}号池无可用账号，无法拉取模型目录`);
-    let secrets = acc ? store.accountSecrets(store.getAccount(acc.id)) : null;
-    // 凭证保鲜：手上 token 已过期/临期时先刷一次（与余额 / 签到 / 对话链路同一口径）。
-    // 缺这一步时，noPersist 渠道（AutoClaw 的新凭证只进适配器进程缓存、不落库）在进程
-    // 重启后会拿着库内旧 token 直接吃 401 —— 表现为「签到、余额、对话都正常，
-    // 只有拉模型目录报登录态已失效」。
-    if (acc && secrets) secrets = await credits.ensureFreshSecrets(acc, secrets);
-    const r = await adapter.fetchModels(acc, secrets, { force: true });
-    if (!r || !r.ok || !Array.isArray(r.models) || !r.models.length) {
-      oplog.log("error", "模型目录", `${store.channelDisplay(ch)} 模型目录拉取失败：${(r && r.message) || "返回为空"}`, { channel: ch });
-      return fail((r && r.message) || "目录拉取失败");
+    // 目录**跟着账号走**的渠道（Qoder：目录来自各账号自己的客户端缓存/导出块，套餐不同就可能不同）：
+    // 聚合所有可用账号，最后取**交集**——避免「列表里有、某个账号其实没有」的幽灵模型（路由过去会 400）。
+    // 其余渠道仍只取第一个账号（不改变既有行为）。
+    let accounts;
+    if (!needAuth) accounts = [null];
+    else if (adapter.modelsPerAccount) accounts = pool.poolAccounts(ch).filter((a) => a.status === "online" && a.hasToken);
+    else {
+      const first = pool.poolAccounts(ch).find((a) => a.status === "online" && a.hasToken);
+      accounts = first ? [first] : [];
     }
+    if (needAuth && !accounts.length) return fail(`${store.channelDisplay(ch)}号池无可用账号，无法拉取模型目录`);
+
+    const lists = [];
+    const skipped = [];
+    for (const acc of accounts) {
+      let secrets = acc ? store.accountSecrets(store.getAccount(acc.id)) : null;
+      // 凭证保鲜：手上 token 已过期/临期时先刷一次（与余额 / 签到 / 对话链路同一口径）
+      if (acc && secrets) secrets = await credits.ensureFreshSecrets(acc, secrets);
+      const r = await adapter.fetchModels(acc, secrets, { force: true }).catch(() => null);
+      if (r && r.ok && Array.isArray(r.models) && r.models.length) lists.push(r.models);
+      else if (acc) skipped.push(`${acc.name || acc.uid || acc.id}：${(r && r.message) || "拉取失败"}`);
+    }
+    if (!lists.length) {
+      const why = skipped[0] || "返回为空";
+      oplog.log("error", "模型目录", `${store.channelDisplay(ch)} 模型目录拉取失败：${why}`, { channel: ch });
+      return fail(why);
+    }
+    // 交集：按模型 id 逐字比较（与本文件其它模型合并口径一致），保留首份的完整元数据（倍率/上下文/能力）
+    let models = lists[0];
+    for (let i = 1; i < lists.length; i++) {
+      const set = new Set(lists[i].map((m) => String((m && m.id) || "")));
+      models = models.filter((m) => set.has(String((m && m.id) || "")));
+    }
+    if (!models.length) return fail(`${store.channelDisplay(ch)} 各账号的模型目录没有交集（套餐/客户端版本差异可能过大）`);
+
     const file = path.join(rules.rulesDir(), "catalog.json");
     const cur = JSON.parse(JSON.stringify(rules.get("catalog.json") || {}));
-    cur[ch] = { syncedAt: Date.now(), models: r.models };
+    cur[ch] = { syncedAt: Date.now(), models };
     fs.writeFileSync(file, JSON.stringify(cur, null, 2), "utf8");
     rules.reload("catalog.json");
-    const withRate = r.models.filter((m) => m && m.rate != null).length;
-    oplog.log("info", "模型目录", `${store.channelDisplay(ch)} 模型目录已同步（${r.models.length} 个模型）`, { channel: ch });
-    return ok({ channel: ch, count: r.models.length, withRate });
+    const withRate = models.filter((m) => m && m.rate != null).length;
+    const agg = accounts.length > 1 ? `，聚合 ${lists.length}/${accounts.length} 个账号取交集` : "";
+    const skipNote = skipped.length ? `；跳过 ${skipped.length} 个账号` : "";
+    oplog.log("info", "模型目录", `${store.channelDisplay(ch)} 模型目录已同步（${models.length} 个模型${agg}${skipNote}）`, { channel: ch });
+    return ok({ channel: ch, count: models.length, withRate, accounts: accounts.length, used: lists.length });
   }));
 
   // ===== 自定义提供商（中转站 / 自建 OpenAI 兼容端点） =====

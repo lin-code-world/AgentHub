@@ -173,7 +173,7 @@ async function main() {
   });
   const deps2 = {
     ...deps,
-    auth: { ...deps.auth, readCatalogBlob: () => "BLOB" },
+    auth: { ...deps.auth, readCatalogBlob: () => "BLOB", decryptCatalog: () => fakeCatalog },
     signer: { createSession: async () => ({ modelCacheDecrypt: () => fakeCatalog, free: () => {} }) },
   };
   const ad2 = makeQoder("qoder", deps2);
@@ -191,8 +191,14 @@ async function main() {
   assert(df.reasoning.supportedEfforts.length === 2, "thinking efforts 映射");
   const qf = fm.models.find((m) => m.id === "qfmodel");
   assert(qf.isFree === true && qf.rate === 0, "免费模型标记（price_factor=0）");
-  const bad = await makeQoder("qoder", { ...deps, auth: { ...deps.auth, readCatalogBlob: () => null } }).fetchModels({ uid: "u1" }, { token: "t" });
+  const bad = await makeQoder("qoder", { ...deps, auth: { ...deps.auth, readCatalogBlob: () => null, readStoredCatalogBlob: () => null } }).fetchModels({ uid: "u1" }, { token: "t" });
   assert(!bad.ok, "无目录缓存时如实失败（不写空）");
+  // 目标机（没装客户端、无本机缓存）：走导入随附的目录块 + 纯算法解密
+  {
+    const ad3 = makeQoder("qoder", { ...deps, auth: { ...deps.auth, readCatalogBlob: () => null, readStoredCatalogBlob: () => "BLOB", decryptCatalog: () => fakeCatalog } });
+    const r3 = await ad3.fetchModels({ uid: "u1" }, { token: "t" });
+    assert(r3.ok && r3.models.length === 3, "无本机缓存时用「导入随附目录块」解密（目标机无客户端）");
+  }
 
   // ===== 5. chat 信封解包 =====
   console.log("\n[5] chat 信封解包");

@@ -178,7 +178,10 @@ let smsTimer: ReturnType<typeof setTimeout> | undefined;
 // 保留该数组作为"渠道感知可用性"的机制位：将来某渠道若确实无 OAuth，把 id 加进来即可。
 // CatPaw（美团）：上游没有开放授权页流程，凭据是**桌面端会话 Cookie 值**——
 // 只能「从本机客户端导入登录态」或「粘贴 JSON」，故屏蔽 OAuth 页签。
-const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw"];
+// Qoder 双区：多账号「每日签到」必须各用自己那台机器的设备身份，而 OAuth 登录**拿不到设备身份**，
+// 登进来的账号签不了到；故下线 OAuth 页签，改由 tools/qoder-export 导出后「从文件导入」绑定身份
+// （后端同样拒绝，见 discovery.isOAuthAllowed）。
+const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw", "qoder", "qoder_intl"];
 // 仅手机验证码登录的渠道：AutoClaw 国内版与 Loomy —— 两家上游都没有网页授权码那套，
 // 官方客户端唯一的自助入口就是手机号 + 验证码，故把 OAuth 页签换成「手机验证码」
 const SMS_ONLY_CHANNELS: ProxyChannelId[] = ["autoclaw", "loomy"];
@@ -238,6 +241,14 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
 /** 渠道允许的添加方式（分段控件与「打开弹窗时的默认页签」共用这一份口径） */
 function allowedMethods(channel: ProxyChannelId): AddMethod[] {
   return (["oauth", "sms", "local", "file", "paste"] as AddMethod[]).filter((key) => addTabAllowed(key, channel));
+}
+
+/** 打开弹窗时的默认页签：Qoder 双区主路径是「从文件导入」（导出文件带设备身份），优先它；
+ *  其余渠道落第一个可用方式（无 OAuth 的渠道落本机导入、AutoClaw 国内版落手机验证码） */
+function defaultAddMethod(channel: ProxyChannelId): AddMethod {
+  const allowed = allowedMethods(channel).filter((k) => !methodGate(k).disabled);
+  if (channel === "qoder" || channel === "qoder_intl") return allowed.includes("file") ? "file" : allowed[0] || "paste";
+  return allowed[0] || "paste";
 }
 
 // deny 的原因统一展示服务端下发的 reason（见 methodGate）：前端不自维护形态口径的禁用/引导文案
@@ -658,10 +669,12 @@ const checkinDetail = ref<ProxyAccount | null>(null);
 /** 响应式的"今天"：秒级 tick 里跨天即更新，页面常开过午夜时行内三态自动回退到待签到 */
 const today = ref(todayStr());
 
-/** 行内按钮三态：todo 未签到 / done 已完成（含幂等与不开放）/ fail 失败 */
-function checkinRowState(acc: ProxyAccount): "todo" | "done" | "fail" {
+/** 行内按钮四态：todo 未签到 / pending 待到点重试（窗口未开）/ done 已完成（含幂等与不开放）/ fail 失败 */
+function checkinRowState(acc: ProxyAccount): "todo" | "pending" | "done" | "fail" {
   const c = acc.checkin;
   if (!c || c.day !== today.value) return "todo";
+  // 窗口未开（每日 10:00 UTC+8 刷新）时上游还没得领：既不是"已完成"也不是"失败"，如实标"待到点重试"
+  if (c.deferred) return "pending";
   if (c.ok || c.already || c.unavailable) return "done";
   return "fail";
 }
@@ -671,6 +684,7 @@ function checkinRowText(acc: ProxyAccount): string {
   const st = checkinRowState(acc);
   const L = checkinLabels(acc.channel);
   // 服务不开放（如国际版无签到体系）不是"已签到"，如实说"不开放"避免误导
+  if (st === "pending") return "待到点重试";
   if (st === "done") return acc.checkin?.unavailable ? "不开放" : L.shortDone;
   if (st === "fail") return L.shortFail;
   return L.shortRun;
@@ -680,6 +694,7 @@ function checkinRowText(acc: ProxyAccount): string {
 function checkinRowTitle(acc: ProxyAccount): string {
   const st = checkinRowState(acc);
   const L = checkinLabels(acc.channel);
+  if (st === "pending") return "当前不在领取窗口（每日 10:00 UTC+8 刷新），已安排到点自动重试；点开查看详情";
   if (st === "done") return `点开查看今日${L.detail}`;
   if (st === "fail") return "点开查看本次失败原因";
   if (acc.channel === "workbuddy_ai") return "国际版无每日签到，点此领一次性加油包";
@@ -700,6 +715,7 @@ function onRowCheckin(acc: ProxyAccount) {
 function checkinDetailTag(acc: ProxyAccount): { text: string; cls: string } {
   const L = checkinLabels(acc.channel);
   const c = acc.checkin;
+  if (checkinRowState(acc) === "pending") return { text: "待到点重试", cls: "tag-dim" };
   if (checkinRowState(acc) === "fail") {
     if (c?.needCaptcha) return { text: "需人机校验", cls: "tag-warn" };
     if (c?.deviceBurned) return { text: "指纹被消耗", cls: "tag-warn" };
@@ -1105,7 +1121,7 @@ function resetAddPanel(channel: ProxyChannelId) {
   // 默认落该渠道**第一个可用**方式：无 OAuth 的渠道（CatPaw）落「从本机软件导入」，
   // AutoClaw 国内版落「手机验证码」。写死 "oauth" 会让弹窗停在一个不可用的页签上；
   // 服务端 deny 的方式只是置灰（见 methodGate），默认页签同样要跳过它们，否则一进来就是灰页签
-  addMethod.value = allowedMethods(channel).find((k) => !methodGate(k).disabled) || "paste";
+  addMethod.value = defaultAddMethod(channel);
   pasteJson.value = "";
   pasteMsg.value = "";
   pasteErr.value = false;
@@ -1316,18 +1332,25 @@ function reauthAccount(acc: ProxyAccount) {
   reloginLock.value = true;
   addChannel.value = acc.channel;
   addOpen.value = true;
-  // 无 OAuth 的渠道（CatPaw）：重登 = 重新导入客户端登录态，绝不能弹授权页
-  // （后端 beginOAuth 已显式挡住该渠道，前端也不该把用户带到那个入口上）
+  // 无 OAuth 的渠道（CatPaw / Qoder 双区）：重登 = 重新导入，绝不能弹授权页
+  // （后端 beginOAuth 已显式挡住这些渠道，前端也不该把用户带到那个入口上）
   if (NO_OAUTH_CHANNELS.includes(acc.channel)) {
-    addMethod.value = allowedMethods(acc.channel).find((k) => !methodGate(k).disabled) || "paste";
-    scanMsg.value = "CatPaw 凭证过期时：先在 CatPaw 客户端重新登录，再点上方「重新扫描」→「导入」覆盖本机登录态";
-    scanErr.value = false;
-    loadScan();
+    const isQoder = acc.channel === "qoder" || acc.channel === "qoder_intl";
+    addMethod.value = defaultAddMethod(acc.channel);
+    if (isQoder) {
+      // Qoder 默认落在「从文件导入」页：提示必须写进该页的 fileMsg，写到 scanMsg 用户看不到
+      fileMsg.value = "Qoder 凭证过期时：请用 tools/qoder-export 在该账号原先登录的那台机器上重新导出，再经「从文件导入」覆盖绑定（重导会刷新凭据与设备身份）";
+      fileErr.value = false;
+    } else {
+      scanMsg.value = "CatPaw 凭证过期时：先在 CatPaw 客户端重新登录，再点上方「重新扫描」→「导入」覆盖本机登录态";
+      scanErr.value = false;
+      loadScan();
+    }
     return;
   }
   // 默认落该渠道第一个可用方式：AutoClaw 国内版落「手机验证码」（短信登录需用户填手机号，
   // 不适合自动发起），其余渠道落 OAuth 并直接发起；deny 置灰的方式同样跳过（不自动发起被禁的命令）
-  addMethod.value = allowedMethods(acc.channel).find((k) => !methodGate(k).disabled) || "oauth";
+  addMethod.value = defaultAddMethod(acc.channel);
   if (addMethod.value === "oauth") beginOauth();
 }
 
@@ -1944,7 +1967,7 @@ onUnmounted(() => {
                     >
                       <button
                         class="btn-link btn-sm"
-                        :class="{ 'ck-done': checkinRowState(acc) === 'done', 'ck-fail': checkinRowState(acc) === 'fail' }"
+                        :class="{ 'ck-done': checkinRowState(acc) === 'done' || checkinRowState(acc) === 'pending', 'ck-fail': checkinRowState(acc) === 'fail' }"
                         :disabled="checkinBusy && checkinRowState(acc) === 'todo'"
                         @click="onRowCheckin(acc)"
                       >
@@ -2207,7 +2230,7 @@ onUnmounted(() => {
                   </el-tooltip>
                 </div>
                 <div v-if="!scanRows.length" class="scan-empty">
-                  未在本机发现可导入的登录态 —— 请先在本机登录对应客户端，或改用「{{ SMS_ONLY_CHANNELS.includes(addChannel) ? "手机验证码" : NO_OAUTH_CHANNELS.includes(addChannel) ? "粘贴 JSON" : "OAuth 登录" }}」
+                  未在本机发现可导入的登录态 —— 请先在本机登录对应客户端，或改用「{{ SMS_ONLY_CHANNELS.includes(addChannel) ? "手机验证码" : addChannel === "qoder" || addChannel === "qoder_intl" ? "从文件导入" : NO_OAUTH_CHANNELS.includes(addChannel) ? "粘贴 JSON" : "OAuth 登录" }}」
                 </div>
               </div>
               <div v-if="scanMsg" class="add-msg" :class="{ err: scanErr }">{{ scanMsg }}</div>

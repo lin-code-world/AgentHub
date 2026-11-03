@@ -376,8 +376,8 @@ const DEFAULTS = {
       inferPath: "/algo/api/v2/service/pro/sse/agent_chat_generation",
       quotaPath: "/api/v2/quota/usage",
       refreshPath: "/api/v1/deviceToken/refresh",
-      userAgent: "qoder/0.4.3",
-      cosyVersion: "0.4.3",
+      userAgent: "qoder/0.5.3",
+      cosyVersion: "0.5.3",
     },
     qoder_intl: {
       gateway: "https://api2.qoder.sh",
@@ -387,8 +387,8 @@ const DEFAULTS = {
       inferPath: "/algo/api/v2/service/pro/sse/agent_chat_generation",
       quotaPath: "/api/v2/quota/usage",
       refreshPath: "/api/v1/deviceToken/refresh",
-      userAgent: "qoder/0.4.3",
-      cosyVersion: "0.4.3",
+      userAgent: "qoder/0.5.3",
+      cosyVersion: "0.5.3",
     },
     // ===== CatPaw（美团）=====
     // 有状态会话协议（round → event(running) → turn(SSE) → 工具循环 → event(completed)）。

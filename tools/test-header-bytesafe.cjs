@@ -63,7 +63,7 @@ const utf8Bytes = (s) => Buffer.from(s, "utf8").toString("latin1");
       const { makeQoder } = require("../electron/backend/proxy/qoderAdapter.cjs");
       const deps = {
         rules: { get: () => ({ qoder: { openApi: "https://openapi.test", userAgent: "Qoder", cosyVersion: "0.4.3" } }), rulesDir: () => os.tmpdir() },
-        auth: { readRiskIdentity: () => ({ machineToken: "tok", machineType: "ty", machineCode: "co" }) },
+        auth: require("../electron/backend/proxy/qoderAuth.cjs"),
         httpJson: async (url, opts) => {
           captured.push(opts.headers);
           return { ok: true, status: 200, data: { campaigns: [] } };
@@ -73,7 +73,7 @@ const utf8Bytes = (s) => Buffer.from(s, "utf8").toString("latin1");
         store: null,
       };
       const ad = makeQoder("qoder", deps);
-      const account = { uid: "u1", meta: { machineId: "00000000-0000-0000-0000-000000000000" } };
+      const account = { uid: "u1", meta: { machineId: "00000000-0000-0000-0000-000000000000", qoderDevice: { machineToken: "tok", machineType: "ty", machineCode: "co", machineId: "00000000-0000-0000-0000-000000000000", hostname: CN_HOST } } };
       const secrets = { token: "dt-test" };
       const r1 = await ad.checkin(account, secrets);
       const r2 = await ad.checkinStatus(account, secrets);

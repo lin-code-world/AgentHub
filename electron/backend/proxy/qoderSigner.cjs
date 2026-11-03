@@ -50,7 +50,7 @@ const WASM_MAGIC = "AGFzbQEAAAA"; // 内嵌 wasm 的 base64 魔数（\0asm）；
 // loaderWasm/loaderGlue 已降为可选（见 pickByStructure 末尾的补救逻辑与 patchText）：
 // 顶层常量形态下它们本来就不存在，不触发也不会错；initGlue 不依赖它们。
 const REQUIRED_FEATURES = ["wasmVar", "glueVar", "initAsync"];
-const CACHE_VERSION = 4; // v4：中和 worker 顶层启动入口（v3 补丁 import 后会 process.exit 闪退）
+const CACHE_VERSION = 5; // v5：新增 0.5.x 的「零参调用链」启动入口识别（v4 及以前在 0.5.3 上漏中和 → 模块自退）
 // worker 启动入口必须位于文件末尾才允许截断；中部命中是函数定义，截断会丢模块代码。
 // 现网样本的入口都在最后 8KB 内（0.9.18/1.1.40 约 100B，1.1.71/1.1.73 约 2KB）。
 const BOOTSTRAP_NEAR_EOF = 8192;
@@ -69,7 +69,7 @@ function locate(product) {
   for (const sdk of ["qoder-agent-sdk", "qoder-cn-agent-sdk"]) {
     const obf = path.join(res, "app.asar.unpacked", "node_modules", "@qoder-ai", sdk, "dist", "_worker", "qoder-worker-runtime.obf.mjs");
     if (!fs.existsSync(obf)) continue;
-    let version = "0.4.3";
+    let version = "0.5.3";
     try {
       const bm = JSON.parse(fs.readFileSync(path.join(res, "build-manifest.json"), "utf8"));
       if (bm && bm.productVersion) version = String(bm.productVersion);
@@ -229,6 +229,10 @@ function findWorkerBootstrap(text) {
     ["async-call", /,\s*[A-Za-z_$][\w$]*\s*\(\s*async\s*\(\)\s*=>\s*\{/g],
     ["sites-ternary", /,\s*[^,;{}]{0,200}?===\s*process\.argv\[2\]\s*\?/g],
     ["argv-call", /,\s*[A-Za-z_$][\w$]*\s*\(\s*process\.argv/g],
+    // 0.5.x（第 4 种收尾形态）：启动入口变成「零参调用链 + 带配置对象的注册调用」，
+    // 形如 `Sa(),w8t(),E8t({configDirNames:…,createFramework:…})`；不含 process.argv /
+    // QODERCLI_RUNTIME_PACKAGING，上面三锚点全失配。锚在整条语句前的分号上（裁在分号处即可）。
+    ["call-chain", /;\s*(?:[A-Za-z_$][\w$]*\(\)\s*,\s*)+[A-Za-z_$][\w$]*\(\{/g],
   ];
   let best = null;
   for (const [anchor, re] of invocations) {
@@ -361,6 +365,10 @@ function buildPatchedModule(product, loc) {
     }
     smokePatchedModule(tmp);
     fs.renameSync(tmp, out);
+    // 侧车元数据：目标机只拷 .mjs 时用它取版本（没拷侧车就回落默认版本）
+    try {
+      fs.writeFileSync(out.replace(/\.mjs$/, ".meta.json"), JSON.stringify({ product, version: loc.version, sdk: loc.sdk || "", obf: path.basename(loc.obf), size: st.size, at: Date.now() }), "utf8");
+    } catch { /* 侧车写失败不影响签名 */ }
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* 已删除 */ }
     throw new Error(`Qoder 签名器补丁不可用：${(e && e.message) || e}`);
@@ -380,14 +388,63 @@ function buildPatchedModule(product, loc) {
 
 const signerCache = new Map(); // product → Promise<{glue, version}> | null(不可用)
 
+/** 随包内置的签名器缓存（安装目录的 resources/qoder-signer/，由 electron-builder 的
+ *  extraResources 放进去；开发态读仓库 build/qoder-signer/）。**真实文件、不在 asar 里，可直接 import**。
+ *  运行时只认这里——没有就报错，不再去数据目录或本机客户端找。 */
+function bundledDir() {
+  if (process.resourcesPath) {
+    const d = path.join(process.resourcesPath, "qoder-signer");
+    try { if (fs.readdirSync(d).length) return d; } catch { /* 回落到开发态目录 */ }
+  }
+  return path.join(__dirname, "..", "..", "..", "build", "qoder-signer");
+}
+
+function findBundledModule(product) {
+  const dir = bundledDir();
+  let files;
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.startsWith(`worker-${product}-`) && f.endsWith(".mjs"));
+  } catch {
+    files = [];
+  }
+  if (!files.length) return null;
+  const file = path.join(dir, files[0]);
+  let meta = null;
+  try { meta = JSON.parse(fs.readFileSync(file.replace(/\.mjs$/, ".meta.json"), "utf8")); } catch { /* 无侧车：用默认版本 */ }
+  return { file, meta };
+}
+
+/** 是否运行在打包后的安装包里：决定要不要允许"从本机客户端现场生成"的开发兜底。
+ *  安装包运行时只认安装目录里的随包缓存；开发模式（npm run dev / 自测）没有随包缓存时才现生成。 */
+function isPackaged() {
+  try {
+    const e = require("electron");
+    return !!(e && e.app && e.app.isPackaged);
+  } catch {
+    return false;
+  }
+}
+
 async function loadGlue(product) {
   if (signerCache.has(product)) return signerCache.get(product);
   const p = (async () => {
-    const loc = locate(product);
-    if (!loc) return null; // 客户端未安装：该渠道不可签名（凭据可导入但无法调用）
-    const mod = await import(pathToFileURL(buildPatchedModule(product, loc)).href);
-    await mod.initGlue();
-    return { glue: mod.glue(), version: loc.version, resources: loc.resources, sdk: loc.sdk };
+    // ① 安装目录里的随包缓存（安装包运行时就只有这一条路）
+    const bundled = findBundledModule(product);
+    if (bundled) {
+      const mod = await import(pathToFileURL(bundled.file).href);
+      await mod.initGlue();
+      return { glue: mod.glue(), version: (bundled.meta && bundled.meta.version) || "0.5.3", resources: "", sdk: "", bundled: true };
+    }
+    // ② 未打包（开发模式 / 自测）：允许从本机已安装的客户端现场生成，省得本地还要先 stage
+    if (!isPackaged()) {
+      const loc = locate(product);
+      if (loc) {
+        const mod = await import(pathToFileURL(buildPatchedModule(product, loc)).href);
+        await mod.initGlue();
+        return { glue: mod.glue(), version: loc.version, resources: loc.resources, sdk: loc.sdk };
+      }
+    }
+    throw new Error(`安装目录里没有 ${product} 的签名器缓存（${path.join(bundledDir(), `worker-${product}-*.mjs`)}）；请在有 Qoder 客户端的机器上打包，或把缓存放进安装目录的 qoder-signer 文件夹`);
   })();
   // 成功才缓存（对齐 qoderInstall「不缓存失败」的设计声明）：失败/null 钉死在缓存里
   // 会让签名器一次性故障（结构变更/临时 IO 错/用户装完客户端）直到重启才能恢复
@@ -416,7 +473,7 @@ async function available(product) {
  */
 async function createSession({ product, token, uid, machineId }) {
   const loaded = await loadGlue(product);
-  if (!loaded) throw new Error(`${product} 客户端未安装，无法签名（请先安装并登录对应版本）`);
+  if (!loaded) throw new Error(`${product} 签名器不可用：安装目录里没有签名器缓存（resources/qoder-signer/worker-${product}-*.mjs）`);
   const { glue, version } = loaded;
 
   const seed = JSON.stringify({
@@ -534,4 +591,4 @@ function probeSnippets(text, entryAt) {
   };
 }
 
-module.exports = { locate, available, createSession, describe, probe, installResources, buildPatchedModule, patchText, pickByStructure, findWorkerBootstrap };
+module.exports = { locate, available, createSession, describe, probe, installResources, buildPatchedModule, patchText, pickByStructure, findWorkerBootstrap, findBundledModule };

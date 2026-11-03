@@ -79,7 +79,7 @@ async function fetchCampaigns(adapter, secrets, risk, machineId, agent) {
     Accept: "application/json",
     "User-Agent": c.userAgent || "Qoder",
     "Cosy-ClientType": "10",
-    "Cosy-Version": c.cosyVersion || "0.4.3",
+    "Cosy-Version": c.cosyVersion || "0.5.3",
     "Cosy-MachineId": machineId || "",
     "Cosy-MachineOS": os.release(),
     "Cosy-MachineHostname": os.hostname(),
@@ -173,7 +173,9 @@ async function main() {
     const secrets = store.accountSecrets(row);
     const meta = secrets.meta || {};
     const machineId = meta.machineId || row.machineId || "";
-    const risk = auth.readRiskIdentity ? auth.readRiskIdentity(acc.channel, acc.uid) : null;
+    // 与适配器同口径：优先用账号绑定的设备身份；仅诊断脚本在未绑定时回退本机组件（便于对比）
+    const bound = meta.qoderDevice && meta.qoderDevice.machineToken ? meta.qoderDevice : null;
+    const risk = bound || (auth.readRiskIdentity ? auth.readRiskIdentity(acc.channel, acc.uid) : null);
     const adapter = adapters.get(acc.channel);
 
     console.log(`账号 ${acc.name || acc.id}  [${acc.channel}]  status=${acc.status}`);
@@ -181,7 +183,7 @@ async function main() {
     console.log(`  token 指纹    = ${fp(secrets.token)}  (长度 ${String(secrets.token || "").length})`);
     console.log(`  refresh 指纹  = ${fp(secrets.refreshToken)}`);
     console.log(`  machineId    = ${machineId || "(空)"}`);
-    console.log(`  风控身份      = ${risk ? `machineToken=${fp(risk.machineToken)} type=${risk.machineType} code=${fp(risk.machineCode)}` : "不可用（客户端未装/已卸载）"}`);
+    console.log(`  设备身份      = ${risk ? `machineToken=${fp(risk.machineToken)} type=${risk.machineType} code=${fp(risk.machineCode)}（来源：${bound ? "账号绑定" : "本机组件"}）` : "不可用（未绑定且客户端未装）"}`);
 
     if (!adapter) {
       console.log("  ! 该渠道无适配器，跳过 campaigns 探测");

@@ -32,6 +32,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const qoderInstall = require("./qoderInstall.cjs");
+const config = require("../config.cjs");
 
 /** 双渠道目录定义：appId 目录名 + 用户主目录 + 产品 id */
 const PRODUCTS = {
@@ -308,7 +309,7 @@ async function refreshDeviceToken(product, refreshToken, machineId, opts = {}) {
   try {
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": opts.userAgent || "qoder/0.4.3" },
+      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": opts.userAgent || "qoder/0.5.3" },
       body,
       signal: ctrl.signal,
     });
@@ -333,18 +334,65 @@ async function refreshDeviceToken(product, refreshToken, machineId, opts = {}) {
   }
 }
 
-// ===== 模型目录（catalog-v6 本地解密）=====
+// ===== 模型目录（catalog-v7/v6 本地解密）=====
 
-/** 目录缓存路径：~/.qoder{,-cn}/.models/<uid>/catalog-v6 */
+/** 目录缓存路径：~/.qoder{,-cn}/.models/<uid>/catalog-<v>。
+ *  官方客户端 0.5.x 起把缓存改名 **catalog-v7**（更早是 catalog-v6）——两个都试，v7 优先。
+ *  此前写死 v6：客户端升到 0.5.x 后网关在本机**找不到目录**，Qoder 模型列表整个为空。 */
 function catalogPath(product, uid) {
   const p = pathsOf(product);
-  return p && uid ? path.join(p.catalogDir, uid, "catalog-v6") : null;
+  if (!p || !uid) return null;
+  const dir = path.join(p.catalogDir, uid);
+  return ["catalog-v7", "catalog-v6"].map((n) => path.join(dir, n)).find((f) => fs.existsSync(f)) || path.join(dir, "catalog-v7");
 }
 
 function readCatalogBlob(product, uid) {
   const f = catalogPath(product, uid);
   if (!f || !fs.existsSync(f)) return null;
-  return fs.readFileSync(f, "utf8"); // 加密文本，交由签名器的 model_cache_decrypt 解
+  return fs.readFileSync(f, "utf8"); // 加密文本，交由 decryptCatalog 解
+}
+
+/** 导入随附的目录块存放处（数据目录下，按渠道+uid 命名）：目标机没装客户端时靠它 */
+function catalogStorePath(product, uid) {
+  if (!uid) return null;
+  return path.join(config.dataDir(), "proxy", "qoder-catalog", `${product}-${uid}.b64`);
+}
+
+/** 写入导入随附的目录块（导出文件里带来的 catalog） */
+function writeCatalogBlob(product, uid, text) {
+  const f = catalogStorePath(product, uid);
+  if (!f || !text) return false;
+  try {
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, String(text), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 读导入随附的目录块 */
+function readStoredCatalogBlob(product, uid) {
+  const f = catalogStorePath(product, uid);
+  if (!f || !fs.existsSync(f)) return null;
+  return fs.readFileSync(f, "utf8");
+}
+
+/** 纯算法解密目录：base64("QMC\x01" + nonce12 + 密文 + tag16)，
+ *  密钥 = HKDF-SHA256(ikm=uid, salt="qoder-model-cache-enc", info="model-cache-v1")，AES-256-GCM。
+ *  不需要客户端/wasm——目标机没装客户端也能解（实测与 wasm 解密结果逐字段一致）。 */
+function decryptCatalog(text, uid) {
+  const buf = Buffer.from(String(text || "").trim(), "base64");
+  if (buf.length < 4 + 12 + 16 || buf.subarray(0, 4).toString("latin1") !== "QMC\u0001") {
+    throw new Error("模型目录不是 QMC 信封（格式可能已变更）");
+  }
+  const nonce = buf.subarray(4, 16);
+  const ct = buf.subarray(16, buf.length - 16);
+  const tag = buf.subarray(buf.length - 16);
+  const key = Buffer.from(crypto.hkdfSync("sha256", Buffer.from(String(uid)), Buffer.from("qoder-model-cache-enc"), Buffer.from("model-cache-v1"), 32));
+  const d = crypto.createDecipheriv("aes-256-gcm", key, nonce);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]).toString("utf8");
 }
 
 module.exports = {
@@ -357,6 +405,10 @@ module.exports = {
   refreshDeviceToken,
   catalogPath,
   readCatalogBlob,
+  catalogStorePath,
+  writeCatalogBlob,
+  readStoredCatalogBlob,
+  decryptCatalog,
   riskIdentityPath,
   readRiskIdentity,
   clearRiskCache,
