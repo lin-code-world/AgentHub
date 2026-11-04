@@ -273,6 +273,19 @@ function importAccounts(list) {
   return { added, dup, updated };
 }
 
+/** qoder-export.exe 的位置：安装包里在 resources/qoder-export/（extraResources），开发态在仓库 tools/qoder-export/ */
+function qoderExportToolPath() {
+  const cands = [];
+  if (process.resourcesPath) cands.push(path.join(process.resourcesPath, "qoder-export", "qoder-export.exe"));
+  cands.push(path.join(__dirname, "..", "..", "..", "tools", "qoder-export", "qoder-export.exe"));
+  for (const f of cands) {
+    try { if (fs.existsSync(f)) return f; } catch { /* 忽略 */ }
+  }
+  return null;
+}
+/** 网页端回传上限：exe 约 4.5MB，base64 后约 6MB，加密通道不适合再大的包 */
+const QODER_EXPORT_TOOL_MAX = 12 * 1024 * 1024;
+
 /** 号池结构变更通知（I5）：账号增删改 / 导入落库 / 渠道启闭后广播 {type:"pool"}。
  *  前端号池页对结构变化只认这一条（2 秒节流刷新），余额类的 credits 事件不再触发整页重排；
  *  浏览器端 SSE 与桌面 IPC 走同一个 platform 事件出口，两种形态都收得到 */
@@ -1440,6 +1453,31 @@ function register(ipcMain) {
     const message = parts.join("，");
     oplog.log("info", "号池账号", `文本导入：${message}`, { channel });
     return ok({ ...r, invalid, message });
+  }));
+  // 导出工具 qoder-export.exe：桌面弹「另存为」把随包的那份拷出来；
+  // 浏览器没有本机对话框，走 *_data 回传 base64、由前端 Blob 下载（与导出崩溃日志同一套分工）
+  ipcMain.handle("proxy_qoder_export_tool", handle(async () => {
+    const src = qoderExportToolPath();
+    if (!src) return fail("安装包里没有 qoder-export.exe（该工具在仓库 tools/qoder-export/，打包时随包带上）");
+    const electron = require("electron");
+    const r = await electron.dialog.showSaveDialog(electron.BrowserWindow.getAllWindows()[0], {
+      title: "保存 qoder-export.exe",
+      defaultPath: path.join(electron.app.getPath("downloads"), "qoder-export.exe"),
+      filters: [{ name: "可执行文件", extensions: ["exe"] }],
+    });
+    if (!r || r.canceled || !r.filePath) return ok({ canceled: true });
+    fs.writeFileSync(r.filePath, fs.readFileSync(src));
+    oplog.log("info", "Qoder 导出工具", `已保存到 ${r.filePath}`);
+    return ok({ path: r.filePath, bytes: fs.statSync(src).size });
+  }));
+  ipcMain.handle("proxy_qoder_export_tool_data", handle(() => {
+    const src = qoderExportToolPath();
+    if (!src) return fail("安装包里没有 qoder-export.exe（该工具在仓库 tools/qoder-export/，打包时随包带上）");
+    const buf = fs.readFileSync(src);
+    if (buf.length > QODER_EXPORT_TOOL_MAX) {
+      return fail(`导出工具约 ${Math.round(buf.length / 1048576)}MB，超过网页端上限（${QODER_EXPORT_TOOL_MAX / 1048576}MB），请在桌面窗口用「保存到本机」`);
+    }
+    return ok({ name: "qoder-export.exe", base64: buf.toString("base64"), bytes: buf.length });
   }));
 
   // ===== 模型目录 =====

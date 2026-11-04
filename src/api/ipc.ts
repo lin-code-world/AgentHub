@@ -271,6 +271,12 @@ export const proxyAccountImportFile = (channel: ProxyChannelId) =>
 /** 浏览器端上传 JSON 文件的文本导入（渲染层 input[type=file] 读成文本传入，只支持单个 .json，不做 ZIP） */
 export const proxyAccountImportText = (channel: ProxyChannelId, text: string) =>
   call<{ ok: boolean; added?: number; dup?: number; invalid?: number; message?: string }>("proxy_account_import_text", { channel, text });
+/** 保存 Qoder 导出工具 qoder-export.exe 到本机：桌面弹「另存为」等用户操作（超时设 0） */
+export const proxyQoderExportToolSave = () =>
+  call<{ ok: boolean; canceled?: boolean; path?: string; bytes?: number; message?: string }>("proxy_qoder_export_tool", {}, 0);
+/** 浏览器形态：回传 exe 数据（base64）自行下载；base64 + 加密后体积更大，超时放宽 */
+export const proxyQoderExportToolData = () =>
+  call<{ ok: boolean; name?: string; base64?: string; bytes?: number; message?: string }>("proxy_qoder_export_tool_data", {}, 120_000);
 
 // ===== 反代网关：模型 / 统计 / 规则 =====
 export const proxyModels = () => call<ProxyModel[]>("proxy_models");

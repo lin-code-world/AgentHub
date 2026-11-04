@@ -224,6 +224,9 @@ function methodGate(key: AddMethod): { disabled: boolean; reason: string | null 
 }
 
 function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.value): boolean {
+  // Qoder 双区：只保留「从 JSON 文件」——账号必须由 qoder-export 导出（带设备身份 + 模型目录）
+  // 才能签到/对话，其余添加方式一律不显示
+  if ((channel === "qoder" || channel === "qoder_intl") && key !== "file") return false;
   if (key === "oauth" && NO_OAUTH_CHANNELS.includes(channel)) return false;
   // 手机验证码页签只给 AutoClaw 国内版；它自身也没有 OAuth 页签可放
   if (key === "sms") return SMS_ONLY_CHANNELS.includes(channel);
@@ -250,6 +253,9 @@ function defaultAddMethod(channel: ProxyChannelId): AddMethod {
   if (channel === "qoder" || channel === "qoder_intl") return allowed.includes("file") ? "file" : allowed[0] || "paste";
   return allowed[0] || "paste";
 }
+
+/** 当前添加渠道是不是 Qoder 双区：决定「从文件导入」页要不要显示「下载导出工具」按钮 */
+const isQoderAdd = computed(() => isQoderChannel(addChannel.value));
 
 // deny 的原因统一展示服务端下发的 reason（见 methodGate）：前端不自维护形态口径的禁用/引导文案
 
@@ -1512,6 +1518,44 @@ async function doImportFile() {
   }
 }
 
+/** 导出工具下载：桌面弹「另存为」把随包的 exe 拷到本机；浏览器拿 base64 自行下载 */
+const toolBusy = ref(false);
+async function downloadQoderTool() {
+  if (toolBusy.value) return;
+  toolBusy.value = true;
+  try {
+    if (api.isElectron()) {
+      const r = await api.proxyQoderExportToolSave();
+      if (r.canceled) return; // 用户取消，不留痕迹
+      if (!r.ok) {
+        toast(r.message || "保存失败", "err");
+        return;
+      }
+      toast(`已保存 qoder-export.exe 到 ${r.path}`, "info");
+    } else {
+      const r = await api.proxyQoderExportToolData();
+      if (!r.ok || !r.base64) {
+        toast(r.message || "下载失败", "err");
+        return;
+      }
+      const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = r.name || "qoder-export.exe";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("已开始下载 qoder-export.exe", "info");
+    }
+  } catch (e) {
+    toast(String((e as Error).message || e), "err");
+  } finally {
+    toolBusy.value = false;
+  }
+}
+
 /** 浏览器端选完文件：只收单个 .json（ZIP 不支持），读成文本走 proxy_account_import_text——
  *  解析与入库在主进程，与桌面导入同一份语义（channel:uid 去重、只新增不更新、入池即刷额度） */
 async function onFilePicked(e: Event) {
@@ -2260,6 +2304,11 @@ onUnmounted(() => {
               </div>
               <input ref="fileInput" type="file" accept=".json,application/json" style="display: none" @change="onFilePicked" />
               <div v-if="fileMsg" class="add-msg" :class="{ err: fileErr }">{{ fileMsg }}</div>
+              <!-- Qoder 专用：导出工具下载（在登录过该账号的电脑上跑它，才能拿到带设备身份的导出文件） -->
+              <div v-if="isQoderAdd" style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px">
+                <button class="btn btn-outline btn-sm" :disabled="toolBusy" @click="downloadQoderTool">{{ toolBusy ? "处理中…" : "下载 qoder-export.exe 工具" }}</button>
+                <div class="add-pane-desc" style="margin: 0">在<b>登录过该账号</b>的那台电脑上运行它，把导出的 JSON 文件拿回来在这里导入</div>
+              </div>
             </div>
 
             <!-- 粘贴 JSON（ModelScope 例外：它的凭据是 ms- 访问令牌，非 JSON 快照） -->

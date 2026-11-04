@@ -72,6 +72,10 @@
       {
         "from": "build/qoder-signer",
         "to": "qoder-signer"
+      },
+      {
+        "from": "tools/qoder-export/qoder-export.exe",
+        "to": "qoder-export/qoder-export.exe"
       }
     ],
     "win": {
