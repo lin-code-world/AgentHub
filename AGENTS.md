@@ -11,7 +11,10 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
 
 ## 分支策略
 
-- `main` 分支只用来跟上游工程（HUIdada1/AgentHub）同步，不在它上面修改代码。
+- `main` 是上游工程的**镜像分支**，只用来跟上游同步，不在它上面修改代码（不编辑、不提交）。
+- 同步目标：本地 `main` 与 fork 的 `main`（`origin` = `lin-code-world/AgentHub`）都要与上游
+  `HUIdada1/AgentHub`（`upstream`）的 `main` 保持一致；方向以上游为准——从 `upstream` 拉取，再把 `main`
+  推回 `origin`，让三方一致。
 - 修改代码一律在 `api-gateway` 分支上操作。
 
 ## 源文件版权头
