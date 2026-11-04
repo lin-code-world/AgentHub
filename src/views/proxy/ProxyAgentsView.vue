@@ -572,12 +572,14 @@ function gotoLog() {
 
 function checkinTagCls(r: ProxyCheckinRow) {
   if (!r.ok) return r.needCaptcha || r.deviceBurned ? "tag-warn" : "tag-err";
+  if (r.windowClosed) return "tag-warn";
   if (r.already) return "tag-dim";
   if (r.unavailable) return "tag-warn";
   return "tag-ok";
 }
 function checkinTagText(r: ProxyCheckinRow) {
   if (!r.ok) return r.needCaptcha ? "需过码" : r.deviceBurned ? "指纹被烧" : "失败";
+  if (r.windowClosed) return "活动未开启";
   if (r.already) return checkinShownChannel.value === "zcode" ? "已领取" : "已签到";
   if (r.unavailable) return "不开放";
   return "成功";
@@ -669,12 +671,14 @@ const checkinDetail = ref<ProxyAccount | null>(null);
 /** 响应式的"今天"：秒级 tick 里跨天即更新，页面常开过午夜时行内三态自动回退到待签到 */
 const today = ref(todayStr());
 
-/** 行内按钮四态：todo 未签到 / pending 待到点重试（窗口未开）/ done 已完成（含幂等与不开放）/ fail 失败 */
-function checkinRowState(acc: ProxyAccount): "todo" | "pending" | "done" | "fail" {
+/** 行内按钮五态：todo 未签到 / pending 待到点重试（窗口未开）/ closed 活动未开启（ZCode）/ done 已完成（含幂等与不开放）/ fail 失败 */
+function checkinRowState(acc: ProxyAccount): "todo" | "pending" | "closed" | "done" | "fail" {
   const c = acc.checkin;
   if (!c || c.day !== today.value) return "todo";
   // 窗口未开（每日 10:00 UTC+8 刷新）时上游还没得领：既不是"已完成"也不是"失败"，如实标"待到点重试"
   if (c.deferred) return "pending";
+  // ZCode 活动未开启（上游当前无可领，等开放）：同样不算"已完成"，改自动签到时间后可重跑
+  if (c.windowClosed) return "closed";
   if (c.ok || c.already || c.unavailable) return "done";
   return "fail";
 }
@@ -685,6 +689,7 @@ function checkinRowText(acc: ProxyAccount): string {
   const L = checkinLabels(acc.channel);
   // 服务不开放（如国际版无签到体系）不是"已签到"，如实说"不开放"避免误导
   if (st === "pending") return "待到点重试";
+  if (st === "closed") return "活动未开启";
   if (st === "done") return acc.checkin?.unavailable ? "不开放" : L.shortDone;
   if (st === "fail") return L.shortFail;
   return L.shortRun;
@@ -695,6 +700,7 @@ function checkinRowTitle(acc: ProxyAccount): string {
   const st = checkinRowState(acc);
   const L = checkinLabels(acc.channel);
   if (st === "pending") return "当前不在领取窗口（每日 10:00 UTC+8 刷新），已安排到点自动重试；点开查看详情";
+  if (st === "closed") return "ZCode 领取活动未开启（上游当前没有可领取的奖励）；可点工具栏「领取」手动重试，或到「自动签到」里把时间改到你想要的时间点";
   if (st === "done") return `点开查看今日${L.detail}`;
   if (st === "fail") return "点开查看本次失败原因";
   if (acc.channel === "workbuddy_ai") return "国际版无每日签到，点此领一次性加油包";
@@ -716,6 +722,7 @@ function checkinDetailTag(acc: ProxyAccount): { text: string; cls: string } {
   const L = checkinLabels(acc.channel);
   const c = acc.checkin;
   if (checkinRowState(acc) === "pending") return { text: "待到点重试", cls: "tag-dim" };
+  if (checkinRowState(acc) === "closed") return { text: "活动未开启", cls: "tag-warn" };
   if (checkinRowState(acc) === "fail") {
     if (c?.needCaptcha) return { text: "需人机校验", cls: "tag-warn" };
     if (c?.deviceBurned) return { text: "指纹被消耗", cls: "tag-warn" };

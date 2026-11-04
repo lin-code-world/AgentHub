@@ -4119,9 +4119,13 @@ const zcode = {
     if (!planId) {
       const st = await this.checkinStatus(account, secrets);
       if (!st.ok) return st;
-      if (st.unavailable) return { ok: true, already: true, message: st.message };
+      // 窗口没开 / 当前无可领：如实标「活动未开启」，不混进「已领取（幂等）」——
+      // 后者会让今天被判成已签完、用户改自动签到时间后也不再重跑
+      // （上游开放时间不固定、且会变化，界面文案不写死具体时刻，以用户在自动签到里设的时间为准）
+      if (st.unavailable) return { ok: true, windowClosed: true, message: "领取活动未开启（暂无可领取的奖励）" };
       const top = [...(st.plans || [])].sort((a, b) => (b.priority || 0) - (a.priority || 0))[0];
-      if (!top || !top.planId) return { ok: true, already: true, message: "当前没有可领取的奖励活动" };
+      // 有列表但取不到有效套餐号（畸形数据）：同样按「活动未开启」如实回报，不误记成已领取
+      if (!top || !top.planId) return { ok: true, windowClosed: true, message: "领取活动未开启（暂无可领取的奖励）" };
       planId = top.planId;
     }
 

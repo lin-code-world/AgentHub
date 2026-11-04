@@ -591,6 +591,8 @@ export interface ProxyCheckinRecord {
   already?: boolean;
   /** 服务对该账号不开放（视为完成，不是失败） */
   unavailable?: boolean;
+  /** ZCode 活动未开启（上游当前无可领取的奖励）：不算完成，改自动签到时间后到点可重跑 */
+  windowClosed?: boolean;
   /** 窗口未开（每日 10:00 UTC+8 刷新）：已安排到点自动重试，既非已完成也非失败 */
   deferred?: boolean;
   /** zcode 领取奖励需人机校验（自动 tick 跳过，视为失败待人工） */
@@ -616,6 +618,8 @@ export interface ProxyCheckinRow {
   unavailable?: boolean;
   /** 已签到 / 已领取过：幂等成功 */
   already?: boolean;
+  /** ZCode 活动未开启（上游当前无可领取的奖励）：不算完成，改时间后到点可重跑 */
+  windowClosed?: boolean;
   checkedIn?: boolean;
   enable?: boolean;
   active?: boolean;

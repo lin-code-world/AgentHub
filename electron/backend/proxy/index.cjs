@@ -340,8 +340,9 @@ async function checkinBatch({ channel, accountId, action, interactive }) {
       }
       const useAct = act === "checkin" && acc.channel === "workbuddy_ai" ? "trial" : act;
       // 自动签到预检：当天已成功过就不再 claim，省一次请求也少撞一次设备级限流。
-      // deferred（窗口未开 → 已约好到点重试）不算"已成功"，否则重试会被这条预检跳过、当天漏签。
-      if (useAct === "checkin" && !interactive && acc.checkin && acc.checkin.day === store.dayStr() && acc.checkin.ok === true && acc.checkin.deferred !== true) {
+      // deferred（窗口未开 → 已约好到点重试）与 windowClosed（活动未开启，等改时间后重跑）
+      // 都不算"已成功"，否则重试会被这条预检跳过、当天漏签。
+      if (useAct === "checkin" && !interactive && acc.checkin && acc.checkin.day === store.dayStr() && acc.checkin.ok === true && acc.checkin.deferred !== true && acc.checkin.windowClosed !== true) {
         rows.push({ accountId: acc.id, channel: acc.channel, name: acc.name, uid: acc.uid, ok: true, already: true, message: "今日已签到（预检跳过）" });
         continue;
       }
@@ -1189,6 +1190,10 @@ function register(ipcMain) {
     rules[channel] = { enabled: !!enabled, time: config.normalizeHm(time), jitterMin: config.normalizeJitter(jitterMin) };
     cfg.proxy.checkinAutoRules = rules;
     config.saveConfig(cfg);
+    // 改完时间清掉「今天已跑过」与延后记号，否则当天不会再发起：ZCode 的「活动未开启」
+    // 尤其需要——用户把时间改到上游开放后，到点应能重新领取
+    delete lastAutoCheckinDay[channel];
+    delete autoDeferredUntil[channel];
     oplog.log("info", "网关配置", `${store.channelDisplay(channel)} 自动签到改为${enabled ? `每天 ${config.normalizeHm(time)}${Number(jitterMin) ? `（抖动 ${Number(jitterMin)} 分钟）` : ""}` : "关闭"}`, { channel });
     return ok({ channel, ...rules[channel] });
   }));

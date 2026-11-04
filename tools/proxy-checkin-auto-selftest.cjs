@@ -106,6 +106,13 @@ store.noteCheckin(accId, { ok: true, message: "签到成功" }, "checkin");
 row = store.listAccounts("trae").find((a) => a.id === accId);
 ok("签到成功后清除 9074 冷却", row.checkin.retry9074At === undefined && row.checkin.retry9074Count === undefined);
 
+// ZCode 活动未开启（本次改动）：落 windowClosed，且与「已领取（幂等）」互斥——
+// 旧实现把「窗口没开」混成 already，当天被判成已领完、改自动签到时间后也不再重跑
+store.noteCheckin(accId, { ok: true, windowClosed: true, message: "领取活动未开启（暂无可领取的奖励）" }, "checkin");
+row = store.listAccounts("trae").find((a) => a.id === accId);
+ok("活动未开启落 windowClosed（不混进已领取）", row.checkin.windowClosed === true && row.checkin.ok === true && row.checkin.already !== true);
+ok("windowClosed 与 already 互斥", !(row.checkin.windowClosed && row.checkin.already));
+
 // 设备号代数：签到撞 9074 后换一套指纹
 const adapters = require("../electron/backend/proxy/adapters.cjs");
 const genAcc = { id: "gen-test" };
@@ -205,5 +212,12 @@ ok("号池页有自动签到设置弹窗", /autoDlg/.test(view) && /saveAutoChec
 ok("号池页行内三态与详情弹窗", /checkinRowState/.test(view) && /checkinDetailTag/.test(view));
 ok("checkinBatch 处理 9074 轮换与冷却", /rotateCheckinDevice/.test(idx) && /noteCheckinCooldown/.test(idx));
 ok("自动签到预检跳过已签", /今日已签到（预检跳过）/.test(idx));
+ok("预检排除 deferred 与 windowClosed（都不算已成功）", /acc\.checkin\.deferred !== true && acc\.checkin\.windowClosed !== true/.test(idx));
+ok("改自动签到时间清当天记号与延后（ZCode 改时间后可重跑）", /delete lastAutoCheckinDay\[channel\]/.test(idx) && /delete autoDeferredUntil\[channel\]/.test(idx));
+const adSrc = read("electron/backend/proxy/adapters.cjs");
+ok("ZCode 窗口未开返回活动未开启（不混进已领取）", /windowClosed: true, message: "领取活动未开启/.test(adSrc));
+const storeSrc = read("electron/backend/proxy/store.cjs");
+ok("noteCheckin 落 windowClosed 字段", /windowClosed: r\.windowClosed === true/.test(storeSrc));
+ok("号池页有「活动未开启」态（closed）", /"closed"/.test(view) && /活动未开启/.test(view));
 
 console.log(`\n全部通过：${pass} 项`);
