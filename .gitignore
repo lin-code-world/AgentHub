@@ -19,6 +19,7 @@ npm-debug.log*
 .vscode/
 .idea/
 .DS_Store
+.openidea/
 
 # 本机运行数据
 *.sqlite
