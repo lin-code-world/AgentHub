@@ -13,6 +13,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
+import { isWebTransport } from "../../api/caps";
 import type { ModelCustomEntry, ProxyChannelId, ProxyChannelView, ProxyModel } from "../../types";
 import { useAppStore } from "../../stores/app";
 import { capabilityNames, capabilityTags, channelName, fmtCtx, fmtInt, fmtRate, parseCtxInput } from "./format";
@@ -20,6 +21,12 @@ import { hiddenByRate } from "./rateGate";
 import { mergeAliasRows, sourceRows, channelCustomOf } from "./channelRows";
 
 const app = useAppStore();
+/** 浏览器托管形态：load_config / save_config 被 deny，模型页写入（disabledModels / modelOverrides /
+ *  modelCustomByChannel / modelReverseAliases 都在反代段）改走 proxy_config_get / proxy_config_save */
+const webForm = computed(() => isWebTransport());
+/** 网页形态下是否已成功从服务器取到真实反代段：未取到前 app.config.proxy 仍是页面默认值，
+ *  persist 不得提交（否则会把磁盘上的真实设置整段覆盖成默认值） */
+let proxyReady = false;
 const models = ref<ProxyModel[]>([]);
 const err = ref("");
 /** err 当前这条是不是 refresh 自己写下的加载错误：只有它能被 refresh 自动回收，
@@ -338,6 +345,15 @@ function editReverseAlias(name: string, targetMap: Record<string, string>) {
 
 async function refresh() {
   try {
+    // 浏览器托管形态拿不到整份配置（load_config 被 deny）：先用 proxy_config_get 把反代段回填成
+    // 服务器真实值，后续 persist 提交时才是真实配置（否则会把页面默认值覆盖到磁盘）
+    if (webForm.value) {
+      const remote = await api.proxyConfigGet().catch(() => null);
+      if (remote) {
+        app.config.proxy = remote;
+        proxyReady = true;
+      }
+    }
     models.value = await api.proxyModels();
     channels.value = await api.proxyPool().catch(() => channels.value);
     // 渠道启闭：当前页签指向被关闭的渠道时回落「全部」（上游启闭后模型页立即跟随）
@@ -350,9 +366,20 @@ async function refresh() {
   }
 }
 
-/** 管理态写回整体配置（save 即热生效；保存后重拉对齐服务端口径） */
+/** 管理态写回整体配置（保存即热生效；保存后重拉对齐服务端口径）。
+ *  桌面走整份 save_config；浏览器形态 save_config 被 deny，改走 proxy_config_save 只提交反代段
+ *  （disabledModels / modelOverrides / modelCustomByChannel / modelReverseAliases 都在反代段，
+ *  与「设置 · 反代网关」同一口径）。 */
 async function persist(successMsg: string) {
-  const r = await app.save();
+  // 网页形态：在成功取到服务器真实反代段之前不提交——此时 app.config.proxy 还是页面默认值，
+  // 提交会把磁盘上的真实设置（并发 / 冷却 / 保留期等）整段覆盖成默认值
+  if (webForm.value && !proxyReady) {
+    err.value = "尚未取到服务器上的网关配置，已取消保存以免覆盖真实设置，请刷新页面后重试";
+    return;
+  }
+  const r = webForm.value
+    ? await api.proxyConfigSave(app.config.proxy).catch((e: Error) => ({ ok: false, message: String(e.message || e) }))
+    : await app.save();
   if (r && r.ok === false) {
     err.value = r.message || "保存失败";
     return;
