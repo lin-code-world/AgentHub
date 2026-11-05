@@ -114,6 +114,8 @@ conventional 前缀（`feat(gateway): …` / `fix(proxy): …`）。
   默认开放但需带管理令牌（`Authorization: Bearer <令牌>` 或 `x-admin-token: <令牌>`，令牌 = 「设置 · 局域网访问」复制的那个），
   不带或带错令牌返回 401。远程实例要把「绑定地址」设为局域网开放（0.0.0.0）其他电脑才连得上；
   令牌明文走 HTTP（无 TLS），仅在可信局域网内使用，别暴露到公网。
+- 已部署的调试远程实例：管理页 `http://192.168.2.129:39528/`，反代端口 `39527`，管理令牌
+  `3ab5925d5c3c958f2997e646f1cc4f0aa00d34ec405ad5e8`（`GET /status` 用它，见上一条）。
 - 本地打包 exe：`npm run electron:build`（签名器烘入 + 类型检查 + 前端构建 + electron-builder）→ `release/` 下出
   `AgentApiGateway-Setup-x.y.z.exe`（NSIS 安装版，`win.target` 只配了 nsis），版本号取 package.json 的 `version`；
   `npm run electron:pack` 只出未打包目录（`--dir`）。
