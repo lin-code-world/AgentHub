@@ -50,7 +50,10 @@ const WASM_MAGIC = "AGFzbQEAAAA"; // 内嵌 wasm 的 base64 魔数（\0asm）；
 // loaderWasm/loaderGlue 已降为可选（见 pickByStructure 末尾的补救逻辑与 patchText）：
 // 顶层常量形态下它们本来就不存在，不触发也不会错；initGlue 不依赖它们。
 const REQUIRED_FEATURES = ["wasmVar", "glueVar", "initAsync"];
-const CACHE_VERSION = 5; // v5：新增 0.5.x 的「零参调用链」启动入口识别（v4 及以前在 0.5.3 上漏中和 → 模块自退）
+const CACHE_VERSION = 7; // v7：提取规则加固——注册段双验证（glueVar/initAsync）、loaderGlue 改按
+//   结构判据（heap 所在单元）优先；对 0.5.6 产物与加固前一致，bump 仅为口径一致、强制重算。
+// v6：0.5.6 适配——胶水被拆成独立懒加载单元（heap 在 j9i 内）、注册函数 er→Ct、包装函数 b→w。
+// v5：新增 0.5.x 的「零参调用链」启动入口识别（v4 及以前在 0.5.3 上漏中和 → 模块自退）
 // worker 启动入口必须位于文件末尾才允许截断；中部命中是函数定义，截断会丢模块代码。
 // 现网样本的入口都在最后 8KB 内（0.9.18/1.1.40 约 100B，1.1.71/1.1.73 约 2KB）。
 const BOOTSTRAP_NEAR_EOF = 8192;
@@ -99,6 +102,19 @@ function locate(product) {
  *   · loaderWasm：wasmVar 声明处向前找最近的懒加载赋值（结尾锚定 `{`，任意包装形态）
  *   · loaderGlue：主路径（类定义前扫）放宽窗口；兜底从注册调用开括号向前找懒加载赋值
  */
+/** openIdx 处的 `{` 到 pos 之间括号是否保持未闭合（即 pos 落在该 `{}` 内）。引号感知。 */
+function braceEncloses(text, openIdx, pos) {
+  let depth = 0, quote = null;
+  for (let i = openIdx; i < pos; i++) {
+    const ch = text[i];
+    if (quote) { if (ch === "\\") { i++; continue; } if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") { depth--; if (depth === 0) return false; }
+  }
+  return depth > 0;
+}
+
 function pickByStructure(text) {
   const pick = (res) => {
     for (const re of Array.isArray(res) ? res : [res]) {
@@ -106,6 +122,14 @@ function pickByStructure(text) {
       if (m) return m[1];
     }
     return "";
+  };
+  // 注册段双验证：段内同时含 default:()=> 与 initSync:()=>（与 v3 补救同判据）——防止
+  // 「同构的其他注册段」被误取：全文可能有别处也注册了 QoderContext 键，但那不是 wasm 胶水
+  // 的注册段；只有同时带 async init（default）与 initSync 才是。
+  const glueSegOk = (at, len = 8000) => {
+    if (at < 0) return false;
+    const seg = text.slice(at, at + len);
+    return /default:\s*\(\)\s*=>/.test(seg) && /initSync:\s*\(\)\s*=>/.test(seg);
   };
   const names = {
     // 内嵌 wasm 的 base64 变量：引号有 " ' ` 三种写法
@@ -125,15 +149,34 @@ function pickByStructure(text) {
     ]),
     // 胶水容器 er(X,{…QoderContext:()=>…})：键名跨版本稳定，但容器字段会变多——
     // 原 800 字符上限在字段增加时会失配，宽松版放到 3000 并允许 er( 后有空白
-    glueVar: pick([
-      /er\(([A-Za-z_$][\w$]*),\s*\{[^{}]{0,800}?QoderContext:\(\)=>/,
-      /er\(\s*([A-Za-z_$][\w$]*)\s*,\s*\{[\s\S]{0,3000}?QoderContext\s*:\s*\(\)\s*=>/,
-    ]),
+    // 注册函数名跨版本可变（0.4.8=dn、0.5.6=Ct，且全文同名调用数千次），故不认名字认结构：
+    // 以跨版本稳定的 QoderContext 键为锚点，向前匹配「<注册函数>(<容器变量>,{…QoderContext:()=>…」。
+    // 注册函数名用非捕获组吃掉——m[1] 必须是容器变量本身。
+    glueVar: (() => {
+      const re1 = /(?:[A-Za-z_$][\w$]*)\s*\(([A-Za-z_$][\w$]*),\s*\{[^{}]{0,800}?QoderContext:\(\)=>/;
+      const re2 = /(?:[A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*\{[\s\S]{0,3000}?QoderContext\s*:\s*\(\)\s*=>/;
+      // 严判据优先：命中段须通过双验证（glueSegOk）；都不通过再退回首个命中（保持旧行为、不因加固而失配）
+      for (const re of [re1, re2]) {
+        const m = text.match(re);
+        if (m && glueSegOk(m.index)) return m[1];
+      }
+      const m = text.match(re1) || text.match(re2);
+      return m ? m[1] : "";
+    })(),
     profileEnc: pick(/ProfileEncryptor:\s*\(\)\s*=>\s*([A-Za-z_$][\w$]*)/),
     initSync: pick(/initSync:\s*\(\)\s*=>\s*([A-Za-z_$][\w$]*)/),
   };
-  // default（async init）在 glue 的 er 调用段内取；窗口同步放宽到 3000（字段变多时 default 更靠后）
-  const erAt = text.search(/er\(\s*[A-Za-z_$][\w$]*\s*,\s*\{[\s\S]{0,3000}?QoderContext\s*:\s*\(\)\s*=>/);
+  // default（async init）在 glue 的注册段内取；窗口同步放宽到 3000（字段变多时 default 更靠后）。
+  // 注册函数名不写死（0.5.6 起 er→Ct），与 glueVar 同一结构锚点：QoderContext 键。
+  // 优先取「段内双验证通过」的注册段位置；都不通过再退回首个命中位置（保持旧行为）
+  const erRe = /(?:[A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*\{[\s\S]{0,3000}?QoderContext\s*:\s*\(\)\s*=>/g;
+  let erAt = -1;
+  let erFirst = -1;
+  for (const m of text.matchAll(erRe)) {
+    if (erFirst < 0) erFirst = m.index;
+    if (glueSegOk(m.index)) { erAt = m.index; break; }
+  }
+  if (erAt < 0) erAt = erFirst;
   if (erAt >= 0) {
     const m = text.slice(erAt, erAt + 3000).match(/default:\s*\(\)\s*=>\s*([A-Za-z_$][\w$]*)/);
     if (m) names.initAsync = m[1];
@@ -144,24 +187,49 @@ function pickByStructure(text) {
   //   ② 从 glueVar 反查——包含 `er(glueVar,` 的那个 `X=b(()=>{` 闭包就是胶水模块的懒加载器。
   //      ②是①的兜底：客户端删掉/改名 ProfileEncryptor 时①必然失配，而 er(glueVar 这个锚点
   //      由 glueVar 的成功提取保证存在，不依赖任何易变的类名
-  if (names.profileEnc) {
+  // 结构判据优先（比位置判据可靠）：wasm-bindgen 的 heap（`new Array(1024)`）所在的那个
+  // 懒加载单元就是胶水模块——从 heap 往前找最近的 `X=Y(()=>{`，并要求 heap 确在该单元体内
+  // （braceEncloses，防取到无关单元）。0.5.6 起胶水被拆成独立单元（导出注册在顶层、heap 与
+  // ClientContext/ProfileEncryptor 类在 j9i 内）；不触发它，wasm 回调 Mw 读 heap 会
+  // undefined.length。找不到（如 heap 在顶层，无任何 w 单元包裹）则退回下面的位置判据。
+  if (!names.loaderGlue) {
+    const heapAt = text.indexOf("new Array(1024)");
+    if (heapAt > 0) {
+      const winStart = Math.max(0, heapAt - 30000);
+      const win = text.slice(winStart, heapAt);
+      const cands = [...win.matchAll(/([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\(\)=>\{/g)];
+      for (let i = cands.length - 1; i >= 0; i--) {
+        const openAbs = winStart + cands[i].index + cands[i][0].length - 1;
+        if (braceEncloses(text, openAbs, heapAt)) { names.loaderGlue = cands[i][1]; break; }
+      }
+    }
+  }
+  if (!names.loaderGlue && names.profileEnc) {
     const at = text.indexOf(names.profileEnc + "=class");
     if (at > 0) {
       const before = text.slice(Math.max(0, at - 1200), at);
-      const m = before.match(/,([A-Za-z_$][\w$]*)=b\(\(\)=>\{$/) || before.match(/([A-Za-z_$][\w$]*)=b\(\(\)=>\{/) || before.match(/([A-Za-z_$][\w$]*)=[^{}]{0,200}\{$/);
+      // 优先保留原精确形态（0.4.x `,X=b(()=>{$`）；再放宽包装函数名（b→任意）；
+      // 最后兜底取窗口内**最后一个** `X=Y(()=>{`——0.5.6 包装变 w 且尾部紧跟类定义，
+      // 窗口末尾不再是 `{`，只能取离 profileEnc 最近的单元（= 胶水模块 j9i：heap
+      // `new Array(1024)` 与 ClientContext/ProfileEncryptor 类都定义在里面；不触发它，
+      // wasm 回调 Mw 读 heap 会 `undefined.length`）。
+      const lastCandidate = () => {
+        const a = [...before.matchAll(/([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\(\)=>\{/g)];
+        return a.length ? a[a.length - 1] : before.match(/([A-Za-z_$][\w$]*)=[^{}]{0,200}\{$/);
+      };
+      const m = before.match(/,([A-Za-z_$][\w$]*)=b\(\(\)=>\{$/)
+        || before.match(/,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\(\)=>\{$/)
+        || lastCandidate();
       if (m) names.loaderGlue = m[1];
     }
   }
   if (!names.loaderGlue && names.glueVar) {
-    // er(glueVar, 的位置：兼容 `er(X,{` 与 `er( X , {` 两种空白写法
-    const at = text.search(new RegExp(`er\\(\\s*${names.glueVar.replace(/\$/g, "\\$")}\\s*,`));
+    // <注册函数>(glueVar, 的位置：注册函数名跨版本可变（er→dn→Ct），不写死
+    const at = text.search(new RegExp(`(?:[A-Za-z_$][\\w$]*)\\(\\s*${names.glueVar.replace(/\$/g, "\\$")}\\s*,`));
     if (at > 0) {
       const before = text.slice(0, at);
-      const idx = before.lastIndexOf("=b(()=>{");
-      if (idx > 0) {
-        const m = before.slice(0, idx).match(/([A-Za-z_$][\w$]*)$/);
-        if (m) names.loaderGlue = m[1];
-      }
+      const all = [...before.matchAll(/([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(\(\)=>\{/g)];
+      if (all.length) names.loaderGlue = all[all.length - 1][1];
     }
   }
 
@@ -505,6 +573,19 @@ async function createSession({ product, token, uid, machineId }) {
       const pairs = r.headers instanceof Map ? [...r.headers.entries()] : Object.entries(r.headers || {});
       for (const [k, v] of pairs) headers[k] = String(v);
       return { url: r.url, headers, body: Buffer.from(r.body.buffer ?? r.body) };
+    },
+    /** 通用请求签名（非推理接口，如官方模型列表）：arg1=origin，arg2=path，arg3=method，
+     *  arg4=kind（"auth" 走 Authorization 头、"sign" 走 Signature 头；模型列表实测须用 "auth"），
+     *  arg5=body，arg6=headersJson。返回 { url, headers, body }；body 为空时 null。
+     *  读属性后 free RequestResult：它是 wasm 对象，不 free 会随拉取次数线性泄漏。 */
+    prepareApiRequest(origin, apiPath, method, kind, body, headersJson) {
+      const r = ctx.prepareRequest(origin, apiPath, method, kind, body, headersJson);
+      const headers = {};
+      const pairs = r.headers instanceof Map ? [...r.headers.entries()] : Object.entries(r.headers || {});
+      for (const [k, v] of pairs) headers[k] = String(v);
+      const out = { url: r.url, headers, body: r.body != null ? Buffer.from(r.body.buffer ?? r.body) : null };
+      try { r.free && r.free(); } catch { /* 已释放 */ }
+      return out;
     },
     /** 目录缓存解密：catalog-v6 文件文本 + uid → JSON 文本 */
     modelCacheDecrypt(text, ownerUid) {

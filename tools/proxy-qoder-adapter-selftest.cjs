@@ -158,8 +158,8 @@ async function main() {
     assert(!ms.includes("kmodel") && !ms.includes("mmodel"), "目录外的静态兜底模型不得复活（幽灵模型）");
   }
 
-  // ===== 4. fetchModels（stub 签名器）=====
-  console.log("\n[4] fetchModels 目录整形");
+  // ===== 4. fetchModels（stub 签名器无 prepareApiRequest → 动态接口不可用，走降级链）=====
+  console.log("\n[4] fetchModels 目录整形（动态接口不可用时降级）");
   const fakeCatalog = JSON.stringify({
     assistant: [
       { key: "dfmodel", display_name: "DeepSeek-Flash", price_factor: 0.1, enable: true, is_reasoning: true, is_vl: true, max_input_tokens: 180000, context_config: { "200K": { token_count: 200000, is_default: true }, "1M": { token_count: 1000000 } }, thinking_config: { enabled: { efforts: { low: {}, high: {} } } } },
@@ -198,6 +198,55 @@ async function main() {
     const ad3 = makeQoder("qoder", { ...deps, auth: { ...deps.auth, readCatalogBlob: () => null, readStoredCatalogBlob: () => "BLOB", decryptCatalog: () => fakeCatalog } });
     const r3 = await ad3.fetchModels({ uid: "u1" }, { token: "t" });
     assert(r3.ok && r3.models.length === 3, "无本机缓存时用「导入随附目录块」解密（目标机无客户端）");
+  }
+
+  // ===== 4b. 官方动态接口优先 + QoDuck（只在 app 场景）=====
+  console.log("\n[4b] 官方动态接口优先（含只在 app 场景的 QoDuck）");
+  {
+    const dynCatalog = {
+      chat: [
+        { key: "dfmodel", display_name: "DeepSeek-Flash", price_factor: 0.1, enable: true },
+        { key: "qfmodel", display_name: "Qwen3.8-Flash", price_factor: 0, enable: true, is_free: true },
+      ],
+      app: [
+        { key: "dfmodel", display_name: "重复项应被去重", price_factor: 9, enable: true },
+        { key: "lmodel", display_name: "QoDuck", price_factor: 0, enable: true, is_free: true, is_reasoning: true, thinking_config: { enabled: { efforts: { low: {}, high: {}, xhigh: {} } } } },
+      ],
+    };
+    const captured = {};
+    const d = {
+      ...deps,
+      // 本机缓存存在，但动态接口成功时应优先使用它、不得再解密本机缓存
+      auth: { ...deps.auth, readCatalogBlob: () => "SHOULD_NOT_USE", decryptCatalog: () => { throw new Error("动态成功时不应解密本机缓存"); } },
+      signer: {
+        createSession: async () => ({
+          prepareApiRequest: (origin, p, method, kind, body) => {
+            captured.origin = origin; captured.path = p; captured.method = method; captured.kind = kind; captured.body = body;
+            return { url: origin + p, headers: { Authorization: "Bearer x" }, body: Buffer.from(body) };
+          },
+          free: () => {},
+        }),
+      },
+      httpsGetWithBody: async () => ({ status: 200, data: dynCatalog, text: "" }),
+    };
+    const r = await makeQoder("qoder", d).fetchModels({ uid: "u1" }, { token: "dt-x" });
+    assert(r.ok, "动态接口拉取成功");
+    assert(r.source === "官方动态接口", "来源标注为官方动态接口，实际：" + r.source);
+    assert(r.models.map((m) => m.id).includes("lmodel"), "app 场景的 QoDuck(lmodel) 被兜底遍历取到");
+    assert(captured.method === "GET" && captured.kind === "auth", "请求用 GET + kind=auth");
+    assert(captured.path === "/algo/api/v2/model/list", "路径为官方模型列表");
+    assert(r.models.length === 3, "chat 与 app 去重后共 3 个（dfmodel/qfmodel/lmodel）");
+  }
+  // ===== 4c. 动态接口不可用 → 降级本机缓存 =====
+  {
+    const d = {
+      ...deps,
+      auth: { ...deps.auth, readCatalogBlob: () => "BLOB", decryptCatalog: () => fakeCatalog },
+      // 会话缺 prepareApiRequest（模拟签名器能力缺失）：动态接口静默失败，须降级
+      signer: { createSession: async () => ({ modelCacheDecrypt: () => fakeCatalog, free: () => {} }) },
+    };
+    const r = await makeQoder("qoder", d).fetchModels({ uid: "u1" }, { token: "dt-x" });
+    assert(r.ok && r.source === "本机客户端缓存", "动态接口不可用时降级本机缓存，来源：" + r.source);
   }
 
   // ===== 5. chat 信封解包 =====

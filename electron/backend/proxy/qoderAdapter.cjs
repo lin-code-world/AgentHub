@@ -25,6 +25,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const os = require("node:os");
+const https = require("node:https");
 
 /**
  * Cosy-MachineOS 的取值口径：客户端用 Windows 内核版本号（实测 "10.0.26200.0"）。
@@ -105,6 +106,78 @@ const STATIC_MODELS = STATIC_MODELS_BY_PRODUCT.qoder;
 /** 请求侧默认场景（签名头 Cosy-Scene 由 wasm 置为 assistant；目录按场景分组） */
 const DEFAULT_SCENE = "assistant";
 
+/** 官方动态模型目录路径（与桌面客户端选择器同源；COSY 签名后 GET，须带同款 body） */
+const MODELS_PATH = "/algo/api/v2/model/list";
+
+/** GET 带请求体：fetch 规范禁止 GET/HEAD 带 body，官方模型列表又要求「签名 body 与请求
+ *  body 逐字一致」（裸 GET 被 403），故这一步只能走原生 https。返回 { status, data, text }。 */
+function httpsGetWithBody(url, headers, body, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(url); } catch (e) { return reject(e); }
+    if (u.protocol !== "https:") return reject(new Error(`模型列表仅支持 https，收到 ${u.protocol}`));
+    const h = { ...headers };
+    if (body != null && !Object.keys(h).some((k) => k.toLowerCase() === "content-length")) {
+      h["content-length"] = Buffer.byteLength(body);
+    }
+    const r = https.request(
+      { hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: "GET", headers: h, timeout: timeoutMs },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let data = null;
+          try { data = JSON.parse(text); } catch { /* 非 JSON 响应留原文 */ }
+          resolve({ status: res.statusCode, data, text });
+        });
+      },
+    );
+    r.on("timeout", () => r.destroy(new Error("模型列表请求超时")));
+    r.on("error", reject);
+    if (body != null) r.write(body);
+    r.end();
+  });
+}
+
+/** 把官方目录 JSON（按场景分组）整形为统一模型对象数组。
+ *  同 key 在多场景重复时按 order 取首次（assistant/chat 优先，其余补漏）；官方新模型可能
+ *  只落在非对话场景（实证：QoDuck = lmodel 只在 app 场景），末尾用 ...Object.keys 兜底遍历
+ *  全部场景，保证不漏——这是能取到 QoDuck 的关键。 */
+function shapeCatalog(json) {
+  const seen = new Map();
+  const order = [DEFAULT_SCENE, "chat", "quest", "developer", ...Object.keys(json || {})];
+  for (const sc of order) {
+    const arr = json[sc];
+    if (!Array.isArray(arr)) continue;
+    for (const m of arr) {
+      if (!m || !m.key || seen.has(m.key)) continue;
+      if (m.enable === false) continue;
+      const ctxTiers = m.context_config && typeof m.context_config === "object" ? Object.values(m.context_config) : [];
+      const ctxMax = ctxTiers.reduce((n, t) => Math.max(n, Number((t && t.token_count) || 0)), 0);
+      const efforts = (() => {
+        const e = m.thinking_config && m.thinking_config.enabled && m.thinking_config.enabled.efforts;
+        return e && typeof e === "object" ? Object.keys(e) : [];
+      })();
+      seen.set(m.key, {
+        id: String(m.key),
+        name: String(m.display_name || m.key),
+        rate: m.price_factor != null ? Number(m.price_factor) : null,
+        capabilities: { reasoning: !!m.is_reasoning, tools: true, images: !!m.is_vl },
+        reasoning: efforts.length
+          ? { effort: null, defaultEffort: "", supportedEfforts: efforts }
+          : null,
+        contextLength: ctxMax || Number(m.max_input_tokens) || 0,
+        maxOutputTokens: 0,
+        // 附加展示字段（管理页可用；不影响既有契约）
+        isFree: m.is_free === true || Number(m.price_factor) === 0,
+        scene: sc,
+      });
+    }
+  }
+  return [...seen.values()];
+}
+
 /** 单个会话/请求 id：Qoder 要求 request_id 唯一（重复会被 code 103 拒绝） */
 const newId = () => crypto.randomUUID();
 
@@ -174,6 +247,8 @@ function toQoderTools(tools) {
  */
 function makeQoder(product, deps) {
   const { fetchStream, pumpSse, httpJson, rules, auth, signer, store, util } = deps;
+  // 动态目录专用：GET 带 body（fetch 规范不支持），可经 deps 注入以便自测 mock 网络
+  const httpsGetJson = deps.httpsGetWithBody || httpsGetWithBody;
   // util 为必填：用于 hasConsumableDelta（流中断时的本地出线判定）。
   // 缺省时退回 require（生产环境由 adapters.cjs 注入；单测可直接传 util）
   const U = util || require("./util.cjs");
@@ -318,9 +393,50 @@ function makeQoder(product, deps) {
     return hit || { id: key, name: key, capabilities: { reasoning: false, tools: true }, contextLength: 0, maxOutputTokens: 0 };
   }
 
+  /** 官方动态模型目录（/algo/api/v2/model/list）：COSY 签名后 GET（须带同款 body）。
+   *  返回 { ok, data } 或 { ok:false, error }——失败由调用方降级到本机缓存 / 导入块，
+   *  并记一条可观测日志（否则「动态接口一直失败」与「正常工作」从外部无法区分）。
+   *  优点：清单与桌面客户端「此刻」同源（客户端一出新模型就能拿到），且不要求客户端用过该账号。
+   *  依据（真机实测）：该路径返回 200 + 明文 JSON（含 QoDuck）；签名器会把 /api/v2/...
+   *  规范化为 /algo/api/v2/...；响应头 Accept-Encoding=identity（不压缩）、content-type=application/json（不解密）。 */
+  async function fetchDynamicCatalog(account, secrets) {
+    const c = cfg();
+    const gateway = c.gateway || auth.PRODUCTS[product].gateway;
+    const token = (secrets && secrets.token) || "";
+    // 无 token/uid：不具备条件（非失败），error 留空 → 调用方不记降级日志
+    if (!token || !account || !account.uid) return { ok: false, error: "" };
+    let entry;
+    try {
+      // 签名器不可用时抛 503（qoderSignerDown）
+      entry = await acquireSession(account, secrets);
+    } catch (e) {
+      return { ok: false, error: `签名器不可用：${String((e && e.message) || e).slice(0, 160)}` };
+    }
+    try {
+      // kind="auth" 走 Authorization 头（实测模型列表用 "sign" 会被 403 Signature invalid）
+      const req = entry.session.prepareApiRequest(gateway, MODELS_PATH, "GET", "auth", "{}", undefined);
+      const resp = await httpsGetJson(req.url, req.headers, req.body);
+      if (resp.status !== 200 || !resp.data) return { ok: false, error: `HTTP ${resp.status}` };
+      return { ok: true, data: resp.data };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e).slice(0, 160) };
+    } finally {
+      entry.release();
+    }
+  }
+
+  /** 动态目录失败降级时记一条操作日志（可观测：区分「没走动态」与「走了但失败」）。 */
+  function logDynamicFallback(reason) {
+    try {
+      require("./oplog.cjs").log("info", "模型目录", `${product} 官方动态目录不可用（${reason}），已降级本机缓存 / 导入块`, { channel: product });
+    } catch { /* 日志失败不影响拉取 */ }
+  }
+
   return {
     // 供自测校验逐包映射：纯函数，喂合成的 /api/v2/quota/usage 载荷即可，不需要签名会话
     __creditPackagesForTest: creditPackagesOf,
+    // 供自测校验目录整形（含 QoDuck 只在 app 场景的兜底遍历）
+    __shapeCatalogForTest: shapeCatalog,
     id: product,
     refreshWindowSec: 86400, // token 30 天；提前 24h 预刷新（dt- 非 JWT，靠落库的 expiresAt 判断）
     // 模型目录跟着账号走（各账号的客户端缓存/导出块可能不同）：拉取目录时聚合全部账号取交集
@@ -341,13 +457,23 @@ function makeQoder(product, deps) {
     },
 
     /**
-     * 拉取官方目录：解密本机 catalog-v6（零网络、绑定 uid）→ 整形为统一模型对象。
-     * 对齐既有约定：拉取失败不写空（保留旧目录）；本实现无网络失败面，仅解密可能失败。
+     * 拉取官方目录：① 官方动态接口（最实时）→ ② 本机 catalog-v6 缓存（零网络、绑定 uid）
+     * → ③ 导入随附的目录块 → 整形为统一模型对象。
+     * 对齐既有约定：拉取失败不写空（保留旧目录）。
      */
     async fetchModels(account, secrets) {
       const uid = (account && account.uid) || "";
       if (!uid) return { ok: false, message: "缺少 uid，无法定位模型目录缓存" };
-      // ① 本机客户端缓存 → ② 导入随附的目录块（目标机没装客户端时靠它）
+      // ① 官方动态接口（最实时；拉不到再降级，并记一条可观测日志）
+      const dyn = await fetchDynamicCatalog(account, secrets);
+      if (dyn.ok) {
+        const models = shapeCatalog(dyn.data);
+        if (models.length) return { ok: true, models, scene: DEFAULT_SCENE, modelCount: models.length, source: "官方动态接口" };
+        logDynamicFallback("目录为空");
+      } else if (dyn.error) {
+        logDynamicFallback(dyn.error);
+      }
+      // ② 本机客户端缓存 → ③ 导入随附的目录块（目标机没装客户端时靠它）
       let blob = auth.readCatalogBlob(product, uid);
       let source = "本机客户端缓存";
       if (!blob && typeof auth.readStoredCatalogBlob === "function") {
@@ -364,41 +490,9 @@ function makeQoder(product, deps) {
       } catch (e) {
         return { ok: false, message: `目录解密失败（来源：${source}）：${String((e && e.message) || e).slice(0, 160)}` };
       }
-      const scene = json[DEFAULT_SCENE] || json.chat || [];
-      const seen = new Map();
-      // 目录按场景分组，同一 key 在不同场景可能重复：chat/assistant 优先，其余补漏
-      const order = [DEFAULT_SCENE, "chat", "quest", "developer", ...Object.keys(json)];
-      for (const sc of order) {
-        const arr = json[sc];
-        if (!Array.isArray(arr)) continue;
-        for (const m of arr) {
-          if (!m || !m.key || seen.has(m.key)) continue;
-          if (m.enable === false) continue;
-          const ctxTiers = m.context_config && typeof m.context_config === "object" ? Object.values(m.context_config) : [];
-          const ctxMax = ctxTiers.reduce((n, t) => Math.max(n, Number((t && t.token_count) || 0)), 0);
-          const efforts = (() => {
-            const e = m.thinking_config && m.thinking_config.enabled && m.thinking_config.enabled.efforts;
-            return e && typeof e === "object" ? Object.keys(e) : [];
-          })();
-          seen.set(m.key, {
-            id: String(m.key),
-            name: String(m.display_name || m.key),
-            rate: m.price_factor != null ? Number(m.price_factor) : null,
-            capabilities: { reasoning: !!m.is_reasoning, tools: true, images: !!m.is_vl },
-            reasoning: efforts.length
-              ? { effort: null, defaultEffort: "", supportedEfforts: efforts }
-              : null,
-            contextLength: ctxMax || Number(m.max_input_tokens) || 0,
-            maxOutputTokens: 0,
-            // 附加展示字段（管理页可用；不影响既有契约）
-            isFree: m.is_free === true || Number(m.price_factor) === 0,
-            scene: sc,
-          });
-        }
-      }
-      const models = [...seen.values()];
+      const models = shapeCatalog(json);
       if (!models.length) return { ok: false, message: "目录为空（结构可能已变更）" };
-      return { ok: true, models, scene: DEFAULT_SCENE, modelCount: Object.keys(seen).length };
+      return { ok: true, models, scene: DEFAULT_SCENE, modelCount: models.length, source };
     },
 
     /** 非签名基础头（签名头由 chat() 内 wasm 产出，禁止在此构造） */

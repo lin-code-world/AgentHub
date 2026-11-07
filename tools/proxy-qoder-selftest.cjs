@@ -178,6 +178,15 @@ async function main() {
   // 同一会话内两次签名不同（COSY 含 requestId，非静态缓存）
   const signed3 = session.prepareInferRequest(auth.PRODUCTS[signedProduct].gateway, body, "dfmodel", "system");
   assert(signed3.headers.Authorization !== signed.headers.Authorization, "同会话重复签名不相等（每请求现签）");
+  // 通用请求签名（模型列表用，kind="auth"）：真实 wasm 层面回归——url/头/体非空，且 free 后可复用
+  const apiReq = session.prepareApiRequest(auth.PRODUCTS[signedProduct].gateway, "/algo/api/v2/model/list", "GET", "auth", "{}", undefined);
+  assert(typeof apiReq.url === "string" && apiReq.url.includes("/algo/api/v2/model/list"), "prepareApiRequest 产出模型列表 URL");
+  assert(apiReq.headers && Object.keys(apiReq.headers).length > 0, "prepareApiRequest 产出签名头");
+  assert(apiReq.body != null, "prepareApiRequest 产出请求体");
+  assert(!Object.keys(apiReq.headers).some((k) => /^content-length$/i.test(k) && Number(apiReq.headers[k]) < 0), "签名头无非法 content-length");
+  const apiReq2 = session.prepareApiRequest(auth.PRODUCTS[signedProduct].gateway, "/algo/api/v2/model/list", "GET", "auth", "{}", undefined);
+  assert(apiReq2 && typeof apiReq2.url === "string", "free 后再次调用正常（RequestResult 已释放、会话可复用）");
+  console.log(`  prepareApiRequest: ${apiReq.url.slice(0, 72)}… 头数 ${Object.keys(apiReq.headers).length} 体长 ${apiReq.body.length}`);
 
   // ===== 5. 目录解密 =====
   console.log("\n[5] 模型目录解密");
