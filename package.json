@@ -9,7 +9,7 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:1420 && electron .\"",
     "build": "vue-tsc --noEmit && vite build",
     "electron:build": "node scripts/dev-zcode-system-capture.cjs --auto && npm run stage:qoder-signer && npm run build && electron-builder",
-    "electron:pack": "npm run stage:qoder-signer && npm run build && electron-builder --dir",
+    "electron:pack": "node scripts/dev-zcode-system-capture.cjs --auto && npm run stage:qoder-signer && npm run build && electron-builder --dir",
     "stage:qoder-signer": "node scripts/stage-qoder-signer.cjs",
     "gen:icon": "node tools/gen-icon.cjs",
     "format": "prettier --write .",

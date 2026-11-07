@@ -119,7 +119,7 @@ function verGt(a, b) {
   return false;
 }
 
-/** rules.cjs 里 zcode.appVersion 唯一（全仓仅一处）；采到新版本号时原地同步 */
+/** rules.cjs 里 zcode 段的 appVersion 同步：必须锚定字段名左侧边界，否则会误伤 authAppVersion（另一渠道的版本号）。 */
 function syncRulesVersion(newVer) {
   if (!newVer) return "记录里没有 x-zcode-app-version，未同步 appVersion（保持现值）";
   let text;
@@ -128,10 +128,15 @@ function syncRulesVersion(newVer) {
   } catch (e) {
     return `读取 rules.cjs 失败：${(e && e.message) || e}`;
   }
-  const m = /appVersion:\s*"([^"]+)"/.exec(text);
+  // (?<![\w$]) 排除 authAppVersion 这类前缀字段：那是别的渠道的版本号，改错会让另一条链路失效
+  const re = /(?<![\w$])appVersion:\s*"([^"]+)"/;
+  const m = re.exec(text);
   if (!m) return "rules.cjs 未找到 appVersion 字段（结构变了？请人工核对）";
   if (m[1] === newVer) return `appVersion 已是 ${newVer}，无需改动`;
-  fs.writeFileSync(RULES, text.replace(/appVersion:\s*"[^"]+"/, `appVersion: "${newVer}"`), "utf8");
+  if ((text.match(new RegExp(re.source, "g")) || []).length !== 1) {
+    return "rules.cjs 里独立 appVersion 字段不止一处，已放弃自动同步（请人工改 zcode 段）";
+  }
+  fs.writeFileSync(RULES, text.replace(re, `appVersion: "${newVer}"`), "utf8");
   return `appVersion 已同步：${m[1]} → ${newVer}`;
 }
 
@@ -150,6 +155,26 @@ function runSelftest() {
     cwd: ROOT,
   });
   return r.status == null ? 1 : r.status;
+}
+
+/** 打包链里把底稿两文件提交进 git：只 add 这两个已知路径（不碰工作区其他改动），让仓库与 exe 永远一致。
+ *  git 任何异常都不阻断打包（提示后放行）——打包是第一要务，提交失败只是「发布记录不同步」。 */
+function autoCommit() {
+  const paths = ["electron/backend/proxy/assets/zcode-official-system.json", "electron/backend/proxy/rules.cjs"];
+  const run = (args) => {
+    const r = spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
+    return { ok: r.status === 0, out: String(r.stdout || "").trim(), err: r.status === 0 ? "" : String((r.stderr || r.stdout || "").trim()).slice(0, 200) };
+  };
+  if (!run(["add", ...paths]).ok) {
+    console.log("[zcode-system] ⚠ 自动提交失败（git add），请打包后手动提交这两个文件。");
+    return;
+  }
+  // 与 HEAD 直接比对：无差异说明内容已与提交态一致（如采回来与仓库相同），无需提交
+  const diff = run(["diff", "--cached", "--name-only", "HEAD", "--", ...paths]);
+  if (!diff.ok || !diff.out) return;
+  const msg = "build(zcode): 打包前自动采集 system 底稿并同步 appVersion";
+  const c = run(["commit", "-m", msg, "--", ...paths]);
+  console.log(c.ok ? `[zcode-system] 已自动提交底稿与版本号（${msg}）` : `[zcode-system] ⚠ 自动提交失败：${c.err}（请打包后手动提交）。`);
 }
 
 /** 采不到有效新数据：手动模式报错退出；--auto 提示后放行（按仓库现有底稿打包） */
@@ -211,6 +236,12 @@ function main() {
   }
   if (cur && cur.blocks && JSON.stringify(cur.blocks) === JSON.stringify(data.blocks) && String(cur.sourceClientVersion || "") === data.sourceClientVersion) {
     console.log(`[zcode-system] 底稿无变化（版本 ${data.sourceClientVersion || "未知"}），无需更新。`);
+    // 底稿没变但 rules.cjs 版本号与实际不符时仍要纠正（否则 LLM 面自称错误版本 → 3012）
+    const fixed = syncRulesVersion(data.sourceClientVersion);
+    if (/已同步/.test(fixed)) {
+      console.log(`[zcode-system] ${fixed}`);
+      if (AUTO) autoCommit();
+    }
     process.exit(0);
   }
   // 防倒退：本机客户端版本比仓库已有的还旧 → 不覆盖（如客户端未升级就先跑了旧记录）
@@ -219,6 +250,14 @@ function main() {
     process.exit(0);
   }
 
+  // 回滚预案：先把两份原文件读进内存，自测不过时原样写回（不依赖 git、不留脏工作区）
+  let backupAssets = null; // null = 资产文件原本不存在
+  try {
+    backupAssets = fs.readFileSync(OUT, "utf8");
+  } catch {
+    /* 首次采集没有旧资产 */
+  }
+  const backupRules = fs.readFileSync(RULES, "utf8");
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(data), "utf8");
   console.log("来源记录：", pickedFile);
@@ -231,10 +270,20 @@ function main() {
   // 底稿变了必须验证过才能继续（--auto 下不过就阻断打包）
   const code = runSelftest();
   if (code !== 0) {
-    console.error("\n[zcode-system] 自测未通过：新底稿/版本改动有问题，已中止。修复或先还原 assets 与 rules.cjs 再打包。");
+    try {
+      if (backupAssets === null) fs.rmSync(OUT, { force: true });
+      else fs.writeFileSync(OUT, backupAssets, "utf8");
+      fs.writeFileSync(RULES, backupRules, "utf8");
+      console.error("\n[zcode-system] 已自动还原 assets 与 rules.cjs（仓库无残留改动）。");
+    } catch (e) {
+      console.error("\n[zcode-system] 自动还原失败，请手动还原这两个文件：" + ((e && e.message) || e));
+    }
+    console.error("[zcode-system] 自测未通过：新底稿/版本改动有问题，已中止打包。");
     process.exit(1);
   }
   console.log("\n[zcode-system] ✅ 底稿已更新且自测通过" + (AUTO ? "，继续打包。" : "。"));
+  // 自动提交只在打包链（--auto）里做：手动跑时保持「改完自己看、自己提交」的原样
+  if (AUTO) autoCommit();
 }
 
 main();
