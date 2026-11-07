@@ -8,7 +8,7 @@
  *    此注释为版权与授权声明，禁止删除。
  * ============================================================
  */
-// 一次性采集 ZCode 官方 system 提示词（前两段）并落盘到仓库 assets 目录。
+// 采集 ZCode 官方 system 提示词（前两段）并落盘到仓库 assets 目录。
 //
 // 为什么要有它：上游对 start-plan 对话的 `system` 做**内容指纹校验**，不满足一律回
 // HTTP 405 + code 3012「unusual activity」。而这段提示词随客户端版本变化——客户端升级后
@@ -19,21 +19,32 @@
 // 稳定被 3012 拦截，同期本地 3.17.2 客户端正常。首句判据因此放宽到两版公共前缀。
 //
 // 数据来源：客户端自己的 model-io 会话记录
-//   ~/.zcode/cli/rollout/model-io-session-*.jsonl
+//   ~/.zcode/cli/rollout/model-io-sess(ion)-*.jsonl
 // 每行是一条真实模型请求。取最近一条「request.body.system 为三段文本」的记录：
 // 前两段正是上游要校验的内容（第 3 段是官方代码风格指令，3.16.3 时代实测非必需，未采集）。
 //
 // 用法：
-//   node scripts/dev-zcode-system-capture.cjs
+//   node scripts/dev-zcode-system-capture.cjs           # 手动模式：采不到记录 → 报错退出(exit 1)
+//   node scripts/dev-zcode-system-capture.cjs --auto    # 打包集成（electron:build 自动调用）：
+//     · 采不到记录 / 数据不完整 → 提示后放行（exit 0，按仓库现有底稿继续打包）
+//     · 底稿与仓库现有一致 → 放行（exit 0）
+//     · 采集版本低于仓库已有版本 → 拒绝覆盖（防倒退，exit 0）
+//     · 底稿有更新 → 落盘 + 同步 rules.cjs 的 zcode appVersion + 跑 zcode 自测，
+//       自测不过 → exit 1 阻断打包（不带病出包）
 //   ZCODE_PROFILE_USER=Administrator node scripts/dev-zcode-system-capture.cjs   # 指定落盘时的用户名
 "use strict";
 
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
-const ROLLOUT_DIR = path.join(os.homedir(), ".zcode", "cli", "rollout");
-const OUT = path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-official-system.json");
+const ROOT = path.join(__dirname, "..");
+const AUTO = process.argv.includes("--auto");
+// 与运行时模块同口径的环境变量钩子（自测/应急可用）：指定客户端会话记录目录
+const ROLLOUT_DIR = process.env.ZCODE_ROLLOUT_DIR || path.join(os.homedir(), ".zcode", "cli", "rollout");
+const OUT = path.join(ROOT, "electron", "backend", "proxy", "assets", "zcode-official-system.json");
+const RULES = path.join(ROOT, "electron", "backend", "proxy", "rules.cjs");
 // 落盘时的用户名：目标机器是 Administrator。提示词里的可视化目录路径不参与上游校验
 // （实测换成别的用户名仍可通），这里统一写成目标机器，避免把采集者的用户名带进仓库。
 const TARGET_USER = String(process.env.ZCODE_PROFILE_USER || "Administrator").trim() || "Administrator";
@@ -56,7 +67,7 @@ function listRollouts() {
       try {
         mtimeMs = fs.statSync(p).mtimeMs;
       } catch {
-        /* 读不到时间戳就按最旧处理 */
+        /* 读不到时间戳按最旧处理 */
       }
       return { file: p, mtimeMs };
     })
@@ -91,12 +102,71 @@ function pickFromFile(file) {
   return best;
 }
 
+/** 语义化版本比较：a > b → true；任一方不合法按 false 处理（不因脏数据误判倒退） */
+function verGt(a, b) {
+  const pa = String(a || "")
+    .split(".")
+    .map((n) => Number(n));
+  const pb = String(b || "")
+    .split(".")
+    .map((n) => Number(n));
+  if (pa.some((n) => !Number.isInteger(n)) || pb.some((n) => !Number.isInteger(n))) return false;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+/** rules.cjs 里 zcode.appVersion 唯一（全仓仅一处）；采到新版本号时原地同步 */
+function syncRulesVersion(newVer) {
+  if (!newVer) return "记录里没有 x-zcode-app-version，未同步 appVersion（保持现值）";
+  let text;
+  try {
+    text = fs.readFileSync(RULES, "utf8");
+  } catch (e) {
+    return `读取 rules.cjs 失败：${(e && e.message) || e}`;
+  }
+  const m = /appVersion:\s*"([^"]+)"/.exec(text);
+  if (!m) return "rules.cjs 未找到 appVersion 字段（结构变了？请人工核对）";
+  if (m[1] === newVer) return `appVersion 已是 ${newVer}，无需改动`;
+  fs.writeFileSync(RULES, text.replace(/appVersion:\s*"[^"]+"/, `appVersion: "${newVer}"`), "utf8");
+  return `appVersion 已同步：${m[1]} → ${newVer}`;
+}
+
+/** 落盘后跑 zcode 自测（Electron 的 Node）；不过返回非 0 */
+function runSelftest() {
+  const electron = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
+  const selftest = path.join(ROOT, "tools", "proxy-zcode-selftest.cjs");
+  if (!fs.existsSync(electron) || !fs.existsSync(selftest)) {
+    console.error("找不到 Electron 或自测脚本，无法验证新底稿——中止，不带病出包。");
+    return 1;
+  }
+  console.log("\n跑 zcode 自测验证新底稿…");
+  const r = spawnSync(electron, [selftest], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    stdio: "inherit",
+    cwd: ROOT,
+  });
+  return r.status == null ? 1 : r.status;
+}
+
+/** 采不到有效新数据：手动模式报错退出；--auto 提示后放行（按仓库现有底稿打包） */
+function noData(reasonLines) {
+  for (const l of reasonLines) (AUTO ? console.log : console.error)(l);
+  if (AUTO) {
+    console.log(`[zcode-system] 本次未更新底稿，按仓库现有底稿继续（提示：先用 ZCode 客户端发一条消息再打包，底稿才是最新的）。`);
+    process.exit(0);
+  }
+  process.exit(1);
+}
+
 function main() {
   const files = listRollouts();
   if (!files.length) {
-    console.error(`没找到客户端会话记录：${ROLLOUT_DIR}`);
-    console.error("请在 ZCode 客户端里随便发一条消息（任意模型），再重跑本脚本。");
-    process.exit(1);
+    noData([`没找到客户端会话记录：${ROLLOUT_DIR}`, "请在 ZCode 客户端里随便发一条消息（任意模型），再重跑。"]);
+    return;
   }
 
   let picked = null;
@@ -110,15 +180,14 @@ function main() {
     }
   }
   if (!picked) {
-    console.error(`扫了 ${files.length} 份会话记录，没有一条含三段 system 的模型请求。`);
-    console.error("请在 ZCode 客户端里发一条消息（不要用纯本地模型），再重跑本脚本。");
-    process.exit(1);
+    noData([`扫了 ${files.length} 份会话记录，没有一条含三段 system 的模型请求。`, "请在 ZCode 客户端里发一条消息（不要用纯本地模型），再重跑。"]);
+    return;
   }
 
   const [seg0, seg1] = picked.system.map((b) => b.text);
   if (seg1.length < 3000) {
-    console.error(`第 1 段只有 ${seg1.length} 字，明显不完整（实测需要 ~3101 字），拒绝落盘。`);
-    process.exit(1);
+    noData([`第 1 段只有 ${seg1.length} 字，明显不完整（实测需要 ~3100 字），拒绝落盘。`]);
+    return;
   }
 
   // 文本里的路径是字面双反斜杠（C:\\Users\\<name>\\），整段换成目标机器的用户名
@@ -133,15 +202,39 @@ function main() {
     blocks: [seg0, seg1Out],
   };
 
+  // 与仓库现有资产比对：只看底稿正文与版本（capturedAt 是采集日期，同底稿重采不算更新）
+  let cur = null;
+  try {
+    cur = JSON.parse(fs.readFileSync(OUT, "utf8"));
+  } catch {
+    cur = null;
+  }
+  if (cur && cur.blocks && JSON.stringify(cur.blocks) === JSON.stringify(data.blocks) && String(cur.sourceClientVersion || "") === data.sourceClientVersion) {
+    console.log(`[zcode-system] 底稿无变化（版本 ${data.sourceClientVersion || "未知"}），无需更新。`);
+    process.exit(0);
+  }
+  // 防倒退：本机客户端版本比仓库已有的还旧 → 不覆盖（如客户端未升级就先跑了旧记录）
+  if (cur && cur.sourceClientVersion && data.sourceClientVersion && verGt(String(cur.sourceClientVersion), data.sourceClientVersion)) {
+    console.log(`[zcode-system] 采集到的版本 ${data.sourceClientVersion} 低于仓库已有 ${cur.sourceClientVersion}，已跳过（等本机客户端升级后再打包）`);
+    process.exit(0);
+  }
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(data), "utf8");
-
   console.log("来源记录：", pickedFile);
   console.log("请求时间：", picked.at, "| 客户端版本：", data.sourceClientVersion || "(记录里没有)");
   console.log("用户名替换：", replaced.length, "处 →", TARGET_USER, replaced.length ? `（原值 ${replaced[0]}…）` : "");
   console.log("已写入：", OUT);
   console.log("第 0 段", seg0.length, "字 | 第 1 段", seg1Out.length, "字 | 合计", seg0.length + seg1Out.length);
-  console.log("\n下一步：跑 `node tools/proxy-zcode-selftest.cjs`（需 Electron 的 Node）确认 T19 通过，再提交。");
+  console.log(syncRulesVersion(data.sourceClientVersion));
+
+  // 底稿变了必须验证过才能继续（--auto 下不过就阻断打包）
+  const code = runSelftest();
+  if (code !== 0) {
+    console.error("\n[zcode-system] 自测未通过：新底稿/版本改动有问题，已中止。修复或先还原 assets 与 rules.cjs 再打包。");
+    process.exit(1);
+  }
+  console.log("\n[zcode-system] ✅ 底稿已更新且自测通过" + (AUTO ? "，继续打包。" : "。"));
 }
 
 main();
