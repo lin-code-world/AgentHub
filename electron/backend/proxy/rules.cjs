@@ -336,6 +336,8 @@ const DEFAULTS = {
       // （余额/签到/配置）却照常返回 200，所以这个字段错了很难从余额上看出问题。
       // 实测：3.16.3 曾可过、4.1.10 必被拦；2026-11-02 起 3.16.3 也被拦（上游随 3.17.2 换底稿，
       // 见 zcodeOfficialSystem.cjs 事实基线），2026-11-07 起改用 3.17.2。客户端升级后如再遇 3012，先核对这里。
+      // 本字段同时用于控制面（zcodeCtlHeaders，billing/claim/configs）：2026-11-07 起 3.17.2 已实测
+      // 余额查询（billing/balance）通过——LLM 面与控制面保持同一版本号，才是复刻真实客户端的形态。
       // 本机装了客户端时可从 ~/.zcode/v2/runtime/provider/<平台>/<版本>/ 目录名读到真实版本。
       appVersion: "3.17.2",
       sourceTitle: "cli",
