@@ -717,7 +717,7 @@ async function main() {
     // ⑤ 仓库内置那份必须可用（目标机器没装客户端时的唯一来源）
     const asset = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "electron", "backend", "proxy", "assets", "zcode-official-system.json"), "utf8"));
     assert.ok(Array.isArray(asset.blocks) && asset.blocks.length >= 2, "assets 必须带两段");
-    assert.ok(String(asset.blocks[0]).startsWith("You are ZCode, an interactive coding agent"), "assets 第 0 段必须是官方开头");
+    assert.ok(String(asset.blocks[0]).startsWith("You are ZCode, an interactive"), "assets 第 0 段必须是官方开头（新旧两版公共前缀）");
     assert.ok(String(asset.blocks[1]).length >= 3000, `assets 第 1 段必须完整（实测 3101 字），实际 ${String(asset.blocks[1]).length}`);
     assert.ok(String(asset.blocks[1]).includes("ZCode Desktop Context"), "assets 第 1 段必须含 Desktop Context（门禁要求到这里）");
   });

@@ -3666,7 +3666,7 @@ const zcodeOfficialSystem = require("./zcodeOfficialSystem.cjs");
 function zcodeLlmHeaders(c, account, secrets, plan, convId) {
   // 版本号必须与真实客户端一致：上游按它识别客户端身份，填一个不存在的版本会被判 3012。
   // 本机装了客户端就用它 runtime 目录里的真实版本（客户端升级后自动跟随），没装才回落配置值。
-  const ver = zcodeOfficialSystem.detectedClientVersion() || c.appVersion || "3.16.3";
+  const ver = zcodeOfficialSystem.detectedClientVersion() || c.appVersion || "3.17.2";
   const h = {
     "content-type": "application/json",
     "HTTP-Referer": c.refererOrigin || "https://zcode.z.ai",

@@ -14,10 +14,14 @@
 // HTTP 405 + code 3012「unusual activity」。而这段提示词随客户端版本变化——客户端升级后
 // 若再次出现 3012，重跑本脚本即可，不用改代码。
 //
+// 2026-11-07 实测：3.17.2 上游整体更换了底稿（首句从 `You are ZCode, an interactive coding agent`
+// 改为 `You are ZCode, an interactive agent`，第 1 段全文重写）——3.16.3 旧底稿自 2026-11-02 起
+// 稳定被 3012 拦截，同期本地 3.17.2 客户端正常。首句判据因此放宽到两版公共前缀。
+//
 // 数据来源：客户端自己的 model-io 会话记录
 //   ~/.zcode/cli/rollout/model-io-session-*.jsonl
 // 每行是一条真实模型请求。取最近一条「request.body.system 为三段文本」的记录：
-// 前两段正是上游要校验的内容（第三段实测非必需，不采集）。
+// 前两段正是上游要校验的内容（第 3 段是官方代码风格指令，3.16.3 时代实测非必需，未采集）。
 //
 // 用法：
 //   node scripts/dev-zcode-system-capture.cjs
@@ -33,7 +37,9 @@ const OUT = path.join(__dirname, "..", "electron", "backend", "proxy", "assets",
 // 落盘时的用户名：目标机器是 Administrator。提示词里的可视化目录路径不参与上游校验
 // （实测换成别的用户名仍可通），这里统一写成目标机器，避免把采集者的用户名带进仓库。
 const TARGET_USER = String(process.env.ZCODE_PROFILE_USER || "Administrator").trim() || "Administrator";
-const OFFICIAL_FIRST_BLOCK = "You are ZCode, an interactive coding agent";
+// 新旧两版底稿的公共前缀（3.16.3 是 …interactive coding agent，3.17.2 起是 …interactive agent）：
+// 判据只用于确认「这是官方 system 不是垃圾数据」，放宽到公共前缀后两版记录都能采到
+const OFFICIAL_FIRST_BLOCK = "You are ZCode, an interactive";
 
 function listRollouts() {
   let ents = [];
@@ -43,7 +49,7 @@ function listRollouts() {
     return [];
   }
   return ents
-    .filter((e) => e.isFile() && /^model-io-session[-_].*\.jsonl$/.test(e.name))
+    .filter((e) => e.isFile() && /^model-io-sess(?:ion)?[-_].*\.jsonl$/.test(e.name)) // 3.17.2 起文件名缩写为 model-io-sess_
     .map((e) => {
       const p = path.join(ROLLOUT_DIR, e.name);
       let mtimeMs = 0;
@@ -123,7 +129,7 @@ function main() {
   const data = {
     sourceClientVersion: String(picked.headers["x-zcode-app-version"] || ""),
     capturedAt: String(picked.at || "").slice(0, 10),
-    note: "ZCode 桌面客户端真实模型请求的 system 前两段原文。" + "上游对该 system 做内容指纹校验：前两段必须逐字一致、且最多 3 段，否则回 405/3012。" + "第三段留给下游应用自己的 system（实测任意长度均可）；官方原先的第三段（Desktop Context）实测非必需。" + "第一段里的可视化目录路径不参与校验（换成目标机器用户名仍可通）。",
+    note: "ZCode 桌面客户端真实模型请求的 system 前两段原文。" + "上游对该 system 做内容指纹校验：前两段必须逐字一致、且最多 3 段，否则回 405/3012。" + "第三段留给下游应用自己的 system（3.16.3 时代实测任意长度均可；3.17.2 是否仍如此未复核，按同口径打包实测）。" + "官方自己的第 3 段（代码风格指令）未采集。第 1 段里的可视化目录路径不参与校验（换成目标机器用户名仍可通）。",
     blocks: [seg0, seg1Out],
   };
 

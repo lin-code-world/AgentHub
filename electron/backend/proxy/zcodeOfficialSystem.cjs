@@ -12,14 +12,20 @@
 /**
  * ZCode 官方 system 提示词（上游 3012 风控的**内容指纹**）
  *
- * 事实基线（2026-11-01 用本机客户端 3.16.3 逐项实测，抓的是客户端自己的 model-io 请求记录）：
- *   · 上游对 start-plan 对话的 `system` 做内容指纹校验：必须是客户端官方 system 的**前两段**，
+ * 事实基线：
+ *   · 上游对 start-plan 对话的 `system` 做**内容指纹校验**：必须是客户端官方 system 的**前两段**，
  *     且整个 `system` **最多 3 段**。不满足 → HTTP 405 + code 3012「unusual activity」。
- *   · 第 0 段 = `You are ZCode, an interactive coding agent`（42 字）。
- *   · 第 1 段 = 身份句 + 安全声明 + `# Harness` + `# ZCode Desktop Context`（约 3101 字）。
- *   · 官方第 3 段（Desktop Context 之后的正文，约 7563 字）实测**非必需**。
- *   · **第 3 段的位置可以放下游应用自己的 system**，实测放到 3 万字仍通过。
- *   · 第 1 段里的可视化目录路径**不参与校验**（换成别的用户名仍可通）。
+ *   · 2026-11-01 基线（本机客户端 3.16.3 逐项实测，抓的是客户端 model-io 请求记录）：
+ *     第 0 段 `You are ZCode, an interactive coding agent`（42 字）；第 1 段 = 身份句 + 安全声明 +
+ *     `# Harness` + `# ZCode Desktop Context`（约 3101 字）；官方第 3 段（约 7563 字）实测**非必需**；
+ *     **第 3 段的位置可以放下游应用自己的 system**，实测放到 3 万字仍通过；
+ *     第 1 段里的可视化目录路径**不参与校验**（换成别的用户名仍可通）。
+ *   · 2026-11-07 更新（3.17.2 客户端真实请求复核）：上游随 3.17.2 **整体更换了底稿**——
+ *     第 0 段变为 `You are ZCode, an interactive agent`（35 字），第 1 段全文重写（3119 字，
+ *     仍含 `# Harness` / `# ZCode Desktop Context` / 可视化目录路径），官方第 3 段变为代码风格指令
+ *     （3798 字）。3.16.3 旧底稿自 2026-11-02 起稳定被 3012 拦（HTTP 正文
+ *     `request has been blocked due to unusual activity.`），同期本地 3.17.2 客户端同账号同模型正常；
+ *     「前两段校验 + 最多 3 段 + 第 3 段放任」在 3.17.2 上**未复核**，按同口径打包实测收敛。
  *   · 自称的客户端版本必须是真实存在过的版本（`X-ZCode-App-Version` / UA），见 appVersion 注释。
  *
  * 数据从哪来（优先级从高到低）：
@@ -37,7 +43,9 @@ const os = require("node:os");
 const path = require("node:path");
 
 const ASSET = path.join(__dirname, "assets", "zcode-official-system.json");
-const OFFICIAL_FIRST_BLOCK = "You are ZCode, an interactive coding agent";
+// 新旧两版底稿的公共前缀：3.16.3 是 "…interactive coding agent"，3.17.2 起是 "…interactive agent"。
+// 判据只用于确认「这是官方 system 不是垃圾数据」，取公共前缀让两版记录与资产都能通过结构校验
+const OFFICIAL_FIRST_BLOCK = "You are ZCode, an interactive";
 const MIN_SEG1_LEN = 3000; // 实测 3101 字；低于这个数说明采到的不是完整第 1 段
 
 /** 兜底常量（客户端 3.14.4 时期采集：CLI Prefix + Agent Identity，1253 字）。
@@ -135,7 +143,7 @@ function listRollouts() {
     return [];
   }
   return ents
-    .filter((e) => e.isFile() && /^model-io-session[-_].*\.jsonl$/.test(e.name))
+    .filter((e) => e.isFile() && /^model-io-sess(?:ion)?[-_].*\.jsonl$/.test(e.name)) // 3.17.2 起文件名缩写为 model-io-sess_
     .map((e) => {
       const p = path.join(rolloutDir(), e.name);
       let mtimeMs = 0;

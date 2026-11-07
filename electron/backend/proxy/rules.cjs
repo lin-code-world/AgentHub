@@ -334,9 +334,10 @@ const DEFAULTS = {
       // ⚠ 必须是**真实存在过**的客户端版本：上游按版本号识别客户端身份，填一个不存在的版本
       // （此前是 4.1.10）会让模型请求直接吃 405 + code 3012「unusual activity」——控制面
       // （余额/签到/配置）却照常返回 200，所以这个字段错了很难从余额上看出问题。
-      // 实测：3.16.3 可过；4.1.10 必被拦。客户端升级后如再遇 3012，先核对这里。
+      // 实测：3.16.3 曾可过、4.1.10 必被拦；2026-11-02 起 3.16.3 也被拦（上游随 3.17.2 换底稿，
+      // 见 zcodeOfficialSystem.cjs 事实基线），2026-11-07 起改用 3.17.2。客户端升级后如再遇 3012，先核对这里。
       // 本机装了客户端时可从 ~/.zcode/v2/runtime/provider/<平台>/<版本>/ 目录名读到真实版本。
-      appVersion: "3.16.3",
+      appVersion: "3.17.2",
       sourceTitle: "cli",
       refererOrigin: "https://zcode.z.ai",
       // coding-plan（付费套餐，凭据 = coding-plan API key "{apiKey}.{secret}"）
