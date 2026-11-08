@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道覆盖 / 倍率与能力 / 反向模型映射
+<!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道排序 / 倍率与能力 / 反向模型映射
      管理态存框架整体配置（disabledModels / modelOverrides / modelReverseAliases），保存即热生效（服务端每请求读盘） -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
@@ -483,6 +483,20 @@ function addToOrder(m: ProxyModel, v: string) {
 function removeFromOrder(m: ProxyModel, v: string) {
   setOrder(m, orderOf(m).filter((x) => x !== v));
 }
+
+/** 清掉顺序表里已失效的渠道（模型下架 / 渠道被关闭 / 配置写错）。
+ *  这些项已不参与路由，但会一直显示「已失效」；用户需要一个一键清理入口。
+ *  注意：必须直接改原始配置（orderOf 已过滤掉失效项，拿不到它们）。 */
+function clearStale(m: ProxyModel) {
+  const stale = new Set(staleOf(m));
+  if (!stale.size) return;
+  const raw = app.config.proxy.modelOverrides || {};
+  const list = (Array.isArray(raw[m.id]) ? raw[m.id] : raw[m.id] ? [raw[m.id]] : []) as string[];
+  setOrder(
+    m,
+    list.filter((x) => !stale.has(x))
+  );
+}
 function moveInOrder(m: ProxyModel, v: string, delta: number) {
   const list = [...orderOf(m)];
   const i = list.indexOf(v);
@@ -685,7 +699,7 @@ watch(active, (on) => {
                 <!-- 思考强度列：select 90px + 自badge 21px + 左右 padding 24px = 135px 起步 -->
                 <col style="width: 136px" />
                 <col style="width: 120px" />
-                <!-- 渠道覆盖列：select 固定 100px + 单元格左右 padding 各 12px = 124px 起步 -->
+                <!-- 渠道排序列：select 固定 100px + 单元格左右 padding 各 12px = 124px 起步 -->
                 <col style="width: 156px" />
                 <!-- 状态列：开关固定 40px + 单元格左右 padding 各 12px = 64px 起步。
                      48px 的内容区只有 24px，开关必然溢出被裁（4K@200% 报障的直接原因） -->
@@ -695,7 +709,7 @@ watch(active, (on) => {
                 <tr>
                   <th rowspan="2">模型</th>
                   <th colspan="6">来源渠道</th>
-                  <th rowspan="2">渠道覆盖</th>
+                  <th rowspan="2">渠道排序</th>
                   <th rowspan="2" style="text-align: center">状态</th>
                 </tr>
                 <tr>
@@ -713,7 +727,7 @@ watch(active, (on) => {
                   <th>上下文</th>
                   <th>思考强度</th>
                   <th>能力</th>
-                  <th>渠道覆盖</th>
+                  <th>渠道排序</th>
                   <th style="text-align: center">状态</th>
                 </tr>
               </thead>
@@ -824,6 +838,7 @@ watch(active, (on) => {
                             :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
                           >
                             已失效：{{ staleOf(m).map(channelName).join("、") }}
+                            <button class="order-btn" title="从顺序里清除这些失效项" @click="clearStale(m)">清除</button>
                           </div>
                         </div>
                       </td>
@@ -952,6 +967,7 @@ watch(active, (on) => {
                         :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
                       >
                         已失效：{{ staleOf(m).map(channelName).join("、") }}
+                        <button class="order-btn" title="从顺序里清除这些失效项" @click="clearStale(m)">清除</button>
                       </div>
                     </div>
                   </td>
