@@ -769,10 +769,15 @@ function getProvider(id) {
 function isBuiltinChannel(id) { return BUILTIN_IDS.has(String(id)); }
 
 /** 新增或整体覆盖一个提供商行。updated_at 一并前进，adapters 的动态适配器实例缓存以它为键，
- *  所以改完配置不必重启网关。 */
+ *  所以改完配置不必重启网关。
+ *  ⚠ updated_at 必须**严格前进**：同一毫秒内连续保存两次时 `Date.now()` 相等，缓存键
+ *  `${id}:${updatedAt}` 不变 → 实例不换、配置改了却不生效。用「上一条 + 1」兜底，
+ *  即使同毫秒（或系统时钟回拨）也保证前进。 */
 function saveProvider(p) {
   open();
-  const now = Date.now();
+  const curPrev = db.prepare("SELECT updated_at FROM agents WHERE id = ?").get(String(p.id));
+  const prevAt = curPrev && Number(curPrev.updated_at) > 0 ? Number(curPrev.updated_at) : 0;
+  const updatedAt = Math.max(Date.now(), prevAt + 1);
   db.prepare(
     `INSERT INTO agents (id, display, domain, pool_strategy, updated_at, kind, base_url, models_json, extra_headers, extra_body, enabled)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -785,7 +790,7 @@ function saveProvider(p) {
     String(p.display || p.id).slice(0, 64),
     String(p.domain || ""),
     ["expire_first", "credit_first", "round_robin"].includes(p.poolStrategy) ? p.poolStrategy : "round_robin",
-    now,
+    updatedAt,
     String(p.kind),
     String(p.baseUrl || ""),
     JSON.stringify(Array.isArray(p.models) ? p.models : []),

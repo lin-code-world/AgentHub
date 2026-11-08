@@ -30,9 +30,10 @@
 //        **不中和会闪退**：import 会执行模块顶层语句，worker main 跑起来后会 process.exit。
 //     两条路径的产物缓存键一致：obf 的 size+mtime + 提取方式，客户端升级自动重建。
 //
-// 胶水为**标准 wasm-bindgen 产物**，import 全部来自 ./qoder_auth_wasm_bg.js；wasm 本体 298,606 B，
-// 17 个公开 API（qodercontext_* / requestresult_* / generate_runtime_auth_fields /
-// decrypt_server_response / model_cache_* / credential_storage_* 等）。
+// 胶水为**标准 wasm-bindgen 产物**，import 全部来自 ./qoder_auth_wasm_bg.js；wasm 本体 298,606 B。
+// 导出数随客户端版本变化（0.5.6 实测 19 个：qodercontext_* / requestresult_* /
+// generate_runtime_auth_fields / decrypt_server_response / model_cache_* / credential_storage_* 等）——
+// 这里**刻意不写死具体数字**：它是客户端内置 wasm 的导出表，客户端升级即可能增减。
 //
 // 已知代价：缓存模块 33MB（Node 解析约 1s），仅在首次使用 qoder 渠道时惰性加载。
 "use strict";
