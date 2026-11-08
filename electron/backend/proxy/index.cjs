@@ -1539,11 +1539,19 @@ function register(ipcMain) {
         // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。
         // 不过滤的话，模型下架 / 渠道被上游启闭 / 手写配置写错渠道名时，
         // 界面仍把它显示成 1 号位，实际路由早已跳过它——用户会以为功能没生效。
-        // overrideStale 保留被剔除的那部分，供前端标注「已失效」。
+        // overrideStale 只保留「该渠道仍启用、但确实没有这个模型」的项（真下架 / 配置写错），
+        // 供前端标注「已失效」。因**渠道被关闭**而失效的项不下发（见下）——关闭是临时决定，
+        // 配置要留着等重开恢复，界面上也不该天天挂一行「已失效」。
         ...(() => {
           const raw = server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]);
           const validSet = new Set(adapters.modelOwners(m.id, cfg));
-          const stale = raw.filter((ch) => !validSet.has(ch));
+          const stale = [];
+          for (const ch of raw) {
+            if (validSet.has(ch)) continue;
+            // 渠道被关闭 → 不算「失效」，只是暂时隐去（配置保留）
+            if (!adapters.channelOn(ch, cfg.proxy) && adapters.get(ch)) continue;
+            stale.push(ch);
+          }
           return {
             override: raw.filter((ch) => validSet.has(ch)),
             overrideStale: stale,
