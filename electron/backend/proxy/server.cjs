@@ -158,10 +158,18 @@ function resolveChannel(key, model, settings) {
   }
   if (owners.length === 1) return { channel: owners[0] }; // 模型仅存在于单渠道目录 → 强制
   if (owners.length > 1) {
-    const ov = (settings.modelOverrides || {})[model];
-    if (ov && owners.includes(ov)) return { channel: ov };
-    if (settings.routeStrategy === "fixed" && owners.includes(settings.fixedChannel)) return { channel: settings.fixedChannel };
-    return { channel: pickByOrder(routeOrderOf(key, settings), owners, tierGroups()) };
+    // 用户给这个模型排的渠道顺序（软偏好）：排第一的成为主渠道，未排到的软兜底垫底。
+    // 先按 owners 过滤：顺序里写的渠道若不属于本模型（已关闭 / 目录没有 / 拼错），
+    // 必须剔除，否则它会「假装排过序」把下面的 fixed 分支挡掉（真实回归）。
+    const override = normalizeModelOrder((settings.modelOverrides || {})[model]).filter((ch) => owners.includes(ch));
+    // 固定策略：仅在该模型没有**有效**自定义顺序时生效（用户顺序更具体，优先于全局默认）。
+    // filter 之后仍为空 = 用户没排、或排的全是无效渠道 → 回到原有 fixed 行为。
+    if (!override.length && settings.routeStrategy === "fixed" && owners.includes(settings.fixedChannel)) {
+      return { channel: settings.fixedChannel };
+    }
+    // usableOf 让「排第一但当前不可用」的渠道垫底（issue #86）：有 override 才前置这道判断
+    const usableOf = override.length ? (ch) => routeUsable(ch, settings) : undefined;
+    return { channel: pickByOrder(routeOrderOf(key, settings), owners, tierGroups(), override, usableOf) };
   }
   // 模型不在任何目录：auto 且固定渠道策略时放行指定渠道（透传试错），否则 400 给可用模型提示。
   // 指定渠道已被「上游启闭」关闭时不再透传试错（issue #90）：打向已关闭渠道只会拿到
@@ -226,6 +234,39 @@ function routeUsable(channel, settings) {
     !(a.expiresAt > 0 && a.expiresAt <= now));
 }
 
+/** 模型渠道顺序归一化：配置可能是新数组，也可能是旧版单字符串。非法值一律空数组（= 不干预）。
+ *  非字符串一律空数组——磁盘被手改成数字/对象/布尔时不能当成渠道名去路由。 */
+function normalizeModelOrder(value) {
+  if (Array.isArray(value)) return value.map((s) => String(s || "")).filter(Boolean);
+  if (typeof value !== "string") return [];
+  return value ? [value] : [];
+}
+
+/** 用户自定义顺序：可用性第一 → 用户位次 → 原比较器。
+ *  位次：排过的 0..n-1，没排到的一律 n（软兜底排后面、仍参与路由）。
+ *  override 为空时直接返回 baseCmp（零行为变化）。
+ *  usableOf 缺省 = 全可用；按渠道记忆化——比较器会被调用 O(N log N) 次，
+ *  每次去查库（poolAccounts 还可能顺手写库）不可接受（与 cmpByOrder 现有 memo 同一理由）。
+ *  可用性必须排在位次之前：否则熔断/空池渠道会因为排第一而占掉故障转移预算（issue #86）。 */
+function rankChannelsByOverride(override, baseCmp, usableOf) {
+  const list = Array.isArray(override) ? override : [];
+  if (!list.length) return baseCmp;
+  const pos = new Map(list.map((ch, i) => [String(ch), i]));
+  const rankOf = (ch) => (pos.has(String(ch)) ? pos.get(String(ch)) : list.length);
+  const memo = new Map();
+  const usable = (ch) => {
+    const k = String(ch);
+    if (!memo.has(k)) memo.set(k, typeof usableOf === "function" ? !!usableOf(k) : true);
+    return memo.get(k);
+  };
+  return (a, b) => {
+    const ua = usable(a);
+    const ub = usable(b);
+    if (ua !== ub) return ua ? -1 : 1;
+    return rankOf(a) - rankOf(b) || baseCmp(a, b);
+  };
+}
+
 /** 渠道排序比较器（按生效档）：
  *  score = 现状（健康×余额打分，行为与旧 bestByScore 逐字节等同）；
  *  cost-first = **能出请求的渠道优先**，其内再按成本档升序（免费额度优先消耗的产品语义不变）。
@@ -233,23 +274,30 @@ function routeUsable(channel, settings) {
  *  channelFailoverMax 预算，把唯一可用的渠道挤出队列 → 明明有账号却 503，轨迹里连它都不出现（issue #86）。
  *  可用性表按比较器实例惰性记忆化：比较器里逐个查库是 O(n log n) 次（与 score 档现状同量级，不额外放大）；
  *  调用方已有物化表可直接传入。
- *  恢复回切零新状态：可用性每请求实时派生、不做缓存，打光/熔断自然让位，恢复后自然排回最前 */
-function cmpByOrder(order, groups, usableTable) {
-  if (order !== "cost-first") return (a, b) => channelScore(b) - channelScore(a);
+ *  恢复回切零新状态：可用性每请求实时派生、不做缓存，打光/熔断自然让位，恢复后自然排回最前
+ *  override / usableOf（可选）：模型自定义顺序与它的可用性判定，见 rankChannelsByOverride。
+ *  缺省时行为与改动前逐字相同（黄金闸口径）。 */
+function cmpByOrder(order, groups, usableTable, override, usableOf) {
   const memo = usableTable || new Map();
-  const usableOf = (ch) => {
+  const memoUsable = (ch) => {
     if (!memo.has(ch)) memo.set(ch, routeUsable(ch));
     return memo.get(ch);
   };
-  return (a, b) => {
-    const ua = usableOf(a);
-    const ub = usableOf(b);
-    if (ua !== ub) return ua ? -1 : 1;
-    const ga = groups.get(a) ?? 2;
-    const gb = groups.get(b) ?? 2;
-    if (ga !== gb) return ga - gb;
-    return costFirstScore(b) - costFirstScore(a);
-  };
+  let base;
+  if (order !== "cost-first") {
+    base = (a, b) => channelScore(b) - channelScore(a);
+  } else {
+    base = (a, b) => {
+      const ua = memoUsable(a);
+      const ub = memoUsable(b);
+      if (ua !== ub) return ua ? -1 : 1;
+      const ga = groups.get(a) ?? 2;
+      const gb = groups.get(b) ?? 2;
+      if (ga !== gb) return ga - gb;
+      return costFirstScore(b) - costFirstScore(a);
+    };
+  }
+  return rankChannelsByOverride(override, base, usableOf);
 }
 
 /** 生效档：per-key 覆盖 → 全局默认（缺省 score = 现状） */
@@ -376,18 +424,18 @@ function nearModelIds(model, all) {
 }
 
 /** 按生效档取最优渠道（resolveChannel 智能分支）；sort 稳定，同分保持 modelOwners 返回序 */
-function pickByOrder(order, candidates, groups) {
-  return [...candidates].sort(cmpByOrder(order, groups))[0];
+function pickByOrder(order, candidates, groups, override, usableOf) {
+  return [...candidates].sort(cmpByOrder(order, groups, undefined, override, usableOf))[0];
 }
 
-/** 是否为「用户显式指定渠道」：绑定渠道 / 固定策略命中 / 单模型指定命中。
+/** 是否为「用户显式指定渠道」：绑定渠道 / 固定策略命中。
  *  显式边界不做路由插件让位（否则「绑定」失真，也失去强制走某渠道的逃生口）；
- *  fixed/override 指向的渠道不含该模型时它们并未生效，仍按智能路由让位。 */
+ *  fixed 指向的渠道不含该模型时它并未生效，仍按智能路由让位。
+ *  渠道覆盖（modelOverrides）自 2026-11 起改为**软排序偏好**（见 rankChannelsByOverride），
+ *  不再构成显式边界——用户排第一的渠道被插件判定「整渠道靠后」时仍可让位。 */
 function isExplicitRoute(key, settings, model, resolvedChannel) {
   if (!key || key.route !== "auto") return true;
-  if (settings && settings.routeStrategy === "fixed" && resolvedChannel === settings.fixedChannel) return true;
-  const ov = (settings && settings.modelOverrides) || {};
-  return ov[model] === resolvedChannel;
+  return !!(settings && settings.routeStrategy === "fixed" && resolvedChannel === settings.fixedChannel);
 }
 
 /** 候选渠道队列重排 + 截断（纯函数，tools/proxy-channel-defer-selftest.cjs 断言用）。
@@ -1112,13 +1160,23 @@ async function handleChat(req, res, settings, surface, convNotes) {
         try { res.setHeader("x-agenthub-fallback", `${actualModel} -> ${chainModel}`); } catch { /* 头已发出时忽略 */ }
         sink.comment(`fallback ${actualModel} -> ${chainModel}`);
       }
-      // ===== 渠道候选队列（跨渠道故障转移）：主渠道尊重全部现有路由语义（单源强制 /
-      // key.route / per-model 覆盖 / fixed / 生效档排序），备选 = 拥有该模型的其余渠道按
-      // 生效档排序（score=综合分降序 / cost-first=成本档升序组内按分）。主渠道降级或耗尽时
+      // 渠道候选队列（跨渠道故障转移）：主渠道尊重全部现有路由语义（单源强制 /
+      // key.route / fixed / 生效档排序），备选 = 拥有该模型的其余渠道按生效档排序
+      //（score=综合分降序 / cost-first=成本档升序组内按分）。主渠道降级或耗尽时
       // 请求内直接跳备选（客户端无感），全部候选走完才报错。单渠道模型无备选可跳
       //（模型目录的物理边界，靠回退模型兜底）
       const owners = adapters.modelOwners(chainModel, settings).filter((c) => c !== resolved.channel);
-      owners.sort(cmpByOrder(routeOrderOf(key, settings), tierGroups()));
+      // 模型自定义渠道顺序（软偏好）：备选也按用户的位次排；可用性始终压过位次（issue #86）
+      const orderOverride = normalizeModelOrder((settings.modelOverrides || {})[chainModel]);
+      owners.sort(
+        cmpByOrder(
+          routeOrderOf(key, settings),
+          tierGroups(),
+          undefined,
+          orderOverride,
+          orderOverride.length ? (ch) => routeUsable(ch, settings) : undefined
+        )
+      );
       // Key 白名单过滤：allowedChannels 非空时，候选队列只留白名单内的渠道（主渠道 + 备选一起过）
       let queue = [resolved.channel, ...owners];
       if (keyAllowedChannels.length) {
@@ -1830,6 +1888,8 @@ module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSn
   resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams, clampReasoningEffort,
   // 成本感知路由纯函数（tools/proxy-cost-route-selftest.cjs / proxy-empty-pool-route-selftest.cjs 行为断言用）
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
+  // 模型渠道自定义顺序（tools/proxy-model-order-selftest.cjs 行为断言用）
+  normalizeModelOrder, rankChannelsByOverride,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）
   normalizeChannelFailoverMax, perModelUpstreamBudget,
   // 候选渠道队列重排（tools/proxy-channel-defer-selftest.cjs 断言用）

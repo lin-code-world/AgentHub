@@ -63,8 +63,8 @@ function ok(cond, label) {
   eq(server.isExplicitRoute({ route: "loomy" }, {}, "m", "loomy"), true, "Key 绑定渠道：显式边界");
   eq(server.isExplicitRoute(autoKey, { routeStrategy: "fixed", fixedChannel: "loomy" }, "m", "loomy"), true, "固定策略命中：显式边界");
   eq(server.isExplicitRoute(autoKey, { routeStrategy: "fixed", fixedChannel: "workbuddy" }, "m", "loomy"), false, "固定渠道没命中（未生效）：仍可按智能路由让位");
-  eq(server.isExplicitRoute(autoKey, { modelOverrides: { m: "loomy" } }, "m", "loomy"), true, "单模型指定命中：显式边界");
-  eq(server.isExplicitRoute(autoKey, { modelOverrides: { m: "other" } }, "m", "loomy"), false, "单模型指定没命中：仍可让位");
+  eq(server.isExplicitRoute(autoKey, { modelOverrides: { m: "loomy" } }, "m", "loomy"), false, "覆盖项不再算显式边界：仍可让位");
+  eq(server.isExplicitRoute(autoKey, { modelOverrides: { m: "other" } }, "m", "loomy"), false, "覆盖项没命中：仍可让位");
 
   // ===== 3. 账号分层 + 渠道让位（沙箱 store）=====
   const mk = (uid, daily, permanent, detail = true) => {
