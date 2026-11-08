@@ -231,10 +231,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
       </div>
       <div class="ov-body">
         <!-- 反代网关：渠道额度（号池实时数据，渠道增减自动跟进）。
-             每行可点：直接跳「号池」并把号池切到该渠道；当前正在看的渠道行加深底色。
+             每行可点：直接跳「号池」并把号池切到该渠道；号池当前看的是哪个渠道，这一行就点亮。
              注意：这里不能用 <template> 做分组——无指令的 template 会被 Vue 编译成不渲染的
              惰性 fragment（内容进 content 文档片段），整个渠道列表会凭空消失 -->
-        <div v-for="c in visibleChannels" :key="c.id" class="ov-row ov-pick" :class="{ selected: app.poolChannelPicked && app.poolChannel === c.id }" role="button" tabindex="0" :aria-current="app.poolChannelPicked && app.poolChannel === c.id ? 'true' : undefined" :title="`查看「${c.display}」号池`" @click="openChannel(c.id)" @keydown.enter.prevent="openChannel(c.id)" @keydown.space.prevent="openChannel(c.id)">
+        <div v-for="c in visibleChannels" :key="c.id" class="ov-row ov-pick" :class="{ selected: app.poolChannelReady && app.poolChannel === c.id }" role="button" tabindex="0" :aria-current="app.poolChannelReady && app.poolChannel === c.id ? 'true' : undefined" :title="`查看「${c.display}」号池`" @click="openChannel(c.id)" @keydown.enter.prevent="openChannel(c.id)" @keydown.space.prevent="openChannel(c.id)">
           <div class="grow">
             <div class="ov-name">
               {{ c.display }}<span v-if="c.summary.expiringSoon" class="ov-tag warn">即将到期</span>

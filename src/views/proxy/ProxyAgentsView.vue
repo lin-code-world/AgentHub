@@ -90,7 +90,7 @@ const activeChannel = computed({
   get: () => app.poolChannel,
   set: (v: ProxyChannelId) => {
     app.poolChannel = v;
-    app.poolChannelPicked = true; // 页内手动切过即视为用户选择，左栏随之点亮
+    app.poolChannelReady = true; // 渠道定了，左栏随之点亮
   },
 });
 /** 渠道胶囊的气泡（胶囊只显示名称，可用数与降级剩余时间靠悬浮补充）：
@@ -1600,15 +1600,18 @@ async function onFilePicked(e: Event) {
     不能在后台空烧主线程拖累前台页的鼠标跟手度 */
 const active = computed(() => app.activeModule === "proxy" && app.activePage === "agents");
 /** 进入号池页：用户主动选过渠道就尊重（左栏点名、页内切换条都算）；
- *  没选过则按原逻辑落切换条的第一个（有账号的第一个渠道）；切换条没有渠道时保持现状。
- *  默认落点刻意不经过 activeChannel 的 setter——那是「用户选了」的语义，
- *  走它会把左栏点亮成一个用户没选过的渠道，且下次进页不再按原逻辑落第一个。 */
+ *  没选过则落切换条的第一个（有账号的第一个渠道），并同样标记为「已选」——
+ *  号池停在哪，左栏就点亮哪一行，两边永远一致；切换条没有渠道时保持现状。 */
 async function focusSwitchableChannel() {
   await refresh();
-  if (app.poolChannelPicked && switchableChannels.value.some((c) => c.id === app.poolChannel)) return;
+  if (switchableChannels.value.some((c) => c.id === app.poolChannel)) {
+    app.poolChannelReady = true; // 渠道本来就有效（上次选的 / 左栏点名的）：同样要点亮左栏
+    return;
+  }
   const first = switchableChannels.value[0];
   if (!first) return;
   app.poolChannel = first.id as ProxyChannelId;
+  app.poolChannelReady = true; // 默认落点也是「当前在看」，左栏要一起点亮
 }
 /** 是否已经进过号池页：首次进入落一个有效渠道（用户没主动选过时按原逻辑落第一个有账号的），
  *  之后从别的页面跳回来只补数据 */

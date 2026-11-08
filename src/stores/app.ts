@@ -117,10 +117,10 @@ export const useAppStore = defineStore("app", {
      *  放在全局是为了让左栏点渠道就能把号池切过去、并把正在看的那行点亮：
      *  页内私存的话左栏无从得知、也没法指挥页内切换。 */
     poolChannel: "trae" as ProxyChannelId,
-    /** 用户是否主动选过号池渠道（左栏点击 / 页内切换条）。
-     *  没选过时首次进号池页仍按原逻辑落「第一个有账号的渠道」，左栏也不点亮任何行——
-     *  否则默认值会让人误以为那个渠道是自己选的，还改变了原有默认落点。 */
-    poolChannelPicked: false,
+    /** 号池当前渠道是否已确定（号池页落定默认渠道 / 用户点左栏 / 用户点页内切换条）。
+     *  为假时左栏不点亮任何行：还没进过号池页，上面那个 poolChannel 只是初始值，
+     *  拿它点亮会让人误以为那个渠道是自己在看/选中的。 */
+    poolChannelReady: false,
   }),
   getters: {
     isDark: (s) => s.config.theme === "dark",
@@ -230,7 +230,7 @@ export const useAppStore = defineStore("app", {
     /** 左栏渠道额度行：直接跳「号池」并把页面切到该渠道（高亮由侧栏读 poolChannel 自行点亮） */
     openPoolChannel(channel: ProxyChannelId) {
       this.poolChannel = channel;
-      this.poolChannelPicked = true;
+      this.poolChannelReady = true;
       this.settingsOpen = false;
       this.activeModule = "proxy";
       this.activePage = "agents";
