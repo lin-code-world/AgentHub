@@ -4765,6 +4765,36 @@ function reverseAliasTarget(model, channel, cfg) {
   return same && !nativeModel(channel, target) ? null : target;
 }
 
+/** 该渠道的原生模型名 model 是否被某条反向映射「吸收」（占用）：
+ *  存在统一名 u，rev[u][ch] 生效且映射目标与 model 逐字相等，且 u 与 model 逐字不同（排除恒等映射）。 */
+function absorbedByAlias(model, channel, cfg) {
+  const c = cfg || proxyConfig();
+  const rev = c.modelReverseAliases || {};
+  const m = String(model || "");
+  for (const u of Object.keys(rev)) {
+    if (u === m) continue;
+    const target = reverseAliasTarget(u, channel, c);
+    if (target && target === m) return true;
+  }
+  return false;
+}
+
+/** 是否存在任意渠道吸收该名字（供「无归属」时直接拒绝、不走透传兜底）。 */
+function isAbsorbedName(model, cfg) {
+  const c = cfg || proxyConfig();
+  const rev = c.modelReverseAliases || {};
+  const m = String(model || "");
+  for (const u of Object.keys(rev)) {
+    if (u === m) continue;
+    const chMap = rev[u];
+    if (!chMap || typeof chMap !== "object") continue;
+    for (const ch of Object.keys(chMap)) {
+      if (reverseAliasTarget(u, ch, c) === m) return true;
+    }
+  }
+  return false;
+}
+
 function nativeModel(channel, model) {
   const ad = get(channel);
   const wanted = String(model || "").trim();
@@ -4996,6 +5026,8 @@ function modelOwners(model, cfg) {
     // 目录里逐字有请求名、但该渠道上它被映射到已禁用模型时同样剔除
     if (targetDisabled(channel)) continue;
     if (ad.models().some((m) => String(m) === wanted)) {
+      // 被反向映射占用：该渠道不再认这个原生名（只藏被占用那份，其它渠道同名不受影响）
+      if (absorbedByAlias(wanted, channel, c)) continue;
       seen.add(channel);
       exact.push(channel);
     }
@@ -5029,7 +5061,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）
