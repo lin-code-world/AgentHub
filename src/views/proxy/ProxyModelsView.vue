@@ -404,22 +404,46 @@ async function toggleEnabled(m: ProxyModel, v: string | number | boolean) {
 const excludedOf = (m: ProxyModel): string[] => (app.config.proxy.modelExcludedChannels || {})[m.id] || m.excludedChannels || [];
 const isChannelExcluded = (m: ProxyModel, ch: string): boolean => excludedOf(m).includes(ch);
 
-/** 开关某渠道对该模型的参与：关 = 写进排除名单，开 = 移出；全排除前先确认 */
-async function toggleChannelExcluded(m: ProxyModel, ch: string, on: boolean) {
+/** 单渠道「停用最后来源」确认（与批量确认同一套弹窗样式） */
+const excludeConfirm = ref<{ model: ProxyModel; channel: string } | null>(null);
+
+/** 该模型当前的排除集合（基于本地配置副本） */
+function excludedSetOf(m: ProxyModel): Set<string> {
+  return new Set((app.config.proxy.modelExcludedChannels || {})[m.id] || []);
+}
+
+/** 落盘并刷新（真正的写动作，确认之后调用） */
+async function commitChannelExcluded(m: ProxyModel, arr: string[], on: boolean, ch: string) {
   const map = { ...(app.config.proxy.modelExcludedChannels || {}) };
-  const list = new Set(map[m.id] || []);
-  if (on) list.delete(ch);
-  else list.add(ch);
-  const next = [...list];
-  if (next.length && m.sources.length && m.sources.every((s) => next.includes(s))) {
-    const confirmed = window.confirm(`「${m.id}」的所有来源渠道都将被停用，等于禁用这个模型。继续？`);
-    if (!confirmed) return;
-  }
-  if (next.length) map[m.id] = next;
+  if (arr.length) map[m.id] = arr;
   else delete map[m.id];
   app.config.proxy.modelExcludedChannels = map;
   await persist(on ? `${m.id} 恢复使用${channelName(ch)}` : `${m.id} 不再使用${channelName(ch)}`);
   await refresh();
+}
+
+/** 开关某渠道对该模型的参与：关 = 写进排除名单，开 = 移出；
+ *  会导致该模型全部来源渠道被停用时，先弹同款确认弹窗（不直接落盘） */
+async function toggleChannelExcluded(m: ProxyModel, ch: string, on: boolean) {
+  const list = excludedSetOf(m);
+  if (on) list.delete(ch);
+  else list.add(ch);
+  const next = [...list];
+  if (next.length && m.sources.length && m.sources.every((s) => next.includes(s))) {
+    excludeConfirm.value = { model: m, channel: ch };
+    return;
+  }
+  await commitChannelExcluded(m, next, on, ch);
+}
+
+/** 确认「停用最后来源渠道」后继续落盘 */
+async function confirmExclude() {
+  const c = excludeConfirm.value;
+  excludeConfirm.value = null;
+  if (!c) return;
+  const list = excludedSetOf(c.model);
+  list.add(c.channel);
+  await commitChannelExcluded(c.model, [...list], false, c.channel);
 }
 
 // ===== 批量启停：作用范围恒为「当前筛选出的可见模型」，不是整个目录 =====
@@ -1169,6 +1193,18 @@ watch(active, (on) => {
         <div class="p-actions">
           <button class="btn" @click="bulkConfirm = null">取消</button>
           <button class="btn btn-primary" @click="confirmBulk">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 停用模型最后来源渠道确认（与批量确认同一套弹窗样式） -->
+    <div v-if="excludeConfirm" class="p-mask" @click.self="excludeConfirm = null">
+      <div class="p-dlg glass">
+        <div class="p-title">停用「{{ excludeConfirm.model.id }}」的最后来源渠道？</div>
+        <div class="set-desc">「{{ excludeConfirm.model.id }}」的所有来源渠道都被停用后，这个模型将不可用（等于禁用）。确定继续？</div>
+        <div class="p-actions">
+          <button class="btn" @click="excludeConfirm = null">取消</button>
+          <button class="btn btn-primary" @click="confirmExclude">确定</button>
         </div>
       </div>
     </div>
