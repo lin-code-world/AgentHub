@@ -42,10 +42,6 @@ const ruleDialogOpen = ref(false);
 
 // 渠道候选 = 号池当前渠道（渠道后续扩充时自动跟进，不写死）
 const channels = ref<ProxyChannelView[]>([]);
-const CHANNEL_OPTIONS = computed<{ value: "" | ProxyChannelId; label: string }[]>(() => [
-  { value: "", label: "自动（打分）" },
-  ...channels.value.map((c) => ({ value: c.id as ProxyChannelId, label: c.display })),
-]);
 
 // 渠道 tab 只显示有模型的渠道：复用下方 modelsByChannel 预分组（O(渠道) 查直值，不再 O(渠道×模型) 逐对扫描）
 const tabChannels = computed(() => channels.value.filter((c) => (modelsByChannel.value[c.id] || []).length > 0));
@@ -452,13 +448,38 @@ async function applyBulk(mode: "on" | "off" | "invert") {
   }
 }
 
-async function setOverride(m: ProxyModel, v: string) {
-  const ov = { ...(app.config.proxy.modelOverrides || {}) };
-  if (v) ov[m.id] = v as ProxyChannelId;
+async function setOrder(m: ProxyModel, list: string[]) {
+  const ov = { ...(app.config.proxy.modelOverrides || {}) } as Record<string, string | string[]>;
+  if (list.length) ov[m.id] = [...list];
   else delete ov[m.id];
   app.config.proxy.modelOverrides = ov;
-  await persist(v ? `${m.id} → 固定走 ${channelName(v)}` : `${m.id} 恢复自动路由`);
+  await persist(list.length ? `${m.id} 渠道顺序：${list.map(channelName).join(" → ")}` : `${m.id} 恢复自动路由`);
   await refresh();
+}
+
+/** 该模型已排的顺序（数组兜底：浏览器页面长时间开着、服务端已升级时，旧快照可能仍是字符串） */
+const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);
+
+/** 候选 = 本视图下可选的渠道（顺序表只在这里面选）。
+ *  渠道 tab 下必须收窄到该渠道——否则会列出用户在这个 tab 里根本看不到的其他渠道，容易误加 */
+const orderCandidates = (m: ProxyModel): string[] => {
+  const base = activeTab.value ? [activeTab.value as string] : m.sources;
+  return base.filter((s) => !orderOf(m).includes(s));
+};
+
+function addToOrder(m: ProxyModel, v: string) {
+  if (v) setOrder(m, [...orderOf(m), v]);
+}
+function removeFromOrder(m: ProxyModel, v: string) {
+  setOrder(m, orderOf(m).filter((x) => x !== v));
+}
+function moveInOrder(m: ProxyModel, v: string, delta: number) {
+  const list = [...orderOf(m)];
+  const i = list.indexOf(v);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  setOrder(m, list);
 }
 
 /** 拉取官方模型目录（云端接口，用号池账号 token，不依赖本地软件）：写回 rules/catalog.json 热生效 */
@@ -764,24 +785,29 @@ watch(active, (on) => {
                       <td style="text-align: center; color: var(--text-3)">{{ fmtRate(d.rate) }}</td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length">
                         <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
-                        <span v-else>
+                        <div v-else class="order-cell">
+                          <div v-for="(ch, oi) in orderOf(m)" :key="ch" class="order-tag">
+                            <span class="order-idx">{{ oi + 1 }}</span>
+                            <span>{{ channelName(ch) }}</span>
+                            <button class="order-btn" :disabled="oi === 0" @click="moveInOrder(m, ch, -1)">↑</button>
+                            <button class="order-btn" :disabled="oi === orderOf(m).length - 1" @click="moveInOrder(m, ch, 1)">↓</button>
+                            <button class="order-btn" @click="removeFromOrder(m, ch)">×</button>
+                          </div>
                           <el-select
+                            v-if="orderCandidates(m).length"
                             class="f-el-select"
                             popper-class="glass-popper"
                             :persistent="false"
                             style="width: 100px"
-                            :model-value="m.override"
+                            model-value=""
                             :disabled="!m.enabled"
-                            @update:model-value="(v: string) => setOverride(m, v)"
+                            placeholder="+ 添加渠道"
+                            @update:model-value="(v: string) => addToOrder(m, v)"
                           >
-                            <el-option
-                              v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
-                              :key="o.value"
-                              :value="o.value"
-                              :label="o.label"
-                            />
+                            <el-option v-for="o in orderCandidates(m)" :key="o" :value="o" :label="channelName(o)" />
                           </el-select>
-                        </span>
+                          <span v-if="!orderOf(m).length" style="color: var(--text-3); font-size: 12px">自动（打分）</span>
+                        </div>
                       </td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
                         <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
@@ -879,24 +905,29 @@ watch(active, (on) => {
                   </td>
                   <td>
                     <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
-                    <span v-else>
+                    <div v-else class="order-cell">
+                      <div v-for="(ch, oi) in orderOf(m)" :key="ch" class="order-tag">
+                        <span class="order-idx">{{ oi + 1 }}</span>
+                        <span>{{ channelName(ch) }}</span>
+                        <button class="order-btn" :disabled="oi === 0" @click="moveInOrder(m, ch, -1)">↑</button>
+                        <button class="order-btn" :disabled="oi === orderOf(m).length - 1" @click="moveInOrder(m, ch, 1)">↓</button>
+                        <button class="order-btn" @click="removeFromOrder(m, ch)">×</button>
+                      </div>
                       <el-select
+                        v-if="orderCandidates(m).length"
                         class="f-el-select"
                         popper-class="glass-popper"
                         :persistent="false"
                         style="width: 100px"
-                        :model-value="m.override"
+                        model-value=""
                         :disabled="!m.enabled"
-                        @update:model-value="(v: string) => setOverride(m, v)"
+                        placeholder="+ 添加渠道"
+                        @update:model-value="(v: string) => addToOrder(m, v)"
                       >
-                        <el-option
-                          v-for="o in CHANNEL_OPTIONS.filter((o) => !o.value || m.sources.includes(o.value as ProxyChannelId))"
-                          :key="o.value"
-                          :value="o.value"
-                          :label="o.label"
-                        />
+                        <el-option v-for="o in orderCandidates(m)" :key="o" :value="o" :label="channelName(o)" />
                       </el-select>
-                    </span>
+                      <span v-if="!orderOf(m).length" style="color: var(--text-3); font-size: 12px">自动（打分）</span>
+                    </div>
                   </td>
                   <td style="text-align: center">
                     <el-tooltip v-if="m.accountless" content="所属渠道未配置账号，已自动关闭；导入账号后仍需手动开启" placement="top">
@@ -1606,5 +1637,39 @@ watch(active, (on) => {
 .switch.locked {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* 渠道顺序编辑：序号 + 渠道名 + 上移/下移/移除，下方是「添加渠道」下拉 */
+.order-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.order-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.order-idx {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  text-align: center;
+  line-height: 16px;
+  flex: 0 0 auto;
+}
+.order-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 12px;
+}
+.order-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 </style>

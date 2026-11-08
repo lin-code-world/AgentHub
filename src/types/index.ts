@@ -72,8 +72,8 @@ export interface ProxyConfig {
   /** 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）。号池到期徽标与逐包明细共用这一个值，
    *  默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数 */
   expiringSoonDays: number;
-  /** 模型 → 渠道 id 的 per-model 覆盖（渠道可扩充，故为字符串值） */
-  modelOverrides: Record<string, string>;
+  /** 模型 → 渠道顺序表（索引即优先位次）。旧版单字符串仍可能残留在配置里，读盘时按长度 1 兼容 */
+  modelOverrides: Record<string, string | string[]>;
   /** 拟人抖动：每次上游请求前随机停 40~220ms，模拟真实客户端节奏 */
   humanizeJitter: boolean;
   /** 禁用的模型（请求直接 400） */
@@ -487,7 +487,8 @@ export interface ProxyModel {
   /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
   accountless?: boolean;
   enabled: boolean;
-  override: "" | ProxyChannelId;
+  /** 渠道顺序（空数组 = 自动；服务端已把旧版单字符串归一成数组） */
+  override: string[];
   fallback: string;
   custom?: ModelCustomEntry;
 }

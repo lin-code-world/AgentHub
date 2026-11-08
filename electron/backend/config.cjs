@@ -132,7 +132,8 @@ function defaultConfig() {
       expiringSoonDays: 1,      // 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）：
                                 // 号池到期徽标与逐包明细的 expiringSoon 共用这一个值
                                 // （默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数）
-      modelOverrides: {},       // 模型 → 渠道 的 per-model 覆盖（多源重叠时优先）
+      modelOverrides: {},       // 模型 → 渠道顺序表（数组，索引即优先位次；旧版单字符串按长度 1 兼容读取），
+                                // 仅作用于智能路由：排过的按顺序优先，没排到的软兜底排后面，位次相同回落 score/cost-first
       humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
       disabledModels: [],       // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
       modelFallback: {},        // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）

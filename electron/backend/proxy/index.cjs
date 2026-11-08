@@ -1501,7 +1501,7 @@ function register(ipcMain) {
         enabled: !(cfg.disabledModels || []).includes(m.id),
         // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
         accountless: auto.accountless.has(m.id),
-        override: (cfg.modelOverrides || {})[m.id] || "",
+        override: server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]),
         fallback: (cfg.modelFallback || {})[m.id] || "",
         custom: (cfg.modelCustom || {})[m.id] || undefined,
       };
