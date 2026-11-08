@@ -11,8 +11,7 @@
 // 模型级渠道排除自测：归属过滤 / 路由分支 / 对外清单 / 排序归类。
 // 用法：AGENTHUB_DATA_DIR=<临时目录> node tools/proxy-model-exclude-selftest.cjs
 "use strict";
-process.env.AGENTHUB_DATA_DIR =
-  process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -136,7 +135,10 @@ console.log("3. 对外清单与排序归类");
   ok("全排除模型不出现在对外清单", !adapters.listableModels(c).some((m) => m.id === "shared-model"));
   // 12) 部分排除 → 仍列出
   c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] } });
-  ok("部分排除仍对外列出", adapters.listableModels(c).some((m) => m.id === "shared-model"));
+  ok(
+    "部分排除仍对外列出",
+    adapters.listableModels(c).some((m) => m.id === "shared-model")
+  );
 
   // 13) 排序归类：被排除渠道归入 overrideExcluded（与 index.cjs 同构）
   c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] }, modelOverrides: { "shared-model": ["zcode", "qoder"] } });

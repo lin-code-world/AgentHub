@@ -78,6 +78,8 @@ export interface ProxyConfig {
   humanizeJitter: boolean;
   /** 禁用的模型（请求直接 400） */
   disabledModels: string[];
+  /** 模型 → 不参与该模型路由的渠道列表（模型级渠道排除）：缺省 = 不排除 */
+  modelExcludedChannels: Record<string, string[]>;
   /** 模型 → 回退模型（未知模型/号池耗尽时自动切换，单跳；旧版 per-model 配置，优先于全局回退） */
   modelFallback: Record<string, string>;
   /** 反向模型映射：统一请求模型名 → { [渠道 id]: 渠道实际模型名 }（渠道确定后解析并转发实际模型，响应 model 字段保持统一请求名） */
@@ -497,6 +499,10 @@ export interface ProxyModel {
   overrideStale?: string[];
   /** 顺序表里因「渠道被上游启闭关闭」而暂时隐去的渠道：配置保留，重开自动恢复 */
   overrideMuted?: string[];
+  /** 顺序表里因「模型级渠道排除」而不参与路由的渠道：配置保留，取消排除即恢复 */
+  overrideExcluded?: string[];
+  /** 该模型被排除的渠道（配置原文）：供界面渲染开关状态与恢复 */
+  excludedChannels?: string[];
   fallback: string;
   custom?: ModelCustomEntry;
 }

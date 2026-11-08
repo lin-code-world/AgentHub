@@ -1132,12 +1132,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
   if (resolvedMain.excludedBoundChannel) {
     const e = resolvedMain.excludedBoundChannel;
     record({ status: 403, error: `model "${e.model}" excluded from bound channel ${e.channel}` });
-    return sink.endErr(
-      403,
-      `没有权限，模型 "${e.model}" 已被设置为不使用渠道「${store.channelDisplay(e.channel)}」（模型目录页可恢复）`,
-      "permission_error",
-      "excluded_bound_channel"
-    );
+    return sink.endErr(403, `没有权限，模型 "${e.model}" 已被设置为不使用渠道「${store.channelDisplay(e.channel)}」（模型目录页可恢复）`, "permission_error", "excluded_bound_channel");
   }
   if (resolvedMain.disabledMappedTarget) {
     const d = resolvedMain.disabledMappedTarget;
@@ -1175,12 +1170,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // 模型级渠道排除把该模型的所有来源渠道都排除了：模型不可用（确定性原因，不吞进回退链）
   if (resolvedMain.excludedModel) {
     record({ status: 400, error: "model excluded from all channels" });
-    return sink.endErr(
-      400,
-      `模型 "${resolvedMain.excludedModel}" 的所有来源渠道都已被设置为不使用（模型目录页可恢复）`,
-      "invalid_request_error",
-      "model_excluded"
-    );
+    return sink.endErr(400, `模型 "${resolvedMain.excludedModel}" 的所有来源渠道都已被设置为不使用（模型目录页可恢复）`, "invalid_request_error", "model_excluded");
   }
   if (!resolvedMain.channel && !fallback) {
     const reply = unknownModelReply(actualModel, resolvedMain, settings);

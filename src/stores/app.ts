@@ -50,6 +50,7 @@ const defaultConfig: AppConfig = {
     modelOverrides: {},
     humanizeJitter: true,
     disabledModels: [],
+    modelExcludedChannels: {},
     modelFallback: {},
     modelReverseAliases: {},
     modelCustom: {},

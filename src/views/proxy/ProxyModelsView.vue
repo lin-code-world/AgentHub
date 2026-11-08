@@ -399,6 +399,29 @@ async function toggleEnabled(m: ProxyModel, v: string | number | boolean) {
   await refresh();
 }
 
+// ===== 模型级渠道排除：该模型的来源渠道行内开关（关 = 这个模型不再走该渠道） =====
+/** 该模型被排除的渠道（本地配置优先，后端快照兜底） */
+const excludedOf = (m: ProxyModel): string[] => (app.config.proxy.modelExcludedChannels || {})[m.id] || m.excludedChannels || [];
+const isChannelExcluded = (m: ProxyModel, ch: string): boolean => excludedOf(m).includes(ch);
+
+/** 开关某渠道对该模型的参与：关 = 写进排除名单，开 = 移出；全排除前先确认 */
+async function toggleChannelExcluded(m: ProxyModel, ch: string, on: boolean) {
+  const map = { ...(app.config.proxy.modelExcludedChannels || {}) };
+  const list = new Set(map[m.id] || []);
+  if (on) list.delete(ch);
+  else list.add(ch);
+  const next = [...list];
+  if (next.length && m.sources.length && m.sources.every((s) => next.includes(s))) {
+    const confirmed = window.confirm(`「${m.id}」的所有来源渠道都将被停用，等于禁用这个模型。继续？`);
+    if (!confirmed) return;
+  }
+  if (next.length) map[m.id] = next;
+  else delete map[m.id];
+  app.config.proxy.modelExcludedChannels = map;
+  await persist(on ? `${m.id} 恢复使用${channelName(ch)}` : `${m.id} 不再使用${channelName(ch)}`);
+  await refresh();
+}
+
 // ===== 批量启停：作用范围恒为「当前筛选出的可见模型」，不是整个目录 =====
 // 与单条开关同一份数据（disabledModels）与同一种比较口径（精确 id），
 // 因此批量结果与逐条点击完全等价，服务端每请求读盘热生效。
@@ -759,7 +782,7 @@ watch(active, (on) => {
               <tbody>
                 <template v-if="!activeTab">
                   <template v-for="(m, i) in rows" :key="m.id">
-                    <tr v-for="(d, di) in rowsOf(m)" :key="m.id + '|' + d.channel" :style="{ '--i': i }">
+                    <tr v-for="(d, di) in rowsOf(m)" :key="m.id + '|' + d.channel" :class="{ 'row-excluded': isChannelExcluded(m, d.channel) }" :style="{ '--i': i }">
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                         <div class="model-id-line">
                           <el-tooltip :content="displayId(m)" placement="top">
@@ -770,7 +793,14 @@ watch(active, (on) => {
                           <span class="tag tag-dim accountless-tag">无账号</span>
                         </el-tooltip>
                       </td>
-                      <td>{{ channelName(d.channel) }}</td>
+                      <td>
+                        <span class="src-ch-cell">
+                          <el-tooltip :content="isChannelExcluded(m, d.channel) ? '当前不参与该模型路由，点开启用' : '点关则此模型不再走该渠道'" placement="top">
+                            <span class="switch switch-sm" :class="{ on: !isChannelExcluded(m, d.channel) }" role="switch" :aria-checked="!isChannelExcluded(m, d.channel)" @click="toggleChannelExcluded(m, d.channel, isChannelExcluded(m, d.channel))"></span>
+                          </el-tooltip>
+                          <span>{{ channelName(d.channel) }}</span>
+                        </span>
+                      </td>
                       <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                         <el-tooltip :content="d.id" placement="top">
                           <span class="mono model-actual">{{ d.id }}</span>
@@ -880,6 +910,7 @@ watch(active, (on) => {
                           >
                             已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                           </div>
+                          <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点来源渠道行的开关即可恢复。`">已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}</div>
                         </div>
                       </td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
@@ -899,11 +930,14 @@ watch(active, (on) => {
                   </template>
                 </template>
                 <template v-else>
-                <tr v-for="(m, i) in rows" :key="m.id" :style="{ '--i': i }">
+                <tr v-for="(m, i) in rows" :key="m.id" :class="{ 'row-excluded': !!activeTab && isChannelExcluded(m, activeTab) }" :style="{ '--i': i }">
                   <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                     <div class="model-id-line">
                       <el-tooltip :content="displayId(m)" placement="top">
                         <div class="mono model-id">{{ displayId(m) }}</div>
+                      </el-tooltip>
+                      <el-tooltip :content="isChannelExcluded(m, activeTab) ? '当前不参与该模型路由，点开启用' : `点关则此模型不再走${channelName(activeTab)}`" placement="top">
+                        <span class="switch switch-sm" :class="{ on: !isChannelExcluded(m, activeTab) }" role="switch" :aria-checked="!isChannelExcluded(m, activeTab)" @click="toggleChannelExcluded(m, activeTab, isChannelExcluded(m, activeTab))"></span>
                       </el-tooltip>
                       <span v-if="activeTabRate(m) != null" class="rate-inline">×{{ activeTabRate(m) }}</span>
                       <!-- 合并进来的统一请求名：点它不是另一个模型，只是这张渠道页上的别名入口 -->
@@ -1016,6 +1050,7 @@ watch(active, (on) => {
                       >
                         已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                       </div>
+                      <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点来源渠道行的开关即可恢复。`">已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}</div>
                     </div>
                   </td>
                   <td style="text-align: center">
@@ -1774,5 +1809,26 @@ watch(active, (on) => {
   color: var(--text-3);
   font-size: 11px;
   cursor: help;
+}
+/* 模型级渠道排除：排序区里「已排除」的渠道 */
+.order-excluded {
+  color: var(--warn, #d69e2e);
+  font-size: 11px;
+  cursor: help;
+  opacity: 0.9;
+}
+/* 被「模型级渠道排除」的来源渠道行整行弱化（仍可点开关恢复） */
+.row-excluded {
+  opacity: 0.55;
+}
+/* 来源渠道列：小开关与渠道名同行 */
+.src-ch-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.switch-sm {
+  transform: scale(0.7);
+  transform-origin: left center;
 }
 </style>
