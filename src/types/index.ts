@@ -488,6 +488,8 @@ export interface ProxyModel {
   /** 管理态（proxy_models 返回时合并）：启用 / per-model 渠道覆盖 / 回退模型 / 自定义参数 */
   /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
   accountless?: boolean;
+  /** 该行所有来源都被反向映射吸收（纯内部真名）：仅在「全部渠道」视图隐藏 */
+  aliasAbsorbed?: boolean;
   enabled: boolean;
   /** 渠道顺序（空数组 = 自动；服务端已把旧版单字符串归一成数组，并剔除不属于本模型的渠道） */
   override: string[];

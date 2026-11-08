@@ -4795,6 +4795,12 @@ function isAbsorbedName(model, cfg) {
   return false;
 }
 
+/** 行级：该模型行的所有来源是否都被反向映射吸收（纯内部真名，「全部渠道」视图隐藏用）。 */
+function aliasRowAbsorbed(model, sources, cfg) {
+  const arr = Array.isArray(sources) ? sources : [];
+  return arr.length > 0 && arr.every((ch) => absorbedByAlias(model, ch, cfg));
+}
+
 function nativeModel(channel, model) {
   const ad = get(channel);
   const wanted = String(model || "").trim();
@@ -5069,7 +5075,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）

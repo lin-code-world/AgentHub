@@ -126,6 +126,8 @@ const rows = computed(() => {
     // 整个渠道都不标价的（Trae / ZCode / 魔搭 / Cline / 小浣熊）保留，否则会被整渠道清空
     if (hiddenByRate(m.sourceDetails || [], activeTab.value, channelRateFlags.value)) return false;
     if (activeTab.value && !m.sources.includes(activeTab.value as ProxyChannelId)) return false;
+    // 「全部渠道」视图隐藏被反向映射吸收的真名行；具体渠道页保留（渠道页由 mergeAliasRows 处理）
+    if (!activeTab.value && m.aliasAbsorbed) return false;
     // 已被合并进原生行的别名行不再单独占一行
     if (!mergedView.value.visibleIds.includes(m.id)) return false;
     if (statusFilter.value === "on" && !m.enabled) return false;

@@ -1543,6 +1543,8 @@ function register(ipcMain) {
       const item = {
         ...m,
         enabled: !(cfg.disabledModels || []).includes(m.id),
+        // 该行所有来源都被反向映射吸收（纯内部真名）：供"全部渠道"视图隐藏，渠道页不受影响
+        aliasAbsorbed: adapters.aliasRowAbsorbed(m.id, m.sources, cfg),
         // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
         accountless: auto.accountless.has(m.id),
         // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。

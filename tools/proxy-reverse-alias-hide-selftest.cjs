@@ -23,10 +23,18 @@ const server = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
 
 let fail = 0;
 const eq = (a, e, l) => {
-  if (JSON.stringify(a) !== JSON.stringify(e)) { fail++; console.log(`FAIL ${l}\n 期望 ${JSON.stringify(e)}\n 实际 ${JSON.stringify(a)}`); }
-  else console.log(`ok  ${l}`);
+  if (JSON.stringify(a) !== JSON.stringify(e)) {
+    fail++;
+    console.log(`FAIL ${l}\n 期望 ${JSON.stringify(e)}\n 实际 ${JSON.stringify(a)}`);
+  } else console.log(`ok  ${l}`);
 };
-const check = (l, cond, extra) => { if (cond) console.log(`ok  ${l}`); else { fail++; console.log(`FAIL ${l}${extra ? " — " + extra : ""}`); } };
+const check = (l, cond, extra) => {
+  if (cond) console.log(`ok  ${l}`);
+  else {
+    fail++;
+    console.log(`FAIL ${l}${extra ? " — " + extra : ""}`);
+  }
+};
 
 const withChannels = (fake, fn) => {
   const orig = { ...adapters.ADAPTERS };
@@ -82,7 +90,22 @@ withChannels({ workbuddy: { models: () => ["hy4free"] }, zcode: { models: () => 
   eq(ok.channel, "workbuddy", "请求统一名 hy4 仍路由到 workbuddy");
 });
 
-try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 句柄交给系统 */ }
-if (fail) { console.log(`\n结果：${fail} 失败`); process.exit(1); }
+// [6] 行级吸收判据：该行所有来源都被吸收 → "全部渠道"视图隐藏
+withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () => ["hy4free"] } }, () => {
+  const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
+  eq(adapters.aliasRowAbsorbed("hy4free", ["workbuddy"], cfg), true, "唯一来源被吸收 → 隐藏");
+  eq(adapters.aliasRowAbsorbed("hy4free", ["workbuddy", "catpaw"], cfg), false, "另有来源 → 不隐藏");
+  eq(adapters.aliasRowAbsorbed("hy4", ["workbuddy"], cfg), false, "统一名不隐藏");
+});
+
+try {
+  fs.rmSync(tmp, { recursive: true, force: true });
+} catch {
+  /* 句柄交给系统 */
+}
+if (fail) {
+  console.log(`\n结果：${fail} 失败`);
+  process.exit(1);
+}
 console.log("\n结果：全部通过");
 process.exit(0);
