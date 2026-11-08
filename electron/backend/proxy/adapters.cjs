@@ -5088,6 +5088,35 @@ function modelOwnersIgnoringExclusions(model, cfg) {
   return modelOwnersInner(model, cfg, true);
 }
 
+/** 渠道排序项归类（供 index.cjs 与自测共用，避免各处各抄一遍导致口径漂移）。
+ *  orderArr 需已由 server.normalizeModelOrder 归一。优先级：被排除 > 有效 > 已关闭（muted，配置保留）> 已失效。 */
+function classifyOverride(model, orderArr, cfg) {
+  const c = cfg || proxyConfig();
+  const raw = Array.isArray(orderArr) ? orderArr : [];
+  const excludedSet = new Set(modelExcludedChannelsOf(model, c));
+  const validSet = new Set(modelOwners(model, c));
+  const override = [];
+  const stale = [];
+  const muted = [];
+  const excluded = [];
+  for (const ch of raw) {
+    if (excludedSet.has(ch)) {
+      excluded.push(ch);
+      continue;
+    }
+    if (validSet.has(ch)) {
+      override.push(ch);
+      continue;
+    }
+    if (get(ch) && !channelOn(ch, c)) {
+      muted.push(ch);
+      continue;
+    }
+    stale.push(ch);
+  }
+  return { override, stale, muted, excluded };
+}
+
 /** /v1/models 对外可列模型：合并视图减去 disabledModels（口径与请求路径 400 拦截一致）。
  * 只供对外 HTTP 出口用；管理页 proxy_models 走同一 enabledOnly 口径（停用模型仍由 enabled 标志控制，
  * 否则停用模型无法恢复）。 */
@@ -5125,7 +5154,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, absorbingAlias, mergedModels, listableModels, modelOwners, modelOwnersIgnoringExclusions, modelExcludedChannelsOf, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, absorbingAlias, mergedModels, listableModels, modelOwners, modelOwnersIgnoringExclusions, modelExcludedChannelsOf, classifyOverride, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）

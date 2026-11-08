@@ -1547,42 +1547,26 @@ function register(ipcMain) {
         aliasAbsorbed: adapters.aliasRowAbsorbed(m.id, m.sources, cfg),
         // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
         accountless: auto.accountless.has(m.id),
-        // 模型级渠道排除的原始配置（供界面渲染开关状态与恢复）
-        excludedChannels: (cfg.modelExcludedChannels || {})[m.id] || [],
+        // 模型级渠道排除的原始配置（经归一化：非法形状 → []，供界面渲染开关状态与恢复）
+        excludedChannels: adapters.modelExcludedChannelsOf(m.id, cfg),
         // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。
         // 不过滤的话，模型下架 / 渠道被上游启闭 / 手写配置写错渠道名时，
         // 界面仍把它显示成 1 号位，实际路由早已跳过它——用户会以为功能没生效。
         // 三类不合法的项分开下发，前端用不同颜色区分：
         //   overrideStale  = 渠道仍启用，但确实没有这个模型（真下架 / 配置写错）→ 红色「已失效」
         //   overrideMuted  = 渠道被「上游启闭」关闭（配置保留，重开自动恢复）→ 灰色「已关闭」
+        //   overrideExcluded = 渠道被「模型级渠道排除」（配置保留，点来源行开关即恢复）→ 「已排除」
         // 不区分的后果：关闭渠道的项若静默消失，用户会以为排序被删了，很可能手工再排一次，
         // 重开渠道后出现重复项。
         ...(() => {
           const raw = server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]);
-          const excludedSet = new Set((cfg.modelExcludedChannels || {})[m.id] || []);
-          const validSet = new Set(adapters.modelOwners(m.id, cfg));
-          const stale = [];
-          const muted = [];
-          const excluded = [];
-          for (const ch of raw) {
-            // 模型级渠道排除优先：既不参与路由，也不该标成「已失效」
-            if (excludedSet.has(ch)) {
-              excluded.push(ch);
-              continue;
-            }
-            if (validSet.has(ch)) continue;
-            // 渠道被关闭 → 暂时隐去（配置保留），灰显而非标失效
-            if (adapters.get(ch) && !adapters.channelOn(ch, cfg.proxy)) {
-              muted.push(ch);
-              continue;
-            }
-            stale.push(ch);
-          }
+          // 归类逻辑收敛到 adapters.classifyOverride，与自测共用同一实现，避免口径漂移
+          const cls = adapters.classifyOverride(m.id, raw, cfg);
           return {
-            override: raw.filter((ch) => validSet.has(ch)),
-            overrideStale: stale,
-            overrideMuted: muted,
-            overrideExcluded: excluded,
+            override: cls.override,
+            overrideStale: cls.stale,
+            overrideMuted: cls.muted,
+            overrideExcluded: cls.excluded,
           };
         })(),
         fallback: (cfg.modelFallback || {})[m.id] || "",

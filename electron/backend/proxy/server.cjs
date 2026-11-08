@@ -210,7 +210,9 @@ function resolveChannel(key, model, settings) {
   const owners = adapters.modelOwners(model, settings);
   // 归属渠道存在、但都被模型级渠道排除：这是「模型不可用」，不是「模型不存在」。
   // 必须在此拦下，避免落到下面 fixed 分支被「透传试错」打到固定渠道。
-  if (!owners.length && adapters.modelOwnersIgnoringExclusions(model, settings).length) {
+  // 只对智能路由生效：Key 绑定场景（key.route !== auto）走下面的绑定分支，
+  // 由 excludedBoundChannel 给 403（绑定是权限硬边界，不该降级成 400 参数错误）。
+  if (key.route === "auto" && !owners.length && adapters.modelOwnersIgnoringExclusions(model, settings).length) {
     return { channel: null, excludedModel: model };
   }
   // Key 绑定渠道是用户显式指定的物理边界：渠道被「上游启闭」关闭、或模型不在该渠道目录时

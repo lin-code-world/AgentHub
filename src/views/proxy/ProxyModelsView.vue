@@ -910,7 +910,10 @@ watch(active, (on) => {
                           >
                             已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                           </div>
-                          <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点来源渠道行的开关即可恢复。`">已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}</div>
+                          <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点 × 或来源渠道行的开关即可恢复。`">
+                            已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}
+                            <button v-for="ch in m.overrideExcluded || []" :key="ch" class="order-btn" :title="`恢复使用 ${channelName(ch)}`" @click="toggleChannelExcluded(m, ch, true)">×</button>
+                          </div>
                         </div>
                       </td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
@@ -1050,7 +1053,10 @@ watch(active, (on) => {
                       >
                         已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                       </div>
-                      <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点来源渠道行的开关即可恢复。`">已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}</div>
+                      <div v-if="(m.overrideExcluded || []).length" class="order-excluded" :title="`这些渠道已被设置为不使用，不参与该模型路由。\n配置仍保留，点 × 或来源渠道行的开关即可恢复。`">
+                        已排除：{{ (m.overrideExcluded || []).map(channelName).join("、") }}
+                        <button v-for="ch in m.overrideExcluded || []" :key="ch" class="order-btn" :title="`恢复使用 ${channelName(ch)}`" @click="toggleChannelExcluded(m, ch, true)">×</button>
+                      </div>
                     </div>
                   </td>
                   <td style="text-align: center">

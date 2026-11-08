@@ -147,5 +147,25 @@ console.log("3. 对外清单与排序归类");
   ok("有效项保留在 override", JSON.stringify(r.override) === '["qoder"]', JSON.stringify(r.override));
 }
 
+// ===== 4. 复查修复（非法形状崩溃 / 单源 Key 绑定返回码 / 备选队列）=====
+console.log("4. 复查修复");
+{
+  // 14) 备选队列来源不含被排除渠道（备选队列 = 主渠道 + modelOwners 余项）
+  let c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] } });
+  const res = server.resolveChannel({ route: "auto" }, "shared-model", c);
+  const queue = [res.channel, ...adapters.modelOwners("shared-model", c).filter((x) => x !== res.channel)];
+  ok("备选队列不含被排除渠道", !queue.includes("zcode"), JSON.stringify(queue));
+
+  // 15) 非法配置形状：归类（真实实现）不崩溃、不排除
+  c = setCfg({ modelExcludedChannels: { "shared-model": { zcode: true } } });
+  const cls = adapters.classifyOverride("shared-model", ["zcode", "qoder"], c);
+  ok("非法形状不崩溃且不排除", cls.excluded.length === 0 && cls.override.includes("zcode") && cls.override.includes("qoder"), JSON.stringify(cls));
+
+  // 16) 单源 + Key 绑定被排除渠道 → excludedBoundChannel（不是 excludedModel）
+  c = setCfg({ modelExcludedChannels: { "solo-model": ["zcode"] } });
+  const b2 = server.resolveChannel({ route: "zcode" }, "solo-model", c);
+  ok("单源 Key 绑定被排除渠道 → excludedBoundChannel", !!b2.excludedBoundChannel, JSON.stringify(b2));
+}
+
 console.log(`MODEL EXCLUDE SELFTEST OK（${pass} 项）`);
 process.exit(0);
