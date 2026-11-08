@@ -42,6 +42,7 @@ function ok(cond, msg, got) {
 
 const store = require("../electron/backend/proxy/store.cjs");
 const server = require("../electron/backend/proxy/server.cjs");
+const rules = require("../electron/backend/proxy/rules.cjs");
 
 function post(body, headers) {
   return new Promise((resolve, reject) => {
@@ -81,6 +82,15 @@ function post(body, headers) {
   // ===== ② 端到端：真 HTTP 打进真调度核心 =====
   console.log("\n② 端到端·未知模型提示:");
   store.open();
+  // 模型目录不内置（运行时拉取落盘）：从测试夹具播种，否则未知模型提示没有可比对的相近模型
+  rules.init();
+  {
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+    const cat = {};
+    for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+    rules.reload("catalog.json");
+  }
   const gwKey = store.createKey({ name: "modelhint-e2e", route: "auto", dailyQuota: 0, rateLimit: 0 });
   const SETTINGS = () => ({
     port: PORT, bind: "127.0.0.1", rateLimitPerMin: 0, concurrency: 8,

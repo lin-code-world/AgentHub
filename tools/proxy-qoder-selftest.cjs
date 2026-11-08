@@ -95,7 +95,10 @@ async function main() {
     if (d.installed) {
       installed.push(p);
       assert(d.glueLoaded, `${p} 胶水加载成功（截断+追加导出 + wasm 实例化）`);
-      assert(d.exports === 17, `${p} 胶水导出 17 个公开 API`);
+      // 导出数随客户端 wasm 版本增减：0.5.6 实测 19（wasm-bindgen 固定含 default/initSync，
+      // 另新增 ClientContext、httpdns 系列、get_profile_key_fingerprint 等）。此处只做
+      // 「导出表未被截断」的下限守卫，精确逐项校验见下方 REQUIRED_API。
+      assert(d.exports >= 17, `${p} 胶水导出 ≥17 个公开 API（实测 ${d.exports}）`);
     } else if (hasCred) {
       credOnly.push(p); // 凭据可导入、但该渠道当前不可调用——如实记录，不算失败
     }

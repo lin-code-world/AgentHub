@@ -104,7 +104,7 @@ async function reachable(p) {
   ok("browser 形态 deny 原因带「浏览器访问时不可用」口径", !!(caps.commands && caps.commands.proxy_start) && typeof caps.commands.proxy_start.reason === "string" && caps.commands.proxy_start.reason.startsWith("浏览器访问时不可用"), String(caps.commands && caps.commands.proxy_start && caps.commands.proxy_start.reason));
   ok("Ruling 17：capabilities.features.sse === true（真实事件源已接通，前置条件满足）", !!caps.features && caps.features.sse === true && caps.features.serviceControl === false && caps.features.fileDialog === false, JSON.stringify(caps.features));
 
-  // ===== 网页端文案表只有一张：27 条文案逐字固定（合并命令表时最容易手滑改字，这里当快照） =====
+  // ===== 网页端文案表只有一张：28 条文案逐字固定（合并命令表时最容易手滑改字，这里当快照） =====
   // 桌面专用命令（admin_access_info 会吐明文令牌，绝不能漏）：网页端最容易被当成可用的越权入口
   const browserOnly = ["admin_access_info", "admin_reset_token", "browse_dir", "open_data_dir", "get_data_dir", "get_app_version", "load_config", "save_config"];
   ok("8 条桌面专用命令在网页端 deny", browserOnly.every((c) => commandTable.modeOf(c) === "deny"), JSON.stringify(browserOnly.map((c) => [c, commandTable.modeOf(c)])));
@@ -135,15 +135,16 @@ async function reachable(p) {
     get_data_dir: "浏览器访问时不可用：数据目录请在桌面窗口查看",
     get_app_version: "浏览器访问时不可用：版本信息请在桌面窗口查看",
     export_crash_logs: "浏览器访问时不可用：导出崩溃日志请在桌面窗口操作",
+    proxy_qoder_export_tool: "浏览器访问时不可用：网页端请用「下载工具」按钮直接下载",
     load_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
     save_config: "浏览器访问时不可用：浏览器不支持整份配置读写，请用「设置 · 反代网关」或「设置 · 监控与安全」",
   };
   const forbidden = ["容器", "编排", "docker", "宿主机", "gateway-data", "/api/accounts/import"];
   const denyCmds = Object.keys(commandTable.DENY_BROWSER);
-  ok("DENY_BROWSER 命令集合 27 条", denyCmds.length === 27, String(denyCmds.length));
+  ok("DENY_BROWSER 命令集合 28 条", denyCmds.length === 28, String(denyCmds.length));
   const snapshotDiff = Object.keys(DENY_SNAPSHOT).filter((c) => commandTable.DENY_BROWSER[c] !== DENY_SNAPSHOT[c]);
   const extraCmds = denyCmds.filter((c) => !(c in DENY_SNAPSHOT));
-  ok("27 条 deny 文案与快照逐字一致（合并时不许改字）", snapshotDiff.length === 0 && extraCmds.length === 0, `改动: ${snapshotDiff.join(",") || "-"} | 新增: ${extraCmds.join(",") || "-"}`);
+  ok("28 条 deny 文案与快照逐字一致（合并时不许改字）", snapshotDiff.length === 0 && extraCmds.length === 0, `改动: ${snapshotDiff.join(",") || "-"} | 新增: ${extraCmds.join(",") || "-"}`);
 
   const leaks = [];
   for (const cmd of denyCmds) {
@@ -206,12 +207,17 @@ async function reachable(p) {
     .flat()
     .find((a) => a && (a.family === "IPv4" || a.family === 4) && !a.internal);
   const probe = async (port, host) => {
-    try {
-      await fetch(`http://${host}:${port}/api/capabilities`, { signal: AbortSignal.timeout(1500) });
-      return true;
-    } catch {
-      return false;
+    // 短重试：服务刚 start 完的首连可能慢（0.0.0.0 绑定后尤其），1.5s 单次探测会偶发超时；
+    // 真的连不上时重试完仍返回 false，判定语义不变。
+    for (let i = 0; i < 3; i++) {
+      try {
+        await fetch(`http://${host}:${port}/api/capabilities`, { signal: AbortSignal.timeout(1500) });
+        return true;
+      } catch {
+        await new Promise((r) => setTimeout(r, 150));
+      }
     }
+    return false;
   };
   const b127 = await admin.start({ port: PROXY_PORT_E, bind: "127.0.0.1", commandTable, staticDir: STATIC_DIR });
   ok("bind=127.0.0.1 → 监听地址为 127.0.0.1", !!b127 && b127.host === "127.0.0.1", JSON.stringify(b127));

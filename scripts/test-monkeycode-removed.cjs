@@ -13,10 +13,13 @@
 // 运行：node scripts/test-monkeycode-removed.cjs
 // 沙箱：AGENTHUB_DATA_DIR 指向临时目录，绝不读写真实用户数据。
 //
-// 两处刻意的扫描例外（裁定见 docs/superpowers/plans/2026-11-01-monkeycode-channel-removal.md）：
+// 三处刻意的扫描例外（裁定见 docs/superpowers/plans/2026-11-01-monkeycode-channel-removal.md）：
 //   ① 本脚本自身的文件名与内容必然含该渠道名，按文件名排除；
 //   ② store.cjs 的「已下线渠道数据清理」必须引用这两个渠道 id（否则清不掉旧库残留），
-//      故它不参与字符串扫描；它的渠道表口径由 `store.CHANNELS` 那条断言单独覆盖。
+//      故它不参与字符串扫描；它的渠道表口径由 `store.CHANNELS` 那条断言单独覆盖；
+//   ③ 文档（*.md）里的渠道名只作「已移除」的历史说明与守卫脚本名（AGENTS.md 写着
+//      「MonkeyCode 渠道已整体移除」并列出本守卫脚本），不是代码引用——这类说明行按措辞豁免，
+//      真正描述「怎么接入该渠道」的文档行仍会被拦。
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");
@@ -82,11 +85,15 @@ const SKIP_DIRS = new Set(["node_modules", "dist", "release", ".git", ".superpow
 // 例外②（见文件头）：store.cjs 必须引用已下线渠道 id 做库存清理，故不参与字符串扫描；
 // 它的渠道表口径由 `store.CHANNELS` 断言单独覆盖。**只有这一个文件例外**——其余 electron/ 全量扫描。
 const SKIP_FILES = new Set(["electron/backend/proxy/store.cjs"]);
+// 例外③（见文件头）：文档里的渠道名只在「已移除」说明与守卫脚本名中出现，
+// 该类说明行按措辞豁免；描述「怎么接入该渠道」的文档行不含这些措辞，仍会被拦。
+const DOC_EXPLAIN = /移除|删除|已下线|下线|守卫|removed|deprecat/i;
 const SELF = path.resolve(__filename);
 const hits = [];
 function scanFile(abs) {
   if (path.resolve(abs) === SELF) return;
-  if (SKIP_FILES.has(path.relative(ROOT, abs).replace(/\\/g, "/"))) return;
+  const rel = path.relative(ROOT, abs).replace(/\\/g, "/");
+  if (SKIP_FILES.has(rel)) return;
   let text = "";
   try {
     text = fs.readFileSync(abs, "utf8");
@@ -94,8 +101,11 @@ function scanFile(abs) {
     return; // 二进制 / 不可读文件与字符串断言无关
   }
   if (!text.toLowerCase().includes(CN)) return;
+  const isDoc = /\.md$/i.test(abs);
   text.split(/\r?\n/).forEach((line, i) => {
-    if (line.toLowerCase().includes(CN)) hits.push(`${path.relative(ROOT, abs).replace(/\\/g, "/")}:${i + 1}`);
+    if (!line.toLowerCase().includes(CN)) return;
+    if (isDoc && DOC_EXPLAIN.test(line)) return; // 文档里的移除说明 / 守卫脚本名不算残留
+    hits.push(`${rel}:${i + 1}`);
   });
 }
 function scanDir(rel) {

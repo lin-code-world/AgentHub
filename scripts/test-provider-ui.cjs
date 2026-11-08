@@ -100,7 +100,9 @@ console.log("\n④ 页面可达（页签注册 + 挂载，缺一处就是进不�
 {
   const types = read("src/types/index.ts");
   // 作用域切到 proxy 模块那段 pages 数组：全文正则会撞上别的模块的同名 id，切不到即判红
-  const pm = types.match(/key:\s*"proxy",[\s\S]*?pages:\s*\[([\s\S]*?)\]/);
+  // 数组以「行首缩进的 ]」收尾：注释里出现过 pages[0] 这类方括号，用非贪婪的 \[([\s\S]*?)\]
+  // 会被注释里的 ] 提前截断（切出一段注释当数组内容，ids 恒为空）。锚到行首 ] 才是数组边界。
+  const pm = types.match(/key:\s*"proxy",[\s\S]*?pages:\s*\[([\s\S]*?)\n\s*\]/);
   ok(!!pm, "能在 MODULES 里定位到反代网关模块的 pages 数组", pm && pm[1].slice(0, 60));
   const ids = pm ? [...pm[1].matchAll(/\{\s*id:\s*"([a-z]+)"/g)].map((x) => x[1]) : [];
   ok(ids.includes("providers"), "proxy 页签里含 providers", ids);
@@ -111,9 +113,11 @@ console.log("\n④ 页面可达（页签注册 + 挂载，缺一处就是进不�
   const block = app.match(/<ProxyProvidersView[^>]*\/>/);
   ok(!!block, "App.vue 里有该视图的挂载块", block && block[0]);
   const b = block ? block[0] : "";
+  // page-anim 装饰动画已整体删除，挂载块统一只剩 v-if / v-show 两处页签名（全仓 page-anim 已无出现），
+  // 判据随之收到这两处：v-if 拼错＝永不挂载，v-show 拼错＝永远不显示。
   ok(
-    /v-if="seen\('proxy', 'providers'\)"/.test(b) && /v-show="on\('proxy', 'providers'\)"/.test(b) && /'page-anim': on\('proxy', 'providers'\)/.test(b),
-    "挂载块三处页签名一致（v-if 拼错＝永不挂载，v-show 拼错＝永远不显示）",
+    /v-if="seen\('proxy', 'providers'\)"/.test(b) && /v-show="on\('proxy', 'providers'\)"/.test(b),
+    "挂载块两处页签名一致（v-if 拼错＝永不挂载，v-show 拼错＝永远不显示）",
     b,
   );
 }

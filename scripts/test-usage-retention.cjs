@@ -124,7 +124,7 @@ if (API_OK) {
     ["src/types/index.ts", /usageRetentionDays: number;/g, "前端类型字段"],
     ["src/stores/app.ts", /usageRetentionDays: 90,/g, "前端默认值"],
     ["src/api/ipc.ts", /export const proxyStatsCleanup = /g, "渲染层 api 出口"],
-    ["src/components/config/ConfigProxySection.vue", /v-model\.number="app\.config\.proxy\.usageRetentionDays"/g, "设置页输入框"],
+    ["src/components/config/ConfigTimingSection.vue", /v-model\.number="app\.config\.proxy\.usageRetentionDays"/g, "设置页输入框（保留期已移到「设置 · 监控与安全」板块）"],
     ["src/components/config/ConfigProxySection.vue", /app\.config\.proxy\.usageRetentionDays = Number\.isFinite\(urd\) && Math\.round\(urd\) >= 1 \? Math\.min\(3650, Math\.round\(urd\)\) : 90;/g, "保存时钳位（非正值兜底 90，不钳成 1 天）"],
     ["src/views/proxy/ProxyStatsView.vue", /api\.proxyStatsCleanup\(/g, "统计页真的调这个命令"],
   ];

@@ -88,6 +88,13 @@ try {
 
   console.log(`\n${failed ? "\u2717" : "OK"} 账号导入格式自测：${pass} 项通过，${failed} 项失败`);
 } finally {
-  fs.rmSync(TMP, { recursive: true, force: true });
+  // 先关掉沙箱库连接：proxy/index.cjs 读配置时会惰性打开 stats.db，句柄不关时
+  // Windows 上删目录会报 EPERM/EBUSY（断言全过也会因此判失败）。关闭失败不影响结论。
+  try { require("../electron/backend/proxy/store.cjs").close(); } catch { /* 未加载或已关闭 */ }
+  try {
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* 沙箱残留不影响结论，不得因此掩盖断言失败 */
+  }
 }
 process.exit(failed ? 1 : 0);

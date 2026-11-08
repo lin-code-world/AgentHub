@@ -16,12 +16,32 @@
 //   ④ 正常增量：新行倒序拼表头、截断一页、lastId 前进
 //   ⑤ 增量条数触顶 limit → 提示回退全量（高日志速率下追不上的兜底）
 //   ⑥ lastId 只增不减（乱序/重复增量不得让基线倒退）
-// 纯 Node 跑（require .ts 走 Node 内置类型擦除）。用法：node tools/oplog-increment-selftest.cjs
+// 纯 Node 跑（TS 源码在脚本内用仓库自带的 typescript 转译后加载，不依赖运行时的 TS 擦除）。
+// 用法：node tools/oplog-increment-selftest.cjs，或
+//       ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe tools/oplog-increment-selftest.cjs
 "use strict";
+const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
-const inc = require(path.join(ROOT, "src", "utils", "oplogIncrement.ts"));
+
+// 加载真实实现（src/utils/oplogIncrement.ts）。Electron 内置的 Node 22.16 没有
+// 「require TS 类型擦除」（Node 22.18+ 才默认开启），直接 require .ts 会
+// SyntaxError: Unexpected token 'export'。这里用仓库自带 typescript 把源码转成 CJS 再加载，
+// node / electron 下都能跑，且被测的仍是真实实现（不是另抄一份）。
+function loadTs(rel) {
+  const ts = require("typescript");
+  const file = path.join(ROOT, rel);
+  const js = ts.transpileModule(fs.readFileSync(file, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    fileName: file,
+  }).outputText;
+  const mod = { exports: {} };
+  new Function("exports", "require", "module", "__filename", "__dirname", js)(mod.exports, require, mod, file, path.dirname(file));
+  return mod.exports;
+}
+
+const inc = loadTs("src/utils/oplogIncrement.ts");
 
 let pass = 0,
   fail = 0;

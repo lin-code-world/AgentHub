@@ -81,6 +81,10 @@ console.log("\n②③ 两个视图的分工与内置行的第二道挡");
 console.log("\n④ updated_at：动态适配器实例缓存的键");
 {
   const a = store.saveProvider(Object.assign({}, PROVIDER, { display: "第一版" }));
+  // updated_at 取 Date.now()（毫秒精度）：紧凑循环里两次保存可能落在同一毫秒，时间戳相等
+  // 并非缺陷（真实用户路径不可能在同一毫秒内改两次配置）。同步等 2ms 跨过毫秒边界再存第二次，
+  // 让这条断言守的是「保存会推进 updated_at」的语义，而不是时钟分辨率。
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
   const b = store.saveProvider(Object.assign({}, a, { display: "第二版" }));
   // 正对照：这里必须「不相等」。相等的表现是改了 baseUrl 之后网关继续用旧实例打旧端点，
   // 而用户只看到「配置没生效」，没有任何报错。

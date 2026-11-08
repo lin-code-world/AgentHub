@@ -12,6 +12,22 @@
 // 运行：node scripts/test-reverse-alias-identity.cjs
 // 覆盖：原生模型同名/仅大小写不同必须可转发；非原生虚拟名同名仍拒绝；普通映射不受影响。
 "use strict";
+// 沙箱：模型目录不内置（运行时拉取落盘），本自测需要从测试夹具播种才拿得到原生模型清单。
+// AGENTHUB_DATA_DIR 必须在任何业务模块 require 之前设置（config.dataDir 优先级最高）。
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-revalias-"));
+const fs = require("node:fs");
+const path = require("node:path");
+const store = require("../electron/backend/proxy/store.cjs");
+const rules = require("../electron/backend/proxy/rules.cjs");
+store.open();
+rules.init();
+{
+  const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "fixtures", "test-catalog.json"), "utf8"));
+  const cat = {};
+  for (const [ch, seg] of Object.entries(fixture)) cat[ch] = { syncedAt: Date.now(), models: seg.models };
+  fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify(cat, null, 2), "utf8");
+  rules.reload("catalog.json");
+}
 const adapters = require("../electron/backend/proxy/adapters.cjs");
 
 let pass = 0;

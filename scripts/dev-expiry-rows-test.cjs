@@ -223,11 +223,11 @@ function main() {
     fmtBalancePair(1880, -1, "lobster") === "1,880 / — 积分", fmtBalancePair(1880, -1, "lobster"));
   check("J2 两头都是 -1 才是真·不限，且不缀单位", fmtBalancePair(-1, -1, "catpaw") === "不限 / 不限", fmtBalancePair(-1, -1, "catpaw"));
   // 断言写成「量级被换算了 + 单位跟着 balanceUnit 走」而不是钉死某一种字形：
-  // 钉 "3 百万 / … Token" 是把某个格式化函数的输出抄进断言，换成上游的 fmtCnAmount
-  // （"3.00 百万"）就红得莫名其妙，而真正要守的东西——别把三百万原样铺满一格、
+  // fmtCnAmount 已把「百万 / 千万」两档合并成国际缩写 "M"（3,000,000 → "3.00M"），
+  // 钉死中文档位（"3.00 百万"）会红得莫名其妙；而真正要守的东西——别把三百万原样铺满一格、
   // 别把单位写死成单数——反而没测到。
   check("J3 正常逐包行：大额 Token 要换算成量级、单位取 balanceUnit（不是原样铺数字）",
-    /^\d+(\.\d+)? (百万|千万|亿)$/.test(fmtBalancePair(3000000, 3000000, "zcode").split(" / ")[0])
+    /^\d+(\.\d+)?\s?(M|亿|万|百亿|百万|千万)$/.test(fmtBalancePair(3000000, 3000000, "zcode").split(" / ")[0])
     && fmtBalancePair(3000000, 3000000, "zcode").endsWith(balanceUnit("zcode")),
     fmtBalancePair(3000000, 3000000, "zcode"));
   check("J4 剩余不限、总额有数值时照实并列", fmtBalancePair(-1, 500, "trae") === "不限 / 500 积分", fmtBalancePair(-1, 500, "trae"));

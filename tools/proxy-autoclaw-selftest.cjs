@@ -76,14 +76,15 @@ function offline() {
     assert(!("x-harness-type" in llm), "LLM 域禁发 X-Harness-Type（上游对它 403 pay-view/406）");
     assert(llm["x-tm"] === "win" || llm["x-tm"] === "mac", "LLM 域 X-Tm 只发 mac/win（禁 linux）");
     assert(llm["x-request-model"] === "zaicoding_glm-5.3", "LLM 域 X-Request-Model = 完整路由 ID");
-    assert(llm["x-version"] === "1.17.8", "LLM 域 X-Version = llmVersion");
+    // 期望值对齐 rules.cjs 的 DEFAULTS：2.3.0 由维护者指定（原 1.17.8 / 1.18.5 已过期，两域同值）
+    assert(llm["x-version"] === "2.3.0", "LLM 域 X-Version = llmVersion");
     assert(llm.x_trace_id === "autoclaw-desktop", "LLM 域 trace 头对齐上游字面量");
     assert(/^[0-9a-f-]{36}$/.test(llm["x-request-id"]), "X-Request-Id 为 UUID 形态");
     // userapi 域：小写 authorization、必发 X-Harness-Type、签名三件套、版本门控头
     assert(api.authorization === "Bearer tok-1" && !("x-authorization" in api), "userapi 域认证头是小写 authorization");
     assert(api["x-harness-type"] === "zcode", "userapi 域必发 X-Harness-Type（客户端指纹）");
     assert(!!api["x-auth-sign"] && !!api["x-auth-timestamp"] && api["x-auth-appid"] === "100003", "userapi 域签名三件套齐备");
-    assert(api["x-version"] === "1.18.5", "userapi 域 X-Version = apiVersion（版本门控）");
+    assert(api["x-version"] === "2.3.0", "userapi 域 X-Version = apiVersion（版本门控；与 llmVersion 同值）");
     assert(api["x-tm"] === "win" || api["x-tm"] === "linux", "userapi 域 X-Tm 按宿主平台如实发");
     // 匿名形态（登录链 token 空串）：整条 authorization 头不出现
     const anon = headers.signedAuthHeaders(cfg, "");
