@@ -460,11 +460,21 @@ async function setOrder(m: ProxyModel, list: string[]) {
 /** 该模型已排的顺序（数组兜底：浏览器页面长时间开着、服务端已升级时，旧快照可能仍是字符串） */
 const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);
 
-/** 候选 = 本视图下可选的渠道（顺序表只在这里面选）。
- *  渠道 tab 下必须收窄到该渠道——否则会列出用户在这个 tab 里根本看不到的其他渠道，容易误加 */
-const orderCandidates = (m: ProxyModel): string[] => {
-  const base = activeTab.value ? [activeTab.value as string] : m.sources;
-  return base.filter((s) => !orderOf(m).includes(s));
+/** 候选 = 该模型的全部来源渠道（顺序表只在这里面选）。
+ *  渠道 tab 下也给出全部来源：本行上方「来源渠道」列已经把各渠道列出来了，
+ *  不存在「用户看不到的渠道」；只把当前 tab 的渠道排在下拉首位（见 orderCandidateOptions）。
+ *  早先收窄成 [activeTab] 会让共享模型在渠道页里永远加不了第二个渠道。 */
+const orderCandidates = (m: ProxyModel): string[] => m.sources.filter((s) => !orderOf(m).includes(s));
+
+/** 顺序表里已失效的渠道（服务端已按 modelOwners 剔除，这里只用于标注） */
+const staleOf = (m: ProxyModel): string[] => m.overrideStale || [];
+
+/** 下拉选项：渠道 tab 下把当前渠道提到最前（用户在这个页签里多半就是想先安排它） */
+const orderCandidateOptions = (m: ProxyModel): string[] => {
+  const list = orderCandidates(m);
+  const tab = activeTab.value;
+  if (!tab || !list.includes(tab as string)) return list;
+  return [tab as string, ...list.filter((s) => s !== tab)];
 };
 
 function addToOrder(m: ProxyModel, v: string) {
@@ -794,7 +804,7 @@ watch(active, (on) => {
                             <button class="order-btn" @click="removeFromOrder(m, ch)">×</button>
                           </div>
                           <el-select
-                            v-if="orderCandidates(m).length"
+                            v-if="orderCandidateOptions(m).length"
                             class="f-el-select"
                             popper-class="glass-popper"
                             :persistent="false"
@@ -804,9 +814,17 @@ watch(active, (on) => {
                             placeholder="+ 添加渠道"
                             @update:model-value="(v: string) => addToOrder(m, v)"
                           >
-                            <el-option v-for="o in orderCandidates(m)" :key="o" :value="o" :label="channelName(o)" />
+                            <el-option v-for="o in orderCandidateOptions(m)" :key="o" :value="o" :label="channelName(o)" />
                           </el-select>
                           <span v-if="!orderOf(m).length" style="color: var(--text-3); font-size: 12px">自动（打分）</span>
+                          <span v-if="orderOf(m).length" class="order-hint">顺序为优先偏好，非强制</span>
+                          <div
+                            v-if="staleOf(m).length"
+                            class="order-stale"
+                            :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
+                          >
+                            已失效：{{ staleOf(m).map(channelName).join("、") }}
+                          </div>
                         </div>
                       </td>
                       <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
@@ -914,7 +932,7 @@ watch(active, (on) => {
                         <button class="order-btn" @click="removeFromOrder(m, ch)">×</button>
                       </div>
                       <el-select
-                        v-if="orderCandidates(m).length"
+                        v-if="orderCandidateOptions(m).length"
                         class="f-el-select"
                         popper-class="glass-popper"
                         :persistent="false"
@@ -924,9 +942,17 @@ watch(active, (on) => {
                         placeholder="+ 添加渠道"
                         @update:model-value="(v: string) => addToOrder(m, v)"
                       >
-                        <el-option v-for="o in orderCandidates(m)" :key="o" :value="o" :label="channelName(o)" />
+                        <el-option v-for="o in orderCandidateOptions(m)" :key="o" :value="o" :label="channelName(o)" />
                       </el-select>
                       <span v-if="!orderOf(m).length" style="color: var(--text-3); font-size: 12px">自动（打分）</span>
+                      <span v-if="orderOf(m).length" class="order-hint">顺序为优先偏好，非强制</span>
+                      <div
+                        v-if="staleOf(m).length"
+                        class="order-stale"
+                        :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
+                      >
+                        已失效：{{ staleOf(m).map(channelName).join("、") }}
+                      </div>
                     </div>
                   </td>
                   <td style="text-align: center">
@@ -1671,5 +1697,14 @@ watch(active, (on) => {
 .order-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+.order-hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.order-stale {
+  color: var(--warn, #d69e2e);
+  font-size: 11px;
+  cursor: help;
 }
 </style>

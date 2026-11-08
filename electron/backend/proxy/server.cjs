@@ -235,9 +235,11 @@ function routeUsable(channel, settings) {
 }
 
 /** 模型渠道顺序归一化：配置可能是新数组，也可能是旧版单字符串。非法值一律空数组（= 不干预）。
- *  非字符串一律空数组——磁盘被手改成数字/对象/布尔时不能当成渠道名去路由。 */
+ *  非字符串一律空数组——磁盘被手改成数字/对象/布尔时不能当成渠道名去路由。
+ *  重复项去重（保留首次出现的位次）：手写配置写成 ["a","a"] 时，若不去重会按后者算位次 1，
+ *  用户排的第一个渠道反而排到第二。 */
 function normalizeModelOrder(value) {
-  if (Array.isArray(value)) return value.map((s) => String(s || "")).filter(Boolean);
+  if (Array.isArray(value)) return [...new Set(value.map((s) => String(s || "")).filter(Boolean))];
   if (typeof value !== "string") return [];
   return value ? [value] : [];
 }

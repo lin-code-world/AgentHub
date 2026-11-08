@@ -1501,7 +1501,19 @@ function register(ipcMain) {
         enabled: !(cfg.disabledModels || []).includes(m.id),
         // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
         accountless: auto.accountless.has(m.id),
-        override: server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]),
+        // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。
+        // 不过滤的话，模型下架 / 渠道被上游启闭 / 手写配置写错渠道名时，
+        // 界面仍把它显示成 1 号位，实际路由早已跳过它——用户会以为功能没生效。
+        // overrideStale 保留被剔除的那部分，供前端标注「已失效」。
+        ...(() => {
+          const raw = server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]);
+          const validSet = new Set(adapters.modelOwners(m.id, cfg));
+          const stale = raw.filter((ch) => !validSet.has(ch));
+          return {
+            override: raw.filter((ch) => validSet.has(ch)),
+            overrideStale: stale,
+          };
+        })(),
         fallback: (cfg.modelFallback || {})[m.id] || "",
         custom: (cfg.modelCustom || {})[m.id] || undefined,
       };

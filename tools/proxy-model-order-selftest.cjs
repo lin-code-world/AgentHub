@@ -70,6 +70,7 @@ try {
   ok("空串 / null → 空数组", normalizeModelOrder(null).length === 0 && normalizeModelOrder("").length === 0);
   ok("数字 / 对象 / 布尔 → 空数组", normalizeModelOrder(42).length === 0 && normalizeModelOrder({ a: 1 }).length === 0 && normalizeModelOrder(true).length === 0);
   ok("数组里的空值被过滤", JSON.stringify(normalizeModelOrder(["b", "", null, "a"])) === '["b","a"]');
+  ok("重复项去重且保留首次位次", JSON.stringify(normalizeModelOrder(["b", "a", "b"])) === '["b","a"]');
 
   // ===== 2. 位次语义 =====
   console.log("2. 位次语义");

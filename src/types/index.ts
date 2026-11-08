@@ -487,8 +487,10 @@ export interface ProxyModel {
   /** 单来源且该渠道无账号：已自动关闭，开关置灰（导入账号后仍需手动开启） */
   accountless?: boolean;
   enabled: boolean;
-  /** 渠道顺序（空数组 = 自动；服务端已把旧版单字符串归一成数组） */
+  /** 渠道顺序（空数组 = 自动；服务端已把旧版单字符串归一成数组，并剔除不属于本模型的渠道） */
   override: string[];
+  /** 顺序表里已失效的渠道（模型下架 / 渠道被上游启闭 / 配置写错）：不参与路由，仅用于界面标注 */
+  overrideStale?: string[];
   fallback: string;
   custom?: ModelCustomEntry;
 }
