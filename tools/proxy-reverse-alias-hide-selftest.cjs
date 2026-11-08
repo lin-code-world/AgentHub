@@ -19,6 +19,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-rev-alias-hide-"));
 process.env.AGENTHUB_DATA_DIR = tmp;
 
 const adapters = require(path.join(ROOT, "electron/backend/proxy/adapters.cjs"));
+const server = require(path.join(ROOT, "electron/backend/proxy/server.cjs"));
 
 let fail = 0;
 const eq = (a, e, l) => {
@@ -69,6 +70,16 @@ withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () =>
 withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () => ["hy4free"] } }, () => {
   const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
   eq(adapters.modelOwners("hy4free", cfg), ["catpaw"], "另一渠道同名原生保留归属");
+});
+
+// [4] 被吸收名无归属：固定渠道也直接拒绝，不透传
+withChannels({ workbuddy: { models: () => ["hy4free"] }, zcode: { models: () => ["glm-5.3-flash"] } }, () => {
+  const s = { routeStrategy: "fixed", fixedChannel: "zcode", channelEnabled: {}, modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
+  const r = server.resolveChannel({ route: "auto" }, "hy4free", s);
+  eq(r.unknownModel, true, "被吸收真名：固定渠道下也判 unknownModel（不透传给 zcode）");
+  // [5] 请求统一名仍走映射渠道
+  const ok = server.resolveChannel({ route: "auto" }, "hy4", s);
+  eq(ok.channel, "workbuddy", "请求统一名 hy4 仍路由到 workbuddy");
 });
 
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* 句柄交给系统 */ }

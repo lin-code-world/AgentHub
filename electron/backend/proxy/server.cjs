@@ -189,6 +189,9 @@ function resolveChannel(key, model, settings) {
     const usableOf = override.length ? (ch) => routeUsable(ch, settings) : undefined;
     return { channel: pickByOrder(routeOrderOf(key, settings), owners, tierGroups(), override, usableOf) };
   }
+  // 被反向映射占用的真名：没有任何渠道认领时直接判「模型不存在」——
+  // 不走 fixed 透传试错、也不走提供商裸名兜底（对外只认统一名）。
+  if (adapters.isAbsorbedName(model, settings)) return { channel: null, unknownModel: true };
   // 模型不在任何目录：auto 且固定渠道策略时放行指定渠道（透传试错），否则 400 给可用模型提示。
   // 指定渠道已被「上游启闭」关闭时不再透传试错（issue #90）：打向已关闭渠道只会拿到
   // 上游透传错误，直接给明确的 channel_disabled 业务码
