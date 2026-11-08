@@ -4805,6 +4805,24 @@ function aliasRowAbsorbed(model, sources, cfg) {
   return arr.length > 0 && arr.every((ch) => absorbedByAlias(model, ch, cfg));
 }
 
+/** 若 model 是某条映射的目标真名（被占据），返回取代它的统一名；否则返回 null。
+ *  供对外报错文案「已被统一名 X 取代，请改用 X」用。本身是统一名时返回 null（不算被取代）。 */
+function absorbingAlias(model, cfg) {
+  const c = cfg || proxyConfig();
+  const rev = c.modelReverseAliases || {};
+  const m = String(model || "");
+  if (Object.prototype.hasOwnProperty.call(rev, m)) return null;
+  for (const u of Object.keys(rev)) {
+    if (u === m) continue;
+    const chMap = rev[u];
+    if (!chMap || typeof chMap !== "object") continue;
+    for (const ch of Object.keys(chMap)) {
+      if (reverseAliasTarget(u, ch, c) === m) return u;
+    }
+  }
+  return null;
+}
+
 function nativeModel(channel, model) {
   const ad = get(channel);
   const wanted = String(model || "").trim();
@@ -5056,7 +5074,9 @@ function listableModels(cfg) {
   const off = new Set((c.disabledModels || []).map((s) => String(s)));
   // enabledOnly：关闭上游的模型与来源整行不出现，行级字段也不取关闭渠道的值
   const rows = mergedModels(c, { enabledOnly: true }).filter((m) => !off.has(m.id));
-  // 反向映射吸收的真名：按来源剔除被吸收的渠道；无剩余来源 → 整行不出现（对外只留统一名）
+  // 反向映射吸收的真名：按来源剔除被吸收的渠道；无剩余来源 → 整行不出现（对外只留统一名）。
+  // 只收窄 sources：sourceDetails 与行级字段（rate / 能力 / 上下文）保持 mergedModels 原样——
+  // 对外出口会剥掉 sourceDetails，管理页走未过滤的 mergedModels，两者都不受影响。
   const out = [];
   for (const m of rows) {
     const all = m.sources || [];
@@ -5079,7 +5099,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, absorbingAlias, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）

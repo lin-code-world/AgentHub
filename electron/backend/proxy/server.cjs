@@ -108,14 +108,25 @@ function mappedTargetDisabledReply(model, settings) {
  *  返回 { status, code, message, logError }。 */
 function unknownModelReply(actualModel, resolvedMain, settings) {
   const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
+  // 被反向映射占据的真名：点明「已被统一名取代，请改用统一名」——比「不在任何渠道目录中」
+  // 更可操作，也避免把正在被拒的名字又列进「相近的模型」（复查发现的自相矛盾）。
+  // 对「统一名被禁用 / 渠道无账号被自动关闭」同样成立（只看映射、不看统一名启用状态），
+  // 让用户知道该用哪个名字，而不是看到模型凭空消失、无任何线索。
+  const alias = adapters.absorbingAlias(actualModel, settings);
+  if (alias) {
+    return {
+      status: 400,
+      code: "model_not_found",
+      logError: "absorbed by reverse alias",
+      message: `模型 "${actualModel}" 已被统一请求名「${alias}」取代，请改用 ${alias}。可用模型：${hint}`,
+    };
+  }
   const catalog = adapters.mergedModels(settings);
   // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
   // 前者在合并目录里查得到、只是所有归属渠道都被关/空池，给出可操作指引。
   // 查找必须**逐字**：严格匹配下写法（含大小写）不同即不同模型，用忽略大小写去找会把
   // 「写法不一致」误报成「渠道被关闭/号池空」，把人引去查上游启闭（实际渠道完全正常）。
-  // 被反向映射吸收的真名不算「渠道关闭」：它在全量目录里仍查得到，但对已隐藏、不可直连，
-  // 必须按「模型不存在」报，否则会把用户引去查上游启闭（实际渠道完全正常）。
-  const cat = adapters.isAbsorbedName(actualModel, settings) ? undefined : catalog.find((m) => m.id === actualModel);
+  const cat = catalog.find((m) => m.id === actualModel);
   if (resolvedMain.disabledChannel || cat) {
     const owners = (resolvedMain.disabledChannel ? [resolvedMain.disabledChannel] : (cat.sources || []))
       .filter((c, i, arr) => arr.indexOf(c) === i);
@@ -209,6 +220,8 @@ function resolveChannel(key, model, settings) {
       return { channel: null, providerNeedsPrefix: { model, channel: key.route } };
     }
     if (!adapters.channelOn(key.route, settings)) return { channel: null, disabledBoundChannel: key.route };
+    // 绑定渠道是用户显式指定的物理边界：即使 model 是被某条反向映射占据的真名，
+    // 这里也按「该渠道能接它」放行——绑定即授权直连，属有意为之（见设计稿判据补充）。
     const boundTarget = adapters.resolveModelTarget(model, key.route, settings);
     if (boundTarget) {
       // 映射到已关闭的模型 = 该渠道上这个请求不可用：绑定渠道不静默改道，明确拒绝

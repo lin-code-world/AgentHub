@@ -98,14 +98,20 @@ withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () =>
   eq(adapters.aliasRowAbsorbed("hy4", ["workbuddy"], cfg), false, "统一名不隐藏");
 });
 
-// [7] 被吸收真名被拒时按「模型不存在」报，不误报「渠道已关闭」（文案层回归）
+// [7] 被吸收真名被拒时点明「已被统一名取代」，不误报「渠道已关闭」、也不把它列为相近模型
 withChannels({ workbuddy: { models: () => ["hy4free"] } }, () => {
   const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
   const reply = server.unknownModelReply("hy4free", { channel: null }, cfg);
   eq(reply.code, "model_not_found", "被吸收真名 → model_not_found（不是 channel_disabled）");
-  check("文案说「不在任何渠道目录中」", reply.message.includes("不在任何渠道目录中"), reply.message);
-  // 对照：显式关闭渠道时仍报 channel_disabled
-  const disabled = server.unknownModelReply("hy4free", { channel: null, disabledChannel: "workbuddy" }, cfg);
+  check("文案点明已被统一请求名「hy4」取代", reply.message.includes("已被统一请求名「hy4」取代"), reply.message);
+  check("文案给出改用 hy4", reply.message.includes("请改用 hy4"), reply.message);
+  check("文案不再把 hy4free 列为相近模型", !reply.message.includes("相近的模型有：hy4free"), reply.message);
+  // 统一名被禁用（或渠道无账号被自动关闭）时，请求真名仍点明取代关系，不再「凭空消失、无提示」
+  const cfgOff = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } }, disabledModels: ["hy4"] };
+  const off = server.unknownModelReply("hy4free", { channel: null }, cfgOff);
+  check("统一名被禁用时仍提示改用 hy4", off.message.includes("请改用 hy4"), off.message);
+  // 对照：显式关闭渠道 + 非被吸收名，仍报 channel_disabled
+  const disabled = server.unknownModelReply("other-model", { channel: null, disabledChannel: "workbuddy" }, cfg);
   eq(disabled.code, "channel_disabled", "显式关闭渠道仍报 channel_disabled");
 });
 
