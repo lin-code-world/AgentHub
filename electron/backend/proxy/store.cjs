@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS usage_requests (
   ttft_ms INTEGER NOT NULL DEFAULT 0,
   latency_ms INTEGER NOT NULL DEFAULT 0,
   status INTEGER NOT NULL DEFAULT 0,
+  upstream_tries INTEGER NOT NULL DEFAULT 0,
   error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_requests(ts);
@@ -264,6 +265,12 @@ function open() {
   // 在线迁移：usage_requests 缓存 token（命中率统计；Anthropic 协议上游如 zcode 会回 cache_read/creation）
   try {
     db.exec("ALTER TABLE usage_requests ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0");
+  } catch { /* 已存在 */ }
+  // 在线迁移：usage_requests.upstream_tries = 本次请求真实打到上游的次数。
+  // 每日配额只统计 >0 的行（第 4 条裁决）：被拒 / 参数错 / 限流等一次上游都没打的请求不扣配额。
+  // 老库存量行按 0 处理（不影响历史统计，只影响「今天已用」的配额判定）。
+  try {
+    db.exec("ALTER TABLE usage_requests ADD COLUMN upstream_tries INTEGER NOT NULL DEFAULT 0");
   } catch { /* 已存在 */ }
   // ===== 一次性数据迁移：小浣熊账号 uid 由「签发方域名」纠正为账号 ID（sub）=====
   // 旧版 tokenUid 取 JWT 的 iss（= "xiaohuanxiong.com/iam" 签发方常量，所有账号都相同），
@@ -409,9 +416,17 @@ function hashKey(secret) {
   return crypto.createHash("sha256").update(String(secret)).digest("hex");
 }
 
-/** 路由合法性：auto 或任一已接入渠道（渠道扩充后无需改这里） */
+/** 路由合法性：auto 或任一已接入渠道（内置渠道 + 已启用的自定义提供商）。
+ *  提供商的 slug 是运行期数据，所以走 channelList() 而不是写死的内置名单。 */
 function routeOk(route) {
-  return route === "auto" || CHANNELS.some((c) => c.id === route);
+  if (route === "auto") return true;
+  return channelList().some((c) => c.id === route);
+}
+
+/** 非法 route 明确报错（第 8 条裁决）：以前是静默回落 auto，
+ *  界面选了一个不存在的渠道时用户会以为「已经绑好了」，实际一直走智能路由。 */
+function assertRouteOk(route) {
+  if (!routeOk(route)) throw new Error(`route 不合法：${route}（必须是 auto 或已接入的渠道/提供商）`);
 }
 
 /** per-key 路由策略白名单：''=跟随全局；非法值一律按跟随全局处理 */
@@ -440,6 +455,9 @@ function createKey({ name, route, routeOrder, dailyQuota, rateLimit }) {
   open();
   const v = validateKeyParams({ name, route, routeOrder, dailyQuota, rateLimit });
   if (v) throw new Error(v);
+  // 第 8 条：绑定值不再静默回落。空/未传按 auto；其余必须命中已接入渠道或启用中的提供商。
+  const routeValue = route == null || route === "" ? "auto" : String(route);
+  assertRouteOk(routeValue);
   const secret = "sk-" + crypto.randomBytes(24).toString("hex"); // 48 hex
   const id = crypto.randomUUID();
   db.prepare(
@@ -451,7 +469,7 @@ function createKey({ name, route, routeOrder, dailyQuota, rateLimit }) {
     config.encryptSecret(secret),
     secret.slice(0, 7),
     secret.slice(-4),
-    routeOk(route) ? route : "auto",
+    routeValue,
     routeOrderOk(routeOrder) ? routeOrder : "",
     Math.max(0, Number(dailyQuota) || 0),
     Math.max(0, Number(rateLimit) || 0),
@@ -481,7 +499,8 @@ function listKeys() {
   const rows = db.prepare("SELECT * FROM keys ORDER BY created_at DESC").all();
   const day = dayStr();
   const usage = db.prepare(
-    "SELECT key_id, COUNT(*) AS req, SUM(prompt_tokens + completion_tokens) AS tokens FROM usage_requests WHERE ts >= ? GROUP BY key_id"
+    "SELECT key_id, COUNT(*) AS req, SUM(prompt_tokens + completion_tokens) AS tokens, " +
+      "SUM(CASE WHEN upstream_tries > 0 THEN 1 ELSE 0 END) AS quota_req FROM usage_requests WHERE ts >= ? GROUP BY key_id"
   ).all(dayStartMs(day));
   const umap = new Map(usage.map((u) => [u.key_id, u]));
   return rows.map((r) => ({
@@ -499,6 +518,9 @@ function listKeys() {
     createdAt: r.created_at,
     updatedAt: r.updated_at || 0,
     todayReq: (umap.get(r.id) || {}).req || 0,
+    // 纳入每日配额判定的请求数（只算真打过上游的，与 keyTodayReq 同口径）：
+    // todayReq 是「今天一共收到多少请求」（含被拒/参数错），两者口径不同，界面分别展示。
+    todayQuotaReq: (umap.get(r.id) || {}).quota_req || 0,
     todayTokens: (umap.get(r.id) || {}).tokens || 0,
   }));
 }
@@ -528,7 +550,9 @@ function importKey({ id, name, secret, route, routeOrder, dailyQuota, rateLimit,
       db.prepare("UPDATE keys SET name=?, route=?, route_order=?, daily_quota=?, rate_limit=?, enabled=?, updated_at=? WHERE id=?")
         .run(
           String(name || "").slice(0, 64) || dup.name,
-          routeOk(route) ? route : dup.route,
+          // 第 7 条：导入忠实保留来源的绑定位，不静默改成 auto。本机没有该渠道/提供商时，
+          // 请求会被明确拒绝（而不是偷偷改道走智能路由），用户能看出「绑定还在、是本机缺它」。
+          route != null && String(route) !== "" ? String(route) : dup.route,
           routeOrderOk(routeOrder) ? routeOrder : dup.route_order,
           patchNum(dailyQuota, dup.daily_quota),
           patchNum(rateLimit, dup.rate_limit),
@@ -549,7 +573,8 @@ function importKey({ id, name, secret, route, routeOrder, dailyQuota, rateLimit,
     config.encryptSecret(s),
     s.slice(0, 7),
     s.slice(-4),
-    routeOk(route) ? route : "auto",
+    // 第 7 条：与 update 分支同口径——忠实保留来源的绑定值（空值才回落 auto）
+    route == null || route === "" ? "auto" : String(route),
     routeOrderOk(routeOrder) ? routeOrder : "",
     Math.max(0, Number(dailyQuota) || 0),
     Math.max(0, Number(rateLimit) || 0),
@@ -591,7 +616,11 @@ function updateKey(id, patch) {
   const v = validateKeyParams(patch, true);
   if (v) throw new Error(v);
   const name = patch.name != null ? String(patch.name).slice(0, 64) : cur.name;
-  const route = patch.route != null && routeOk(patch.route) ? patch.route : cur.route;
+  // 第 8 条：显式传了 route 就必须合法，非法值报错而不是静默保留旧值。
+  // 例外：与库内现值相同时放行——绑定的渠道/提供商被停用或删除后，这把 Key 仍要能改名/改配额
+  // （前端编辑弹窗每次都会把当前 route 一起回传，不放行就等于永久锁死这把 Key）。
+  if (patch.route != null && String(patch.route) !== cur.route) assertRouteOk(String(patch.route));
+  const route = patch.route != null ? String(patch.route) : cur.route;
   const routeOrder = patch.routeOrder != null && routeOrderOk(patch.routeOrder) ? patch.routeOrder : cur.route_order;
   const quota = patch.dailyQuota != null ? Math.max(0, Number(patch.dailyQuota) || 0) : cur.daily_quota;
   const rate = patch.rateLimit != null ? Math.max(0, Number(patch.rateLimit) || 0) : cur.rate_limit;
@@ -612,10 +641,12 @@ function deleteKey(id) {
   return db.prepare("DELETE FROM keys WHERE id = ?").run(String(id)).changes > 0;
 }
 
-/** Key 今日已用请求数（配额判定） */
+/** Key 今日已用请求数（配额判定）。只算**真打过上游**的请求（第 4 条裁决）：
+ *  被拒 / 参数错 / 限流 / 白名单等一次上游都没发的请求不占配额——
+ *  否则客户端配置写错就会把当天配额白白烧光，之后连正确请求也被 429。 */
 function keyTodayReq(keyId) {
   open();
-  const r = db.prepare("SELECT COUNT(*) AS c FROM usage_requests WHERE key_id = ? AND ts >= ?").get(String(keyId), dayStartMs());
+  const r = db.prepare("SELECT COUNT(*) AS c FROM usage_requests WHERE key_id = ? AND ts >= ? AND upstream_tries > 0").get(String(keyId), dayStartMs());
   return r.c || 0;
 }
 
@@ -1292,8 +1323,8 @@ function listAllCreditPackages() {
 function insertUsage(row) {
   open();
   db.prepare(
-    `INSERT INTO usage_requests (ts, req_id, key_id, key_name, channel, account_id, account_name, model, model_actual, prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, status, error)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO usage_requests (ts, req_id, key_id, key_name, channel, account_id, account_name, model, model_actual, prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens, ttft_ms, latency_ms, status, upstream_tries, error)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     row.ts || Date.now(),
     row.reqId || "",
@@ -1311,6 +1342,7 @@ function insertUsage(row) {
     row.ttftMs || 0,
     row.latencyMs || 0,
     row.status || 0,
+    Math.max(0, Number(row.upstreamTries) || 0),
     String(row.error || "").slice(0, 300)
   );
   // 落库后通知统计页（500ms 节流，事件体不带内容，见 events.cjs notify）：

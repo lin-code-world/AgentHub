@@ -276,7 +276,10 @@ function listModels() {
     provider.update("off", { enabled: false });
     ok(provider.parseModelRef("off/z-model") === null, "停用后前缀彻底失效（不能被选中）");
 
-    // 内置优先：拿目录里真实存在的一条内置裸名当探针（不硬编码模型名——目录改名时这条判据不该跟着漂）
+    // 内置优先：拿目录里真实存在的一条内置裸名当探针（不硬编码模型名——目录改名时这条判据不该跟着漂）。
+    // 注意上面为测 slug 撞名把 catalog 清成空过，这里必须先放回一条内置模型，否则这条判据没有素材。
+    fs.writeFileSync(path.join(rules.rulesDir(), "catalog.json"), JSON.stringify({ trae: { syncedAt: 1, models: [{ id: "probe-model" }] } }), "utf8");
+    rules.reload("catalog.json");
     const builtinName = adapters.mergedModels().map((m) => m.id).find((id) => !id.includes("/") && adapters.modelOwners(id).length);
     ok(!!builtinName, "夹具前提：内置目录里确实有可被认领的裸名", builtinName);
     provider.create({ id: "p3", baseUrl: `http://127.0.0.1:${UP}/v1`, models: [builtinName] });

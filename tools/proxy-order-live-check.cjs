@@ -15,7 +15,7 @@
 //   · glm-5.3-flash 顺序 = [zcode, autoclaw]
 //   · qwen3.8-flash 在 qoder 上被关闭（模型下架），但顺序里仍残留 qoder
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const path = require("node:path");
 const fs = require("node:fs");
 

@@ -12,6 +12,10 @@
 // 用法：node tools/proxy-adapter-contract-selftest.cjs（纯逻辑，不触碰 SQLite；
 // 也可按 proxy-smoke 同款在 ELECTRON_RUN_AS_NODE=1 electron 下跑）
 "use strict";
+// [沙箱] 默认指向临时目录，绝不读写真实用户数据；显式传入 AGENTHUB_DATA_DIR 时以其为准。
+if (!process.env.AGENTHUB_DATA_DIR) {
+  process.env.AGENTHUB_DATA_DIR = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-"));
+}
 
 async function main() {
   const assert = (cond, msg) => {

@@ -368,6 +368,8 @@ async function main() {
   assert(hits.wb === 0, "T7 无账号且目录无此模型的渠道从未被打");
 
   // ===== T8 渠道身份拒绝（issue #78）：400 + 客户端校验锚点 → 跳备选渠道、不罚号、不做同渠道换号 =====
+  // 用「固定渠道策略」把主渠道钉在会被拒的那个：fixed 仍是「优先」，允许跨渠道故障转移。
+  // （Key 绑定渠道已是硬边界，不允许改道——见 T8b。）
   {
     mode.trae = "ok";
     mode.wba = "gate400";
@@ -375,7 +377,9 @@ async function main() {
     pool.noteSuccess(w1);
     store.updateAccount(t1, { status: "online", coolUntil: 0, coolReason: "" });
     store.updateAccount(w1, { status: "online", coolUntil: 0, coolReason: "" });
-    store.updateKey(k.id, { route: "workbuddy_ai" }); // 主渠道刻意钉在会被拒的那个
+    cfg.routeStrategy = "fixed";
+    cfg.fixedChannel = "workbuddy_ai";
+    store.updateKey(k.id, { route: "auto" });
     const h8 = { ...hits };
     rr = await call({ model: "glm-5.3", stream: false, messages: bodyMsg });
     const b8 = await rr.text();
@@ -385,6 +389,25 @@ async function main() {
     assert(!acc8.coolUntil && !acc8.coolReason, `T8 被拒渠道的账号不得被罚冷却: coolUntil=${acc8.coolUntil} reason=${acc8.coolReason}`);
     row = store.recentRequests(1)[0];
     assert(/failover:workbuddy_ai→trae/.test(row.error || ""), "T8 轨迹如实记 failover:workbuddy_ai→trae: " + row.error);
+    cfg.routeStrategy = "smart";
+  }
+
+  // ===== T8b Key 绑定渠道是硬边界（2026-11 裁决）：主渠道失败直接报错，绝不改道备选 =====
+  {
+    mode.trae = "ok";
+    mode.wba = "gate400";
+    pool.noteSuccess(t1);
+    pool.noteSuccess(w1);
+    store.updateAccount(t1, { status: "online", coolUntil: 0, coolReason: "" });
+    store.updateAccount(w1, { status: "online", coolUntil: 0, coolReason: "" });
+    store.updateKey(k.id, { route: "workbuddy_ai" });
+    const h8b = { ...hits };
+    rr = await call({ model: "glm-5.3", stream: false, messages: bodyMsg });
+    const b8b = await rr.text();
+    assert(rr.status === 400, "T8b 绑定渠道失败直接报错（不跳备选）: " + rr.status + " " + b8b.slice(0, 200));
+    assert(hits.wba === h8b.wba + 1 && hits.trae === h8b.trae, "T8b 只打绑定渠道，不得改道备选: " + JSON.stringify(hits));
+    const acc8b = store.getAccount(w1);
+    assert(!acc8b.coolUntil && !acc8b.coolReason, `T8b 渠道身份拒绝不罚账号: coolUntil=${acc8b.coolUntil} reason=${acc8b.coolReason}`);
     store.updateKey(k.id, { route: "auto" });
   }
 

@@ -99,7 +99,7 @@ function normalizeModels(raw) {
     const model = String(e.model || "").trim();
     if (!model) continue;
     if (model.includes("/")) return { ok: false, message: `模型名 "${model}" 含 /：斜杠是 provider/model 的分隔符，模型本身不能有` };
-    const key = model.toLowerCase();
+    const key = model; // 模型名逐字敏感（与 modelOwners / mergedModels / nativeModel 同口径）
     if (seenModels.has(key)) continue; // 同一个模型写两遍：去重（宽容，不是错误）
     // 撞上前面某个别名则必须报错：两个名字就说不清该映射到哪个上游真名，静默丢条目更糟
     if (seenAliases.has(key)) return { ok: false, message: `模型名 "${model}" 与本提供商的另一个模型的别名重复` };
@@ -131,10 +131,10 @@ function normalizeAliases(raw, model, seenModels, seenAliases) {
   const out = [];
   for (const a of arr) {
     const s = String(a || "").trim();
-    if (!s || s.toLowerCase() === model.toLowerCase()) continue;
+    if (!s || s === model) continue;
     if (s.includes("/")) return { error: `别名 "${s}" 含 /，不能用作别名` };
     if (out.length >= ALIAS_MAX) return { error: `模型 "${model}" 的别名超过 ${ALIAS_MAX} 个` };
-    const k = s.toLowerCase();
+    const k = s;
     if (seenAliases.has(k)) return { error: `别名 "${s}" 与本提供商的另一个别名重复` };
     if (seenModels.has(k)) return { error: `别名 "${s}" 与本提供商的另一个模型名重复` };
     seenAliases.add(k);
@@ -230,7 +230,7 @@ function validate(input, existing) {
  *  于是新提供商的模型一条都列不出来，而用户只会看到「配了却没生效」）。 */
 function assertNoCatalogCollision(slug) {
   const prefix = `${slug}/`;
-  const hit = adapters.mergedModels().map((m) => m.id).find((id) => id.toLowerCase().startsWith(prefix.toLowerCase()));
+  const hit = adapters.mergedModels().map((m) => m.id).find((id) => id.startsWith(prefix));
   if (hit) return { ok: false, message: `标识 "${slug}" 与模型目录里的 "${hit}" 冲突，换一个（否则该提供商的模型无法出现在 /v1/models）` };
   return { ok: true };
 }
@@ -324,7 +324,7 @@ function parseModelRef(model) {
  *  让用户用 slug/model 写清楚。内置优先 + 歧义不猜，这两条合起来就是「不会静默遮蔽」的全部含义。
  *  别名与模型名同等参与：客户端拿别名打裸名也是同一个入口，同样只在无内置归属时才生效。 */
 function findUniqueByBareModel(model) {
-  const target = String(model || "").toLowerCase();
+  const target = String(model || "");
   if (!target || target.includes("/")) return null;
   // 内置归属先判：裸名的「内置优先」原本靠调用方（server.resolveChannel）的调用顺序兜，
   // 但判据放在这里才封得住——别名让同一个提供商可以声明任意多个裸名，
@@ -341,9 +341,27 @@ function findUniqueByBareModel(model) {
         if (Array.isArray(m.aliases)) names.push(...m.aliases);
       }
     }
-    if (names.some((n) => String(n).toLowerCase() === target)) hits.push(row.id);
+    if (names.some((n) => String(n) === target)) hits.push(row.id);
   }
   return hits.length === 1 ? hits[0] : null;
+}
+
+/** 该模型是否在某个自定义提供商的清单里（含别名）。绑定提供商的 Key 用它做「模型不匹配即拒绝」的判定。
+ *  清单来源是配置里填的那份（channelList().models，同一份给 /v1/models 和路由用），
+ *  不依赖运行时向上游拉取——网络抖动不会把好请求误拒。传裸名或 `slug/名` 都可以。 */
+function providerHasModel(slug, model) {
+  const row = store.channelList().find((c) => c.id === String(slug));
+  if (!row) return false;
+  const s = String(model || "");
+  const i = s.indexOf("/");
+  const bare = i > 0 && s.slice(0, i) === String(slug) ? s.slice(i + 1) : s;
+  if (!bare) return false;
+  return (row.models || []).some((m) => {
+    if (typeof m === "string") return m === bare;
+    if (!m) return false;
+    if (String(m.model) === bare) return true;
+    return Array.isArray(m.aliases) && m.aliases.map(String).includes(bare);
+  });
 }
 
 // ===== 连通性探测 =====
@@ -380,9 +398,9 @@ async function probe({ id, accountId, baseUrl, key, model, kind, extraHeaders, e
   // 否则"探测失败但真实请求成功"的反向不一致会把人引向改错的排查方向
   const probeModels = (saved && Array.isArray(saved.models) && saved.models.length ? saved.models : []).some((m) => {
     const name = typeof m === "string" ? m : m.model;
-    if (String(name || "").toLowerCase() === target.toLowerCase()) return true;
+    if (String(name || "") === target) return true;
     return !!(m && typeof m === "object" && Array.isArray(m.aliases) &&
-      m.aliases.some((a) => String(a || "").toLowerCase() === target.toLowerCase()));
+      m.aliases.some((a) => String(a || "") === target));
   })
     ? saved.models
     : [{ model: target, upstream: target }];
@@ -439,6 +457,7 @@ module.exports = {
   normalizeModels,
   parseModelRef,
   findUniqueByBareModel,
+  providerHasModel,
   list,
   create,
   update,

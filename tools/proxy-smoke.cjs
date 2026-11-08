@@ -437,15 +437,17 @@ async function main() {
   console.log("modelscope adapter ok");
 
   // 6. 统计链路
-  store.insertUsage({ reqId: "r1", keyId: k.id, keyName: "自测", channel: "trae", accountId: aid, accountName: "测试号", model: "deepseek-v4-flash", promptTokens: 10, completionTokens: 20, ttftMs: 100, latencyMs: 500, status: 200 });
-  store.insertUsage({ reqId: "r2", keyId: k.id, keyName: "自测", channel: "workbuddy", model: "hy3", promptTokens: 5, completionTokens: 5, ttftMs: 50, latencyMs: 200, status: 429, error: "rate limited" });
+  store.insertUsage({ reqId: "r1", keyId: k.id, keyName: "自测", channel: "trae", accountId: aid, accountName: "测试号", model: "deepseek-v4-flash", promptTokens: 10, completionTokens: 20, ttftMs: 100, latencyMs: 500, status: 200, upstreamTries: 1 });
+  store.insertUsage({ reqId: "r2", keyId: k.id, keyName: "自测", channel: "workbuddy", model: "hy3", promptTokens: 5, completionTokens: 5, ttftMs: 50, latencyMs: 200, status: 429, upstreamTries: 1, error: "rate limited" });
+  // 一次上游都没打的请求不占每日配额（第 4 条裁决）
+  store.insertUsage({ reqId: "r3", keyId: k.id, keyName: "自测", model: "nope", status: 400, error: "invalid params" });
   const today = store.statsToday();
-  assert(today.req === 2 && today.tokens === 40 && today.successRate === 50, "今日指标");
+  assert(today.req === 3 && today.tokens === 40 && today.successRate === 33.3, "今日指标（3 条中 1 条成功）");
   assert(store.statsTrend(7).length === 7, "7 日趋势桶");
   assert(store.statsTop("channel", 7).length === 2, "渠道 TOP");
-  assert(store.statsDetail({ page: 1, pageSize: 10 }).total === 2, "明细分页");
-  assert(store.recentRequests(5).length === 2, "实时请求流");
-  assert(store.keyTodayReq(k.id) === 2, "Key 日配额计数");
+  assert(store.statsDetail({ page: 1, pageSize: 10 }).total === 3, "明细分页");
+  assert(store.recentRequests(5).length === 3, "实时请求流");
+  assert(store.keyTodayReq(k.id) === 2, "Key 日配额只算真打过上游的请求");
   store.snapshotCredits("trae", aid, 500, 0);
   store.snapshotCredits("trae", aid, 480, 0); // 同日覆盖
   console.log("stats ok");
@@ -490,7 +492,7 @@ async function main() {
   // healthz 语义：无健康渠道 503。此刻唯一账号 cooling → 应 503
   let r = await fetch(base + "/healthz");
   assert(r.status === 503, "无健康渠道 healthz 503（唯一账号冷却中）— 实际: " + r.status);
-  r = await fetch(base + "/v1/models");
+  r = await fetch(base + "/v1/models", { headers: { authorization: "Bearer " + k.secret } });
   assert(r.ok && (await r.json()).data.length >= 1, "/v1/models 返回已启用渠道的模型");
   r = await fetch(base + "/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert(r.status === 401, "无 Key 401");
@@ -781,12 +783,12 @@ async function main() {
   // 10.9a 停用模型不对外列出：/v1/models 减去 disabledModels，恢复启用后回归
   const probe = adapters.mergedModels(e2eSettings())[0].id;
   e2eDisabledFlag.push(probe);
-  let modelsBody = await (await fetch(base2 + "/v1/models")).json();
+  let modelsBody = await (await fetch(base2 + "/v1/models", { headers: { authorization: "Bearer " + k.secret } })).json();
   assert(!modelsBody.data.some((m) => m.id.toLowerCase() === probe.toLowerCase()), "停用模型不出现在 /v1/models: " + probe);
   assert(modelsBody.data.length > 0, "未停用模型仍在 /v1/models（剩余 " + modelsBody.data.length + " 条）");
   assert(adapters.mergedModels(e2eSettings()).some((m) => m.id.toLowerCase() === probe.toLowerCase()), "管理视图 mergedModels 仍含停用模型（过滤只发生在对外出口）");
   e2eDisabledFlag.length = 0;
-  modelsBody = await (await fetch(base2 + "/v1/models")).json();
+  modelsBody = await (await fetch(base2 + "/v1/models", { headers: { authorization: "Bearer " + k.secret } })).json();
   assert(modelsBody.data.some((m) => m.id.toLowerCase() === probe.toLowerCase()), "恢复启用后 /v1/models 回归: " + probe);
 
   // 10.10 本地 IDE 快捷切换（确认协议 + WB auth 文件合并写回 + 备份 + Trae 诚实降级）

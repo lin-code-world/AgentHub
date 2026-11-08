@@ -13,7 +13,7 @@
 // （argv 形式兼容两种写法：给了 argv 就按它设置沙箱，等价于环境变量）
 // 断言面：store 迁移与回填守卫 / 成本档与路由策略白名单 / cost-first 排序行为 / 无限账号排序 / per-key 覆盖优先级
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const assert = require("node:assert");
 const store = require("../electron/backend/proxy/store.cjs");
 const server = require("../electron/backend/proxy/server.cjs");

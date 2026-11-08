@@ -10,6 +10,10 @@
  */
 // 回归探针：新实现实测（余额求和 / 1001 unavailable / 签到状态 / 渠道过滤导出）
 "use strict";
+// [沙箱] 默认指向临时目录，绝不读写真实用户数据；显式传入 AGENTHUB_DATA_DIR 时以其为准。
+if (!process.env.AGENTHUB_DATA_DIR) {
+  process.env.AGENTHUB_DATA_DIR = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-"));
+}
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");

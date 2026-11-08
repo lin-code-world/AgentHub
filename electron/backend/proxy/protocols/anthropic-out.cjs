@@ -240,6 +240,8 @@ function create(ctx) {
 
   return {
     protocol: "anthropic",
+    /** 客户端是否已断开（调度层止损用，第 5 条）：正常结束时 res.writableEnded=true，不算断开 */
+    isClientGone: () => clientGone && !res.writableEnded,
 
     writeHead() {
       // 关键：这里只准备首帧，不落盘。落盘时机交给 flushDeferred（第一个实质 delta 到达时）

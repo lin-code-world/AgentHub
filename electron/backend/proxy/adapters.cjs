@@ -4431,10 +4431,10 @@ function makeOpenaiCompat(row, opts) {
   const upstreamByClient = new Map();
   const entryByClient = new Map();
   for (const e of entries) {
-    upstreamByClient.set(e.client.toLowerCase(), e.upstream);
-    entryByClient.set(e.client.toLowerCase(), e);
+    upstreamByClient.set(e.client, e.upstream);
+    entryByClient.set(e.client, e);
     for (const a of (e.entry && Array.isArray(e.entry.aliases) ? e.entry.aliases : [])) {
-      const k = String(a || "").toLowerCase();
+      const k = String(a || "");
       if (!k) continue;
       upstreamByClient.set(k, e.upstream);
       entryByClient.set(k, e);
@@ -4443,7 +4443,7 @@ function makeOpenaiCompat(row, opts) {
   /** 剥掉自家的 `slug/` 前缀（那是路由信息，上游听不懂） */
   const stripPrefix = (clientModel) => {
     const s = String(clientModel || "");
-    return s.slice(0, row.id.length + 1).toLowerCase() === `${row.id}/`.toLowerCase() ? s.slice(row.id.length + 1) : s;
+    return s.slice(0, row.id.length + 1) === `${row.id}/` ? s.slice(row.id.length + 1) : s;
   };
   return {
     /** 提供商没有 rules/headers.json 那套 UA/指纹伪装：头 = 标准 JSON + Bearer + 用户自定义覆盖 */
@@ -4462,12 +4462,12 @@ function makeOpenaiCompat(row, opts) {
      *  （内置渠道同款"透传试错"语义）。 */
     upstreamFor(clientModel) {
       const s = stripPrefix(clientModel);
-      return upstreamByClient.get(s.toLowerCase()) || s;
+      return upstreamByClient.get(s) || s;
     },
 
     /** 客户端模型名（或别名）→ 该条目的元数据；查不到回 null，调用方按"无目录元数据"处理 */
     entryFor(clientModel) {
-      return entryByClient.get(stripPrefix(clientModel).toLowerCase()) || null;
+      return entryByClient.get(stripPrefix(clientModel)) || null;
     },
 
     models() {

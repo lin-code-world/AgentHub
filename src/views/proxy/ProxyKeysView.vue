@@ -70,7 +70,14 @@ const ROUTE_ORDER_SHORT: Record<string, string> = { score: "打分", "cost-first
 async function refresh() {
   try {
     keys.value = await api.proxyKeysList();
-    channels.value = await api.proxyPool().catch(() => channels.value);
+    // 绑定候选 = 内置渠道号池 + 启用中的自定义提供商（第 8 条：Key 可绑定提供商）
+    const [pool, prov] = await Promise.all([
+      api.proxyPool().catch(() => []),
+      api.proxyProviderList().catch(() => null),
+    ]);
+    const builtin = pool.map((c) => ({ id: String(c.id), display: c.display }));
+    const providers = (prov?.providers || []).filter((p) => p.enabled).map((p) => ({ id: p.id, display: `中转站 · ${p.display}` }));
+    channels.value = [...builtin, ...providers];
     // 列表变化后剔除已不存在的选中项，避免选中计数与实际行数不符
     const alive = new Set(keys.value.map((k) => k.id));
     selectedIds.value = new Set([...selectedIds.value].filter((id) => alive.has(id)));
@@ -227,7 +234,7 @@ watch(
           <tbody>
             <tr>
               <th class="sel-col"><input type="checkbox" :checked="allSelected" :disabled="!keys.length" @change="toggleSelectAll" /></th>
-              <th>KEY</th><th>名称</th><th>路由</th><th>今日请求</th><th>今日 Token</th><th>每日配额</th><th>状态</th><th>操作</th>
+              <th>KEY</th><th>名称</th><th>路由</th><th>今日请求</th><th>今日 Token</th><th>配额（已用/上限）</th><th>状态</th><th>操作</th>
             </tr>
             <tr v-for="k in keys" :key="k.id">
               <td class="sel-col"><input type="checkbox" :checked="selectedIds.has(k.id)" @change="toggleSelect(k.id)" /></td>
@@ -239,7 +246,7 @@ watch(
               </td>
               <td class="mono">{{ fmtInt(k.todayReq) }}</td>
               <td class="mono">{{ fmtK(k.todayTokens) }}</td>
-              <td class="mono">{{ k.dailyQuota ? fmtInt(k.dailyQuota) : "不限" }}</td>
+              <td class="mono">{{ k.dailyQuota ? fmtInt(k.todayQuotaReq) + " / " + fmtInt(k.dailyQuota) : "不限" }}</td>
               <td><span class="tag" :class="k.enabled ? 'tag-ok' : 'tag-dim'">{{ k.enabled ? "启用" : "已禁用" }}</span></td>
               <td>
                 <button v-if="k.secret" class="btn-link btn-sm" @click="copyKeyRow(k)">{{ copiedId === k.id ? "已复制" : "复制" }}</button>
@@ -289,7 +296,7 @@ watch(
           <div class="set-row">
             <div class="set-info">
               <div class="set-name">每日配额</div>
-              <div class="set-desc">0 = 不限；超限返回 429，次日 00:00 重置</div>
+              <div class="set-desc">0 = 不限；超限返回 429，次日 00:00 重置。只计真正发往上游的请求（被拒 / 参数错不占配额）</div>
             </div>
             <input v-model.number="form.dailyQuota" class="input mono" style="width: 100px" type="number" min="0" />
           </div>

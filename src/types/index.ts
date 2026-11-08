@@ -137,6 +137,8 @@ export interface ProxyKeyRow {
   enabled: boolean;
   createdAt: number;
   todayReq: number;
+  /** 纳入每日配额判定的请求数（只算真打过上游的）；todayReq 含被拒/参数错等未打上游的请求 */
+  todayQuotaReq: number;
   todayTokens: number;
   /** 完整 Key（后端 DPAPI 解密后随列表返回，供随时查看 / 复制；旧版本创建的 Key 无存档则为空） */
   secret?: string;

@@ -120,12 +120,12 @@ async function main() {
   const base = "http://127.0.0.1:19552";
   const k = store.createKey({ name: "models 过滤自测", route: "auto", dailyQuota: 0, rateLimit: 0 });
   const getModels = async () => {
-    const r = await fetch(base + "/v1/models");
+    const r = await fetch(base + "/v1/models", { headers: { authorization: "Bearer " + k.secret } });
     const j = await r.json();
     return (j.data || []).map((m) => m.id);
   };
   const getModelsRaw = async () => {
-    const r = await fetch(base + "/v1/models");
+    const r = await fetch(base + "/v1/models", { headers: { authorization: "Bearer " + k.secret } });
     const j = await r.json();
     return j.data || [];
   };

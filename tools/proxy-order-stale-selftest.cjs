@@ -12,7 +12,7 @@
 // 渠道被关闭导致的失败项一律不下发（配置保留，重开恢复）。
 // 用法：AGENTHUB_DATA_DIR=<临时目录> ELECTRON_RUN_AS_NODE=1 electron tools/proxy-order-stale-selftest.cjs
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const path = require("node:path");
 const fs = require("node:fs");
 

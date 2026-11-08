@@ -13,7 +13,7 @@
 // 断言面：旧配置一次性迁移与防覆盖 / 规则归一化（HH:mm 与抖动钳制） / 今日签到记录落库与读回 /
 //        号池视图 + IPC + tick 的接线段（静态断言，防止改一处漏一处）
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");

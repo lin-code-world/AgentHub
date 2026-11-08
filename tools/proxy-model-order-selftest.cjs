@@ -18,7 +18,7 @@
 //   ④ resolveChannel 主渠道选择 + 旧版单值 + fixed 策略不被无效覆盖项挡掉
 //   ⑤ isExplicitRoute 的软边界口径（渠道覆盖不再算显式边界）
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const assert = require("node:assert");
 const path = require("node:path");
 const fs = require("node:fs");

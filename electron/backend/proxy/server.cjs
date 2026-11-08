@@ -10,7 +10,8 @@
  */
 // 反代网关 · HTTP 服务：Express @ 127.0.0.1:9527（可配置）
 // 端点：POST /v1/chat/completions、POST /v1/messages、POST /v1/responses（各 SSE 双态）
-//       / POST /v1/messages/count_tokens / GET /v1/models / GET /healthz / GET /status（需管理令牌）
+//       / POST /v1/messages/count_tokens（需有效 Key）/ GET /v1/models（需有效 Key）
+//       / GET /healthz（公开只读）/ GET /status（需管理令牌）
 // 错误语义按**入站协议**回：OpenAI 侧 401 invalid_api_key / 429 配额或限流 / 400 参数 / 502 上游 /
 // 503 渠道不可用；Anthropic 侧同样这些状态码，但外壳是 { type:"error", error:{ type, message } }
 // ——Claude Code 只认这个形状，给它一个 OpenAI 的 401 会被直接判成连接失败。
@@ -131,19 +132,36 @@ function clampReasoningEffort(value, supported) {
   return eligible.length ? eligible[eligible.length - 1] : levels[0];
 }
 
-/** 渠道选择：提供商前缀直达 → Key 绑定渠道（严格校验归属）→ 单源强制 → per-model 覆盖 →
- *  打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：modelOwners 已过滤
- *  （单源 → 空 → 400），key.route 指到关闭渠道按 auto 走（钉死的渠道被关后不能把请求带进死胡同） */
+/** 渠道选择：Key 绑定的硬边界（前缀改道 / 裸名 / 归属校验）→ 提供商前缀直达 → 单源强制 →
+ *  per-model 覆盖 → 打分（健康度×余额）/ 指定渠道优先。关闭的渠道（上游启闭）不参与：
+ *  modelOwners 已过滤（单源 → 空 → 400）；key.route 指到关闭渠道时明确 403，不按 auto 走。 */
 function resolveChannel(key, model, settings) {
   // `slug/model` 前缀直达提供商。这里只交出渠道，不改模型名——上游真名由适配器的 upstreamFor
   // 剥前缀再映射，与内置适配器「收到客户端模型名、自己改写」的契约一致，调度层不需要第二套命名口径。
   const slug = provider.parseModelRef(model);
-  if (slug) return { channel: slug };
+  if (slug) {
+    // 绑定渠道是硬边界：绑定 A 的 Key 不能用 `B/模型` 把请求改道到 B（前缀不得绕过绑定）。
+    if (key.route !== "auto" && String(key.route) !== slug) {
+      return { channel: null, prefixConflict: { model, bound: key.route, slug } };
+    }
+    // 绑定提供商时只认它自己清单里的模型（含别名）；清单是配置里填的那份，不依赖运行时拉取。
+    if (key.route !== "auto" && !provider.providerHasModel(slug, model)) {
+      return { channel: null, notInProvider: { model, channel: slug } };
+    }
+    return { channel: slug };
+  }
   const owners = adapters.modelOwners(model, settings);
   // Key 绑定渠道是用户显式指定的物理边界：渠道被「上游启闭」关闭、或模型不在该渠道目录时
   // 一律 403 拒绝——不回落其它渠道、也不「透传试错」目录外模型（静默改道/放行会让人误以为绑定生效）。
   // 单源强制只留给智能路由。
   if (key.route !== "auto") {
+    // 绑定自定义提供商：只接收 `slug/模型` 写法（裸名先落内置目录，含义不确定，不能猜）。
+    // 停用 / 已删除的提供商单独报错，别让它伪装成「模型不在清单里」。
+    const providerRow = store.getProvider(key.route);
+    if (providerRow) {
+      if (!providerRow.enabled) return { channel: null, disabledBoundProvider: key.route };
+      return { channel: null, providerNeedsPrefix: { model, channel: key.route } };
+    }
     if (!adapters.channelOn(key.route, settings)) return { channel: null, disabledBoundChannel: key.route };
     const boundTarget = adapters.resolveModelTarget(model, key.route, settings);
     if (boundTarget) {
@@ -431,7 +449,8 @@ function pickByOrder(order, candidates, groups, override, usableOf) {
 }
 
 /** 是否为「用户显式指定渠道」：绑定渠道 / 固定策略命中。
- *  显式边界不做路由插件让位（否则「绑定」失真，也失去强制走某渠道的逃生口）；
+ *  显式边界不做路由插件让位（否则「绑定」失真，也失去「强制走某渠道」的逃生口）；
+ *  Key 绑定渠道额外是**硬边界**：候选队列只留它自己，失败不跨渠道（固定策略仍可跨渠道故障转移）。
  *  fixed 指向的渠道不含该模型时它并未生效，仍按智能路由让位。
  *  渠道覆盖（modelOverrides）自 2026-11 起改为**软排序偏好**（见 rankChannelsByOverride），
  *  不再构成显式边界——用户排第一的渠道被插件判定「整渠道靠后」时仍可让位。 */
@@ -529,12 +548,30 @@ const isInputTooLargeMsg = util.isInputTooLargeMsg;
  *  渠道私有业务码走扩展点 classifyError（契约见 adapters.cjs）：入参 channel 优先问适配器，
  *  返回非空即走渠道级分类。通用层保留的 4008/6004/11102/11115/11101 等码是**跨渠道共用**的
  * （trae/workbuddy/qoder 都会回同一族码），不能搬进单个渠道——搬走即改变其它渠道的分类结果 */
+/** 渠道扩展点（adapters.classifyError）的 kind 归一化：quota / auth 是渠道自己的叫法，
+ *  主干冷却表只认通用 kind，不认识就落 default 兜底成「固定 60 秒」，把上游明示的等待时间丢掉。
+ *  quota → rate（读上游墙钟 / Retry-After，参与渠道降级）；auth → relogin（连续 3 次判废）。
+ *  第 6 条裁决：上游说等多久就等多久，封顶在 applyCool 的 rate 分支统一施加。 */
+function normalizeChannelCls(r, e) {
+  if (!r) return r;
+  const msg = String((e && e.message) || "");
+  const retry = Number(e && e.retryAfterMs) > 0 ? Date.now() + Number(e.retryAfterMs) : 0;
+  if (r.kind === "quota") {
+    return { ...r, kind: "rate", resetMs: r.resetMs || parseRateResetMs(msg) || retry || 0 };
+  }
+  if (r.kind === "auth") {
+    // 凭证类错误上游也可能带等待时间（如「X 分钟后再试」）：一并接住，别丢成 60 秒兜底（第 6 条）
+    return { ...r, kind: "relogin", resetMs: r.resetMs || parseRateResetMs(msg) || retry || 0 };
+  }
+  return r;
+}
+
 function classifyUpstream(e, planLimit, channel) {
   if (channel) {
     const ad = adapters.get(channel);
     if (ad && typeof ad.classifyError === "function") {
       const r = ad.classifyError(e);
-      if (r) return r;
+      if (r) return normalizeChannelCls(r, e);
     }
   }
   if (planLimit || (e && e.status === 402)) return { kind: "credit", switchable: true, status: 402 };
@@ -582,7 +619,9 @@ function classifyUpstream(e, planLimit, channel) {
     return { kind: "rate", switchable: true, status: 429, resetMs: parseRateResetMs(msg) || (e.retryAfterMs ? Date.now() + e.retryAfterMs : 0) };
   }
   if (e && e.status === 401) return { kind: "relogin", switchable: true, status: 401 };
-  if (e && e.status === 404) return { kind: "not_found", switchable: true, status: 404 }; // 短冷却不累计，防雪崩
+  // 模型名不对（404）：确定性拒绝——不换号、不换渠道、也不进模型回退链，直接报错（第 3 条裁决）。
+  // 账号本身没坏，绝不能罚号（一次拼错会把整条渠道逐个冻 60 秒）；渠道也不降级（写错请求不是渠道故障）。
+  if (e && e.status === 404) return { kind: "not_found", switchable: false, status: 404 };
   if (e && e.status === 400) return { kind: "fatal", switchable: false, status: 400 };
   // 首字节超时（上游迟迟不吐第一个 token）：多为"这次 prompt 太大 / 上游这一刻忙"，
   // 不是账号故障——单独分类，只换号不冷却、也不计入 5xx/网络熔断
@@ -643,7 +682,8 @@ function upstreamRef(e) {
 
 /** 可触发渠道降级的错误类别：上游/余额/限流/凭证类。400 参数 / 11101 参数 / 11115 超长 /
  *  4001 模型配置类不降级——换渠道也救不了，罚渠道是冤枉 */
-const DEGRADABLE = new Set(["credit", "rate", "server", "relogin", "model_rate", "model_blocked", "not_found"]);
+const DEGRADABLE = new Set(["credit", "rate", "server", "relogin", "model_rate", "model_blocked"]);
+// not_found（模型名不对）刻意不在集合里：那是请求写错，不是渠道故障，降级会冤枉渠道。
 
 // ===== 渠道健康状态机：normal → degraded（降级，流量走备选）→ 半开（到期重获资格）→ 正常/再降级 =====
 // 内存态不落库（本机流量调度状态；重启后首请求撞一次墙即自愈重建）。streak 驱动指数退避防震荡
@@ -736,6 +776,8 @@ function applyCool(accId, model, cls, message) {
     // model_risk（上游风控 3012）同理：原因已随模型级冷却落库，再写账号 lastError 会让
     // 冷却结束后卡片仍挂着「被风控」的旧错误，被读成账号一直有问题
     cls.kind === "model_risk" ||
+    // not_found（模型名不对）同样不记：账号本身是好的，错的是请求写法，挂到卡片上会误导
+    cls.kind === "not_found" ||
     (cls.kind === "model_denied" && !cls.channelLevel);
   if (!silent && message) {
     store.noteError(accId, message);
@@ -750,9 +792,12 @@ function applyCool(accId, model, cls, message) {
       // 确定性拒绝，冷却账号会把"换一个模型就能用"的账号无意义地静默跳过——
       // 零动作、如实透传（classifyError 已置 switchable:false，链在此终止不再换号）
       return;
-    case "model_rate":
-      pool.coolAccountModel(accId, model, cls.resetMs || Date.now() + 600000, message); // 6004：对齐墙钟优先，缺省 10min
+    case "model_rate": {
+      // 6004：对齐上游明示的重置墙钟，缺省 10min；同样封顶 24h（第 6/8 条裁决）
+      const raw = cls.resetMs || Date.now() + 600000;
+      pool.coolAccountModel(accId, model, Math.min(raw, Date.now() + 24 * 3600000), message);
       return;
+    }
     case "model_risk":
       // 上游风控拦截：只罚「账号×模型」（缺省 10 分钟），账号与渠道都保持可用。
       // 与 model_rate 的差别只有「不进 DEGRADABLE」——单模型的拦截不该把整条渠道降级。
@@ -762,18 +807,28 @@ function applyCool(accId, model, cls, message) {
       pool.coolAccountModel(accId, model, 6 * 3600000, message, { backoff: true, baseMs: 6 * 3600000, capMs: 24 * 3600000 }); // 11102：6h 起指数封顶 24h
       return;
     case "rate": {
-      const until = cls.resetMs || (cls.retryAfterMs || 0) || (Date.now() + pool.softBackoffMs(accId));
+      const raw = cls.resetMs || (cls.retryAfterMs || 0) || (Date.now() + pool.softBackoffMs(accId));
+      // 第 6 条：上游说等多久就等多久，但封顶 24 小时——一个坏响应（比如「30 天后再试」）
+      // 不能把账号冻结几天却没人看得见。超过 24h 的按 24h 处理，到期后还会重新撞一次。
+      const until = Math.min(raw, Date.now() + 24 * 3600000);
       pool.coolAccountMs(accId, until, message);
       return;
     }
     case "not_found":
-      pool.coolAccountMs(accId, Date.now() + 60000, message); // 404 短冷却不累计，防雪崩
+      // 模型名不对：零动作不罚号（第 3 条裁决）。原因已随流水原文保留，不必在账号卡片上挂误导性错误。
       return;
-    case "relogin":
+    case "relogin": {
+      // 上游明示了等待时间就照它冷却（第 6 条，封顶 24h）——凭证类错误上游也会给长窗口，
+      // 丢掉就会每 60 秒拿失效凭据去撞一次。没有明示时间才回到「连续 3 次判废 / 60s 重试」。
+      if (cls.resetMs) {
+        pool.coolAccountMs(accId, Math.min(cls.resetMs, Date.now() + 24 * 3600000), `${message || "凭证失效"}（按上游等待时间）`);
+        return;
+      }
       // 连续 3 次凭证失效才判废（sessionDeadThreshold）；否则 60s 短冷却给重试机会
       if (pool.noteSessionDead(accId)) pool.coolAccount(accId, "relogin", `${message || "凭证失效"}（连续 3 次，请重新登录）`);
       else pool.coolAccountMs(accId, Date.now() + 60000, `${message || "凭证失效"}（短冷却重试）`);
       return;
+    }
     case "server": {
       // 5xx/网络：单次失败不冷却（只由外层轮转换号），连续 3 次才熔断（30m 指数封顶 6h）。
       // 语义（note_error 的 err_count 分支）：网络抖动/上游偶发 5xx 立即罚 10 分钟
@@ -798,6 +853,18 @@ const OPENAI_SURFACE = {
 const ANTHROPIC_SURFACE = { name: "anthropic", createSink: anthropicOut.create, readKey: anthropicIn.readKey };
 // Responses 入站的鉴权读法与 OpenAI 通路一致（Codex 走 Authorization: Bearer），复用同一个 readKey
 const RESPONSES_SURFACE = { name: "responses", createSink: responsesOut.create, readKey: OPENAI_SURFACE.readKey };
+
+/** 只读端点的鉴权（第 7 条裁决）：`/v1/models` 与 `/v1/messages/count_tokens` 必须带有效 Key；
+ *  `/healthz` 保持公开（监控探活不能带钥匙，且只回「活着」不泄露信息）。
+ *  两个头都认：Authorization: Bearer 与 x-api-key——客户端生态两种写法都有。 */
+function readOnlyKeyOk(req) {
+  const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const alt = String(req.headers["x-api-key"] || "").trim();
+  const secret = bearer || alt;
+  if (!secret) return false;
+  const key = store.findKeyBySecret(secret);
+  return !!key && !!key.enabled; // 与主通路同口径：停用的 Key 不算有效
+}
 
 /** chat/completions 主流程（stream 双态共用一套 emit → 出线或聚合）
  *  surface 只决定「这一串事件写成什么字节」：OpenAI / Anthropic / Responses 各一个工厂。
@@ -826,7 +893,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
   // hosted_tool 退化为 auto 等），由路由层从 toInternal() 取到后传进来。
   // 只进操作日志的 detail，**不落 usage_requests**——加列要走 DB 迁移，而这条信息的用途是
   // 「这次请求丢了什么」的排查线索，日志页本来就能查（issue #126 作者给的三个选项里选 op_logs）
-  const usageRow = { ts: startedAt, reqId, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: String(body.model || ""), modelActual: "", status: 0, convNotes: Array.isArray(convNotes) ? convNotes.join(" | ").slice(0, 300) : "" };
+  const usageRow = { ts: startedAt, reqId, keyId: "", keyName: "", channel: "", accountId: "", accountName: "", model: String(body.model || ""), modelActual: "", status: 0, upstreamTries: 0, convNotes: Array.isArray(convNotes) ? convNotes.join(" | ").slice(0, 300) : "" };
   // 真正发给上游的模型名（反向映射 / 模型回退 / 适配器改写后的真值），链内赋值、record 统一兜进流水。
   // 必须链外声明：usedTargetModel 在 try 内、鉴权失败的早期 record 调用早于它声明，直接读会踩 TDZ。
   let actualModelSent = "";
@@ -942,6 +1009,48 @@ async function handleChat(req, res, settings, surface, convNotes) {
   }
 
   const resolvedMain = resolveChannel(key, actualModel, settings);
+  // 绑定自定义提供商的三类确定性拒绝：前缀改道 / 裸名 / 模型不在清单（第 8 条）。
+  // 都在回退链之前返回——绑定是硬边界，不能让回退模型把它绕过去。
+  if (resolvedMain.prefixConflict) {
+    const p = resolvedMain.prefixConflict;
+    record({ status: 403, error: `prefix "${p.slug}/" conflicts with bound channel ${p.bound}` });
+    return sink.endErr(
+      403,
+      `没有权限，该 Key 绑定在渠道「${store.channelDisplay(p.bound)}」，不能用前缀 "${p.slug}/" 路由到别的上游`,
+      "permission_error",
+      "bound_channel_mismatch"
+    );
+  }
+  if (resolvedMain.disabledBoundProvider) {
+    const c = resolvedMain.disabledBoundProvider;
+    record({ status: 403, error: `bound provider ${c} disabled` });
+    return sink.endErr(
+      403,
+      `没有权限，该 Key 绑定的自定义提供商「${store.channelDisplay(c)}」未启用，请先在「自定义提供商」中启用后再试`,
+      "permission_error",
+      "provider_disabled"
+    );
+  }
+  if (resolvedMain.providerNeedsPrefix) {
+    const p = resolvedMain.providerNeedsPrefix;
+    record({ status: 403, error: `bound provider ${p.channel} requires slug prefix` });
+    return sink.endErr(
+      403,
+      `没有权限，该 Key 绑定在自定义提供商「${store.channelDisplay(p.channel)}」，模型名请写成 "${p.channel}/模型名"`,
+      "permission_error",
+      "provider_requires_prefix"
+    );
+  }
+  if (resolvedMain.notInProvider) {
+    const p = resolvedMain.notInProvider;
+    record({ status: 403, error: `model "${p.model}" not in bound provider ${p.channel}` });
+    return sink.endErr(
+      403,
+      `没有权限，模型 "${p.model}" 不在自定义提供商「${store.channelDisplay(p.channel)}」的清单里`,
+      "permission_error",
+      "model_not_in_provider"
+    );
+  }
   // Key 绑定的渠道被「上游启闭」关闭 / 不含该模型：直接 403，不进回退模型
   if (resolvedMain.disabledBoundChannel) {
     const c = resolvedMain.disabledBoundChannel;
@@ -1147,6 +1256,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
     let planLimitEnd = false; // planLimit（402）流中已出线的就地收尾：不是真成功，不清渠道降级态
     for (const chainModel of modelChain) {
       if (done || fatalErr) break;
+      // 客户端已断开：不再换模型（第 5 条裁决）。当前这次上游请求照常跑完、照常结算用量。
+      if (sink.isClientGone && sink.isClientGone()) break;
       if (upstreamTries >= maxTries) break; // 上游尝试预算用尽：不再开新渠道/新模型
       const resolved = resolveChannel(key, chainModel, settings);
       if (!resolved.channel) {
@@ -1179,8 +1290,13 @@ async function handleChat(req, res, settings, surface, convNotes) {
           orderOverride.length ? (ch) => routeUsable(ch, settings) : undefined
         )
       );
+      // Key 绑定渠道是硬边界：候选队列只留主渠道，失败直接报错，不静默改道（2026-11 裁决）。
+      // 固定渠道策略（fixed）保持 isExplicitRoute 的原语义：不让位、不因输入过大跳渠道，
+      // 但渠道故障转移照旧——「固定」是优先，不是只能。
+      const hardBound = key.route !== "auto";
+      const explicitBound = isExplicitRoute(key, settings, chainModel, resolved.channel);
       // Key 白名单过滤：allowedChannels 非空时，候选队列只留白名单内的渠道（主渠道 + 备选一起过）
-      let queue = [resolved.channel, ...owners];
+      let queue = hardBound ? [resolved.channel] : [resolved.channel, ...owners];
       if (keyAllowedChannels.length) {
         queue = queue.filter((c) => keyAllowedChannels.includes(String(c).toLowerCase()));
         if (!queue.length) {
@@ -1196,8 +1312,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
       // 也让人失去「强制走某渠道」的逃生口（见 isExplicitRoute）。
       queue = orderCandidateQueue(
         queue,
-        settings.channelFailover === false ? 1 : normalizeChannelFailoverMax(settings.channelFailoverMax),
-        !isExplicitRoute(key, settings, chainModel, resolved.channel) && pool.channelDeferred(queue[0])
+        hardBound || settings.channelFailover === false ? 1 : normalizeChannelFailoverMax(settings.channelFailoverMax),
+        !explicitBound && pool.channelDeferred(queue[0])
       ).queue;
       for (const c of queue) candidateChannels.add(c);
       const primaryChannel = queue[0];
@@ -1205,6 +1321,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
       for (let qi = 0; qi < queue.length; qi++) {
         const chan = queue[qi];
         if (done || fatalErr) break;
+        // 客户端已断开：不再开新渠道（第 5 条裁决）。已开跑的那次照常结算，不浪费已付的 token。
+        if (sink.isClientGone && sink.isClientGone()) break;
         if (upstreamTries >= maxTries) break;
         // 渠道降级中（熔断窗口）：跳过不撞墙；每轮重查——备选可能在排队期间刚被并发请求打光降级
         const chCool = channelCooling(chan);
@@ -1258,6 +1376,8 @@ async function handleChat(req, res, settings, surface, convNotes) {
         let degradedHere = ""; // 本渠道已就地降级过（WAF/11128），耗尽判定不再重复降级
         let budgetOut = false; // 上游尝试预算用尽跳出（不是渠道的错，不降级）
         for (let attempt = 0; attempt <= 2 && !done; attempt++) {
+          // 客户端已断开：同渠道也不再换号（第 5 条裁决）
+          if (sink.isClientGone && sink.isClientGone()) break;
           if (upstreamTries >= maxTries) { budgetOut = true; break; }
           const acc = pool.pickAccount(chan, strategy, [...tried], perAccountLimit);
           if (!acc) { poolEmpty = true; break; }
@@ -1280,6 +1400,7 @@ async function handleChat(req, res, settings, surface, convNotes) {
           // 泄漏面与租约一致——release 不漏它就不漏）
           rt.activeByChannel.set(chan, (rt.activeByChannel.get(chan) || 0) + 1);
           upstreamTries++; // 全局上游尝试预算（负缓存跳过不计；429 就地重试走下一轮自然再计）
+          usageRow.upstreamTries = upstreamTries; // 每日配额只算真打过上游的（第 4 条）
           realTries++;
           usageRow.accountId = acc.id;
           usageRow.accountName = acc.name;
@@ -1563,6 +1684,9 @@ async function handleChat(req, res, settings, surface, convNotes) {
       if (/content[_-]?filter|refusal|safety/i.test(String(finishReason || ""))) {
         errParts.push(`notice:content-filter(${finishReason})`);
       }
+      // 客户端中途断开（第 5/9 条）：本轮虽成功结算，但客户端没收到，流水必须留痕，
+      // 否则会被读成一次正常交付。
+      if (sink.isClientGone && sink.isClientGone()) errParts.push("notice:client-gone");
       record({
         status: 200, ttftMs, promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
         // 缓存 token：OpenAI 语义取 prompt_tokens_details.cached_tokens，Anthropic 上游取 cache_read_input_tokens
@@ -1646,7 +1770,10 @@ async function handleChat(req, res, settings, surface, convNotes) {
     } else {
       sink.endErr(st, msg);
     }
-    record({ status: st, ttftMs, error: [msg, upstreamRef(lastErr)].filter(Boolean).join(" · ").slice(0, 600) });
+    // 客户端中途断开（第 5/9 条）：这次失败很可能是客户端主动放弃造成的，不是渠道故障——
+    // 流水留痕，免得排障时被读成「渠道坏了」。
+    const gone = sink.isClientGone && sink.isClientGone();
+    record({ status: st, ttftMs, error: [gone ? "notice:client-gone" : "", msg, upstreamRef(lastErr)].filter(Boolean).join(" · ").slice(0, 600) });
   } catch (e) {
     const msg = String((e && e.message) || e);
     sink.endErr(502, msg, "server_error");
@@ -1709,7 +1836,14 @@ function buildApp(settings) {
 
   // 官方文档把 count_tokens 列为可选（缺了客户端退化成字符估算）。这里用网关自己的
   // length/4 口径实现——与客户端兜底同量级，胜在 /status 与统计页能看到同一个数。
-  app.post("/v1/messages/count_tokens", (req, res) => res.json(anthropicIn.countTokens(req.body || {})));
+  // 第 7 条裁决：必须带有效 Key——它不碰上游但吃网关 CPU，匿名可调等于给了免费消耗入口。
+  app.post("/v1/messages/count_tokens", (req, res) => {
+    if (!readOnlyKeyOk(req)) {
+      res.status(401).json({ type: "error", error: { type: "authentication_error", message: "无效的 API Key" } });
+      return undefined;
+    }
+    return res.json(anthropicIn.countTokens(req.body || {}));
+  });
 
   // Responses 入口（Codex CLI）：Codex 已删除 wire_api="chat"，没有这一层就只能靠 CC Switch 翻译。
   // enableResponses 与 enableAnthropic 同性质——默认开的紧急止血开关，关掉即回到「该端点不存在」。
@@ -1733,11 +1867,17 @@ function buildApp(settings) {
     });
   });
 
-  // 模型目录：三渠道合并视图，鉴权可选；停用模型不对外列出（调不通就不给看，省下游翻找）。
+  // 模型目录：三渠道合并视图。第 7 条裁决：必须带有效 Key（模型清单属内部信息，
+  // 能看出这台网关接了哪些渠道、哪些模型可用；绑定 0.0.0.0 时不该对外裸奔）。
+  // 停用模型不对外列出（调不通就不给看，省下游翻找）。
   // 「没有号池」的渠道（渠道被关 / 一个账号都没有）不对外列（issue #90）；
   // 有账号的渠道一律列出——cooling/额度耗尽/账号停用都只是暂时或主动不可用，
   // 模型保留展示、请求时拿到 503/402 明确文案，避免客户端模型列表整体闪没
-  app.get("/v1/models", (_req, res) => {
+  app.get("/v1/models", (req, res) => {
+    if (!readOnlyKeyOk(req)) {
+      res.status(401).json(util.openaiError("无效的 API Key", "invalid_request_error", "invalid_api_key"));
+      return undefined;
+    }
     const st = settings();
     const aliveCache = new Map();
     // 「有没有号池」判定（issue #90）：只看渠道是否开启 + 池里是否有账号条目，
@@ -1894,6 +2034,8 @@ module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSn
   normalizeModelOrder, rankChannelsByOverride,
   // 故障转移规模纯函数（tools/proxy-failover-selftest.cjs 边界断言用）
   normalizeChannelFailoverMax, perModelUpstreamBudget,
+  // 渠道错误 kind 归一化（tools/proxy-routing-guard-selftest.cjs 断言用）
+  normalizeChannelCls,
   // 候选渠道队列重排（tools/proxy-channel-defer-selftest.cjs 断言用）
   orderCandidateQueue, isExplicitRoute,
   // 「输入过大」跳渠道的剩余候选重排（tools/proxy-overflow-failover-selftest.cjs 断言用）

@@ -13,6 +13,10 @@
 // ① 空参探测 → 200 挂起页且会话存活  ② error 参数 → 400 结束会话
 // ③ 空探测后带凭据回调 → 换令牌链路照常执行  ④ hash 形态粘贴解析  ⑤ authCodeInfo 解析
 "use strict";
+// [沙箱] 默认指向临时目录，绝不读写真实用户数据；显式传入 AGENTHUB_DATA_DIR 时以其为准。
+if (!process.env.AGENTHUB_DATA_DIR) {
+  process.env.AGENTHUB_DATA_DIR = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-"));
+}
 const discovery = require("../electron/backend/proxy/discovery.cjs");
 const rules = require("../electron/backend/proxy/rules.cjs");
 

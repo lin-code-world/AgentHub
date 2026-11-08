@@ -168,14 +168,24 @@ async function main() {
     check("A4 打的是 workbuddy", hits.wb === wbBefore4 + 1 && lastRow().channel === "workbuddy", `${JSON.stringify(hits)} / ${lastRow().channel}`);
     cfg.channelFailover = true;
 
-    // ===== A5 key 钉死空池渠道：候选队列仍要靠可用性把它救回来 =====
-    store.updateKey(k.id, { route: "workbuddy_ai" });
+    // ===== A5 固定渠道策略钉空池渠道：fixed 是「优先」，候选队列仍要靠可用性把它救回来 =====
+    cfg.routeStrategy = "fixed";
+    cfg.fixedChannel = "workbuddy_ai";
     const wbBefore5 = hits.wb;
     rr = await call({ model: "shared-model", stream: false, messages: bodyMsg });
     body = await rr.text();
-    check("A5 钉空池渠道后应跳备选成功", rr.status === 200, `${rr.status} ${body.slice(0, 200)}`);
+    check("A5 空池渠道应跳备选成功", rr.status === 200, `${rr.status} ${body.slice(0, 200)}`);
     check("A5 跳到了 workbuddy", hits.wb === wbBefore5 + 1 && lastRow().channel === "workbuddy", JSON.stringify(hits));
     check("A5 轨迹如实记 failover:workbuddy_ai→…", /failover:workbuddy_ai→/.test(lastRow().error || ""), String(lastRow().error));
+    cfg.routeStrategy = "smart";
+
+    // ===== A5b Key 绑定空池渠道：硬边界，直接 503，不改道备选（2026-11 裁决） =====
+    store.updateKey(k.id, { route: "workbuddy_ai" });
+    const wbBefore5b = hits.wb;
+    rr = await call({ model: "shared-model", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("A5b 绑定空池渠道直接 503（不跳备选）", rr.status === 503, `${rr.status} ${body.slice(0, 200)}`);
+    check("A5b 不得改道 workbuddy", hits.wb === wbBefore5b, JSON.stringify(hits));
     store.updateKey(k.id, { route: "auto" });
 
     // ===== A6 单 owner 且空池：失败文案必须带渠道名与原因（旧实现只有「渠道暂不可用」）=====

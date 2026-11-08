@@ -99,7 +99,9 @@ async function main() {
     port: 19562, bind: "127.0.0.1", rateLimitPerMin: 120, concurrency: 1, // 每渠道上限 1：并发现场最容易构造
     // 关同 body 去重：本测试靠「内容相同的并发请求」观察每渠道在途闸，去重会把它们串行化（测不出并发）
     dedupeSameBody: false,
-    routeStrategy: "smart", fixedChannel: "", modelOverrides: {}, debugStatus: false,
+    // B1 用「固定渠道策略」钉主渠道：fixed 是「优先」，允许跨渠道故障转移。
+    // Key 绑定是硬边界、不允许改道（见 B1b）。
+    routeStrategy: "fixed", fixedChannel: "workbuddy", modelOverrides: {}, debugStatus: false,
     humanizeJitter: false, disabledModels: [],
     routeOrder: "score", channelFailover: true, channelFailoverMax: 3,
     channelCooldownMs: 120000, channelCooldownCapMs: 600000,
@@ -107,7 +109,7 @@ async function main() {
   const sr = await server.start(() => cfg);
   if (!sr.ok) throw new Error("网关启动失败: " + (sr.message || ""));
   const base = "http://127.0.0.1:19562";
-  const k = store.createKey({ name: "并发自测", route: "workbuddy", dailyQuota: 0, rateLimit: 0 });
+  const k = store.createKey({ name: "并发自测", route: "auto", dailyQuota: 0, rateLimit: 0 });
   const call = () =>
     fetch(base + "/v1/chat/completions", {
       method: "POST",
@@ -135,6 +137,17 @@ async function main() {
     check("B1 渠道打满不拒绝请求、跳空闲备选出线（旧实现：全局 429「上游并发已满」）", r2.status === 200, `${r2.status} ${body2.slice(0, 200)}`);
     check("B1 实际落在备选 workbuddy_ai", hits.wba >= 1 && hits.wb === 1, JSON.stringify(hits));
     check("B1 记账带 failover 轨迹", /failover:workbuddy→/.test(String((lastRow() || {}).error || "")), String((lastRow() || {}).error));
+
+    // ===== B1b：Key 绑定渠道是硬边界（2026-11 裁决）——打满直接 429，绝不改道备选 =====
+    {
+      store.updateKey(k.id, { route: "workbuddy" });
+      const wbaBefore = hits.wba;
+      const r2b = await call();
+      const body2b = await r2b.text();
+      check("B1b 绑定渠道打满直接 429（不跳备选）", r2b.status === 429, `${r2b.status} ${body2b.slice(0, 200)}`);
+      check("B1b 不得改道 workbuddy_ai", hits.wba === wbaBefore, JSON.stringify(hits));
+      store.updateKey(k.id, { route: "auto" });
+    }
 
     // ===== B2：两个候选渠道都满 → 才 429，且文案如实归因到网关并发 =====
     hold.wba.on = true;

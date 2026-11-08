@@ -17,7 +17,7 @@
 //         ④ 其它渠道的项一律不动（避免误删临时关闭渠道的排序）
 //         ⑤ 顺序内相对位次在摘除后保持不变
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const path = require("node:path");
 const fs = require("node:fs");
 

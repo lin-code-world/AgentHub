@@ -71,6 +71,8 @@ function create(ctx) {
 
   return {
     protocol: "openai",
+    /** 客户端是否已断开（调度层止损用，第 5 条）：正常结束时 res.writableEnded=true，不算断开 */
+    isClientGone: () => clientGone && !res.writableEnded,
 
     /** 开流：写 SSE 响应头 + 首帧 role。非流式没有这一步（等到 endOk 一次性 res.json） */
     writeHead: commitHead,

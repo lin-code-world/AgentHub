@@ -17,7 +17,7 @@
 //   C. 配置里渠道名字写错（拼错的不是真渠道）→ 拉取**任何**渠道都清不掉（它不是任何渠道）
 //   D. 渠道被关闭                            → 拉取该渠道清不掉（保护）
 "use strict";
-if (process.argv[2]) process.env.AGENTHUB_DATA_DIR = process.argv[2];
+process.env.AGENTHUB_DATA_DIR = process.argv[2] || require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "agenthub-sandbox-")); // [沙箱] 不传参数即用临时目录，绝不落真实用户数据
 const path = require("node:path");
 const fs = require("node:fs");
 

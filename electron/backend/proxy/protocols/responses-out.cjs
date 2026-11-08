@@ -238,6 +238,8 @@ function create(ctx) {
 
   return {
     protocol: "responses",
+    /** 客户端是否已断开（调度层止损用，第 5 条）：正常结束时 res.writableEnded=true，不算断开 */
+    isClientGone: () => clientGone && !res.writableEnded,
 
     writeHead() {
       if (!wantStream) return;
