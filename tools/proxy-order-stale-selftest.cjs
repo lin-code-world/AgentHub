@@ -44,17 +44,22 @@ fs.writeFileSync(catFile, JSON.stringify(cat, null, 2));
 rules.reload("catalog.json");
 
 /** 与 index.cjs 的 proxy_models 里完全同构的口径（那是闭包内联逻辑，抽不出来）：
- *  这里断言的是它依赖的两个原语（modelOwners / channelOn）组合出的结果。 */
+ *  这里断言的是它依赖的两个原语（modelOwners / channelOn）组合出的结果。
+ *  注意：proxy 段本身就是 cfg 参数（与 index.cjs 里 `adapters.channelOn(ch, cfg.proxy)` 对应）。 */
 function classify(model, orderArr, cfg) {
   const raw = server.normalizeModelOrder(orderArr);
   const validSet = new Set(adapters.modelOwners(model, cfg));
   const stale = [];
+  const muted = [];
   for (const ch of raw) {
     if (validSet.has(ch)) continue;
-    if (!adapters.channelOn(ch, cfg.proxy) && adapters.get(ch)) continue;
+    if (adapters.get(ch) && !adapters.channelOn(ch, cfg)) {
+      muted.push(ch);
+      continue;
+    }
     stale.push(ch);
   }
-  return { override: raw.filter((ch) => validSet.has(ch)), stale };
+  return { override: raw.filter((ch) => validSet.has(ch)), stale, muted };
 }
 
 function setCfg({ channelEnabled, modelOverrides, disabledModels }) {
@@ -75,13 +80,14 @@ console.log("1. 两渠道都启用");
   ok("无失效项", r.stale.length === 0, JSON.stringify(r.stale));
 }
 
-// ===== 2. 关闭 qoder 渠道：不标失效、也不出现在 override 里 =====
+// ===== 2. 关闭 qoder 渠道：不标失效，单独归入 muted（灰色「已关闭」） =====
 console.log("2. 关闭 qoder 渠道");
 {
   const c = setCfg({ channelEnabled: { qoder: false }, modelOverrides: { "shared-model": ["qoder", "zcode"] } });
   const r = classify("shared-model", ["qoder", "zcode"], c);
   ok("override 只剩 zcode", JSON.stringify(r.override) === '["zcode"]', JSON.stringify(r.override));
-  ok("关闭渠道不标「已失效」（界面干净）", r.stale.length === 0, JSON.stringify(r.stale));
+  ok("关闭渠道不标「已失效」（红色告警）", r.stale.length === 0, JSON.stringify(r.stale));
+  ok("关闭渠道归入 muted（灰色「已关闭」，提示可恢复）", JSON.stringify(r.muted) === '["qoder"]', JSON.stringify(r.muted));
 }
 
 // ===== 3. 渠道开着但模型已下架：标失效 =====

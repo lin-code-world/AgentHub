@@ -11,7 +11,7 @@
 <!-- 反代网关 · 模型目录：渠道 tab（全部/各渠道）+ 官方目录拉取 + 启停开关 / 渠道排序 / 倍率与能力 / 反向模型映射
      管理态存框架整体配置（disabledModels / modelOverrides / modelReverseAliases），保存即热生效（服务端每请求读盘） -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import { isWebTransport } from "../../api/caps";
 import type { ModelCustomEntry, ProxyChannelId, ProxyChannelView, ProxyModel } from "../../types";
@@ -458,7 +458,9 @@ async function setOrder(m: ProxyModel, list: string[]) {
 }
 
 /** 该模型已排的顺序（数组兜底：浏览器页面长时间开着、服务端已升级时，旧快照可能仍是字符串） */
-const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);/** 候选 = 该模型的全部来源渠道（顺序表只在这里面选）。
+const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);
+
+/** 候选 = 该模型的全部来源渠道（顺序表只在这里面选）。
  *  渠道 tab 下也给出全部来源：本行上方「来源渠道」列已经把各渠道列出来了，
  *  不存在「用户看不到的渠道」；只把当前 tab 的渠道排在下拉首位（见 orderCandidateOptions）。
  *  早先收窄成 [activeTab] 会让共享模型在渠道页里永远加不了第二个渠道。 */
@@ -466,6 +468,21 @@ const orderCandidates = (m: ProxyModel): string[] => m.sources.filter((s) => !or
 
 /** 顺序表里已失效的渠道（服务端已按 modelOwners 剔除，这里只用于标注） */
 const staleOf = (m: ProxyModel): string[] => m.overrideStale || [];
+/** 因渠道被关闭而暂时隐去的渠道（配置保留，重开恢复） */
+const mutedOf = (m: ProxyModel): string[] => m.overrideMuted || [];
+
+/** 从顺序表移除某一项。直接改配置原文（orderOf 已过滤失效项，拿不到它们）。
+ *  只用于清理「写错渠道名 / 已下架」这类拉取清不掉的残项。 */
+function dropFromOrder(m: ProxyModel, v: string) {
+  const raw = app.config.proxy.modelOverrides || {};
+  const stored = raw[m.id];
+  const list = (Array.isArray(stored) ? stored : stored ? [stored] : []) as string[];
+  if (!list.includes(v)) return;
+  setOrder(
+    m,
+    list.filter((x) => x !== v)
+  );
+}
 
 /** 下拉选项：渠道 tab 下把当前渠道提到最前（用户在这个页签里多半就是想先安排它） */
 const orderCandidateOptions = (m: ProxyModel): string[] => {
@@ -555,6 +572,27 @@ async function syncAll() {
 }
 
 onMounted(refresh);
+
+/** 配置被服务端自动改写时同步页面快照（当前唯一来源：拉取目录后的排序清理 pruneOrderOfChannel）。
+ *  桌面端由 App.vue 的 config-changed → refreshConfig() 兜底，这里只需覆盖浏览器形态：
+ *  页面快照若停留在旧值，用户下一次「添加/上移/移除」会带着已失效的项整段提交（proxy_config_save
+ *  是整段覆盖），那些刚被清掉的失效项就复活了。
+ *  浏览器形态 load_config 被 deny，只能走 proxy_config_get 拿反代段。 */
+let offConfigChanged: (() => void) | undefined;
+onMounted(() => {
+  offConfigChanged = api.onUpdateEvent(async (e) => {
+    if ((e as { event?: string }).event !== "config-changed" || !webForm.value) return;
+    const remote = await api.proxyConfigGet().catch(() => null);
+    if (!remote) return;
+    app.config.proxy = remote;
+    proxyReady = true;
+    // 顺序表可能变了，模型列表随之重拉（失效项标注也依赖后端重新计算）
+    models.value = await api.proxyModels().catch(() => models.value);
+  });
+});
+onUnmounted(() => {
+  if (offConfigChanged) offConfigChanged();
+});
 
 /** 本页是否处于前台：v-show 保活的页面切走后不会重新挂载（App.vue 的 visited 懒挂载），
  *  渠道启闭（侧栏「上游启闭」弹窗等）发生在其他入口时，本页收不到事件。
@@ -820,9 +858,25 @@ watch(active, (on) => {
                           <div
                             v-if="staleOf(m).length"
                             class="order-stale"
-                            :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除。`"
+                            :title="`这些渠道当前已不属于该模型（下架 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除；也可点 × 直接移除。`"
                           >
                             已失效：{{ staleOf(m).map(channelName).join("、") }}
+                            <button
+                              v-for="ch in staleOf(m)"
+                              :key="ch"
+                              class="order-btn"
+                              :title="`从排序中移除 ${channelName(ch)}`"
+                              @click="dropFromOrder(m, ch)"
+                            >
+                              ×
+                            </button>
+                          </div>
+                          <div
+                            v-if="mutedOf(m).length"
+                            class="order-muted"
+                            :title="`这些渠道已被「上游启闭」关闭，暂时不参与路由。\n配置仍保留，重新启用渠道后自动恢复。`"
+                          >
+                            已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                           </div>
                         </div>
                       </td>
@@ -948,9 +1002,17 @@ watch(active, (on) => {
                       <div
                         v-if="staleOf(m).length"
                         class="order-stale"
-                        :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除。`"
+                        :title="`这些渠道当前已不属于该模型（下架 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除；也可点 × 直接移除。`"
                       >
                         已失效：{{ staleOf(m).map(channelName).join("、") }}
+                        <button v-for="ch in staleOf(m)" :key="ch" class="order-btn" :title="`从排序中移除 ${channelName(ch)}`" @click="dropFromOrder(m, ch)">×</button>
+                      </div>
+                      <div
+                        v-if="mutedOf(m).length"
+                        class="order-muted"
+                        :title="`这些渠道已被「上游启闭」关闭，暂时不参与路由。\n配置仍保留，重新启用渠道后自动恢复。`"
+                      >
+                        已关闭：{{ mutedOf(m).map(channelName).join("、") }}
                       </div>
                     </div>
                   </td>
@@ -1703,6 +1765,11 @@ watch(active, (on) => {
 }
 .order-stale {
   color: var(--warn, #d69e2e);
+  font-size: 11px;
+  cursor: help;
+}
+.order-muted {
+  color: var(--text-3);
   font-size: 11px;
   cursor: help;
 }

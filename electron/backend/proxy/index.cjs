@@ -301,8 +301,13 @@ function emitPool() {
  *  时机安全性由调用方保证：只在拉取该渠道目录**成功**后调用，此时目录就是上游真实状态。
  *  只处理顺序表里含该渠道的模型；不含的一律不动（一个模型都没有就完全不写盘）。
  *
- *  关键保护：渠道被「上游启闭」关闭时**一律不清**。关闭是用户的临时决定，
- *  重开后指望排序原样回来；照清的后果是那些顺序永久丢失，且用户不会意识到是拉取干的。 */
+ *  关键保护一：渠道被「上游启闭」关闭时**一律不清**。关闭是用户的临时决定，
+ *  重开后指望排序原样回来；照清的后果是那些顺序永久丢失，且用户不会意识到是拉取干的。
+ *
+ *  关键保护二：判据只看「该渠道目录里是否真的有这个模型」，**不看 disabledModels**。
+ *  模型开关同样是用户的临时决定（关掉省钱 / 排查），重开时排序必须还在——
+ *  与渠道关闭一个待遇。modelOwners 会把 disabledModels 一起过滤掉，所以这里不能用它，
+ *  必须直接问渠道目录。 */
 function pruneOrderOfChannel(channel) {
   const ch = String(channel || "");
   if (!ch) return 0;
@@ -312,13 +317,17 @@ function pruneOrderOfChannel(channel) {
   // 渠道已关闭：目录状态不代表上游真实情况（关着的渠道根本拉不到目录），不动配置。
   // 注意 channelOn 吃的是 proxy 段（不是整份配置），传错层级会恒判「启用」。
   if (!adapters.channelOn(ch, cfg.proxy)) return 0;
+  const adapter = adapters.get(ch);
+  if (!adapter) return 0;
   let pruned = 0;
   for (const model of Object.keys(map)) {
     const list = server.normalizeModelOrder(map[model]);
     if (!list.includes(ch)) continue;
-    // 该渠道此刻是否仍拥有这个模型（与路由同一口径：渠道启闭 / 模型禁用 / 目录逐字命中）
-    // modelOwners 同样吃 proxy 段
-    if (adapters.modelOwners(model, cfg.proxy).includes(ch)) continue;
+    // 只问目录：该渠道的模型列表里逐字有没有这个名字（与 modelOwners 的 exact 分支同口径）。
+    // 反向映射命中的渠道也算「有」——那种模型本来就不在目录里，靠映射可达。
+    const inCatalog = adapter.models().some((m) => String(m) === String(model));
+    const mappedIn = !!adapters.resolveModelTarget(model, ch, cfg.proxy);
+    if (inCatalog || mappedIn) continue;
     const next = list.filter((x) => x !== ch);
     if (next.length) map[model] = next;
     else delete map[model]; // 清空即删键，配置保持干净（与前端「恢复自动路由」同口径）
@@ -1539,22 +1548,29 @@ function register(ipcMain) {
         // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。
         // 不过滤的话，模型下架 / 渠道被上游启闭 / 手写配置写错渠道名时，
         // 界面仍把它显示成 1 号位，实际路由早已跳过它——用户会以为功能没生效。
-        // overrideStale 只保留「该渠道仍启用、但确实没有这个模型」的项（真下架 / 配置写错），
-        // 供前端标注「已失效」。因**渠道被关闭**而失效的项不下发（见下）——关闭是临时决定，
-        // 配置要留着等重开恢复，界面上也不该天天挂一行「已失效」。
+        // 三类不合法的项分开下发，前端用不同颜色区分：
+        //   overrideStale  = 渠道仍启用，但确实没有这个模型（真下架 / 配置写错）→ 红色「已失效」
+        //   overrideMuted  = 渠道被「上游启闭」关闭（配置保留，重开自动恢复）→ 灰色「已关闭」
+        // 不区分的后果：关闭渠道的项若静默消失，用户会以为排序被删了，很可能手工再排一次，
+        // 重开渠道后出现重复项。
         ...(() => {
           const raw = server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]);
           const validSet = new Set(adapters.modelOwners(m.id, cfg));
           const stale = [];
+          const muted = [];
           for (const ch of raw) {
             if (validSet.has(ch)) continue;
-            // 渠道被关闭 → 不算「失效」，只是暂时隐去（配置保留）
-            if (!adapters.channelOn(ch, cfg.proxy) && adapters.get(ch)) continue;
+            // 渠道被关闭 → 暂时隐去（配置保留），灰显而非标失效
+            if (adapters.get(ch) && !adapters.channelOn(ch, cfg.proxy)) {
+              muted.push(ch);
+              continue;
+            }
             stale.push(ch);
           }
           return {
             override: raw.filter((ch) => validSet.has(ch)),
             overrideStale: stale,
+            overrideMuted: muted,
           };
         })(),
         fallback: (cfg.modelFallback || {})[m.id] || "",

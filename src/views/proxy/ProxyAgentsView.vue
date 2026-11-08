@@ -83,8 +83,16 @@ function toast(text: string, kind: "info" | "err" = "info") {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, 4200);
 }
-// 渠道切换：顶部一行渠道胶囊，下方整块区域只显示当前渠道号池
-const activeChannel = ref<ProxyChannelId>("trae");
+// 渠道切换：顶部一行渠道胶囊，下方整块区域只显示当前渠道号池。
+// 当前渠道存在全局 store（app.poolChannel）：左栏渠道额度行点一下就是改它 + 跳本页，
+// 本页切换也写回去，左栏据此点亮「正在看的渠道」。只在本组件内换写法不成立——两侧要互相同步。
+const activeChannel = computed({
+  get: () => app.poolChannel,
+  set: (v: ProxyChannelId) => {
+    app.poolChannel = v;
+    app.poolChannelPicked = true; // 页内手动切过即视为用户选择，左栏随之点亮
+  },
+});
 /** 渠道胶囊的气泡（胶囊只显示名称，可用数与降级剩余时间靠悬浮补充）：
  *  渠道名 · 2/5 可用；降级中的渠道把剩余时间也带上，免得只看到一个红点不知道在等什么 */
 function stripTip(ch: ProxyChannelView): string {
@@ -1591,20 +1599,26 @@ async function onFilePicked(e: Event) {
 /** 本页是否处于前台：v-show 保活的页面切走后，秒级 tick 与事件全量刷新都应停掉，
     不能在后台空烧主线程拖累前台页的鼠标跟手度 */
 const active = computed(() => app.activeModule === "proxy" && app.activePage === "agents");
-/** 进入号池页：默认落在渠道切换条的第一个（有账号的第一个渠道）；切换条没有渠道时保持现状 */
-async function focusFirstSwitchableChannel() {
+/** 进入号池页：用户主动选过渠道就尊重（左栏点名、页内切换条都算）；
+ *  没选过则按原逻辑落切换条的第一个（有账号的第一个渠道）；切换条没有渠道时保持现状。
+ *  默认落点刻意不经过 activeChannel 的 setter——那是「用户选了」的语义，
+ *  走它会把左栏点亮成一个用户没选过的渠道，且下次进页不再按原逻辑落第一个。 */
+async function focusSwitchableChannel() {
   await refresh();
+  if (app.poolChannelPicked && switchableChannels.value.some((c) => c.id === app.poolChannel)) return;
   const first = switchableChannels.value[0];
-  if (first) activeChannel.value = first.id as ProxyChannelId;
+  if (!first) return;
+  app.poolChannel = first.id as ProxyChannelId;
 }
-/** 是否已经进过号池页：首次进入落第一个渠道方块，之后从别的页面跳回来保持离开时的渠道 */
+/** 是否已经进过号池页：首次进入落一个有效渠道（用户没主动选过时按原逻辑落第一个有账号的），
+ *  之后从别的页面跳回来只补数据 */
 let enteredAgentsPage = false;
 watch(active, (on) => {
   if (!on) return;
   now.value = Date.now(); // 切回来先校准时钟，冷却倒计时才不会停在旧读数
   if (!enteredAgentsPage) {
     enteredAgentsPage = true;
-    focusFirstSwitchableChannel();
+    focusSwitchableChannel();
   } else {
     refresh(); // 再次进入：只补数据，渠道保持离开时选的那个
   }
@@ -1687,11 +1701,11 @@ onMounted(() => {
   // 冷却/降级倒计时 5 秒一跳：秒级粒度对 1 分钟以上的冷却没有信息增量，
   // 降频减少空闲唤醒（tickNow 内部还会判断是否需要更新 now，不需要时不动响应式）
   nowTimer = window.setInterval(tickNow, 5000);
-  // 应用启动就在号池页算首次进入（watch 无 immediate，这里补齐第一个渠道）；
-  // 启动在别的页面时只拉数据，等用户首次切进来再由 watch 落第一个渠道
+  // 应用启动就在号池页算首次进入（watch 无 immediate，这里补齐一个有效渠道）；
+  // 启动在别的页面时只拉数据，等用户首次切进来再由 watch 落一个有效渠道
   if (active.value) {
     enteredAgentsPage = true;
-    focusFirstSwitchableChannel();
+    focusSwitchableChannel();
   } else {
     refresh();
   }

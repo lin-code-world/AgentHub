@@ -16,7 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { fmtBalance, balanceUnit } from "../views/proxy/format";
 import { isUnusableChannel } from "../views/proxy/channelHealth";
-import type { ModuleKey } from "../types";
+import type { ModuleKey, ProxyChannelId } from "../types";
 import * as api from "../api/ipc";
 import { denyState, isWebTransport } from "../api/caps";
 import { coalesceAsync } from "../utils/timing";
@@ -160,6 +160,12 @@ const fmtDay = (ts: number) => {
 // 上游启闭弹窗（渠道级开关：关闭的渠道在反代网关全部页面动态隐藏）
 const upOpen = ref(false);
 
+/** 渠道额度行 → 号池页该渠道：侧栏列表的行类型来自主进程视图，id 是运行期字符串，
+ *  收口成一个函数免得模板里到处做类型断言 */
+function openChannel(id: string) {
+  app.openPoolChannel(id as ProxyChannelId);
+}
+
 // ===== 下卡片：模块总览概况（标题 / 提示全部接真实统计） =====
 const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(() => ({
   proxy: { title: "渠道额度", hint: visibleChannels.value.length ? `${visibleChannels.value.length} 个渠道` : "渠道" },
@@ -225,9 +231,10 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
       </div>
       <div class="ov-body">
         <!-- 反代网关：渠道额度（号池实时数据，渠道增减自动跟进）。
+             每行可点：直接跳「号池」并把号池切到该渠道；当前正在看的渠道行加深底色。
              注意：这里不能用 <template> 做分组——无指令的 template 会被 Vue 编译成不渲染的
              惰性 fragment（内容进 content 文档片段），整个渠道列表会凭空消失 -->
-        <div v-for="c in visibleChannels" :key="c.id" class="ov-row">
+        <div v-for="c in visibleChannels" :key="c.id" class="ov-row ov-pick" :class="{ selected: app.poolChannelPicked && app.poolChannel === c.id }" role="button" tabindex="0" :aria-current="app.poolChannelPicked && app.poolChannel === c.id ? 'true' : undefined" :title="`查看「${c.display}」号池`" @click="openChannel(c.id)" @keydown.enter.prevent="openChannel(c.id)" @keydown.space.prevent="openChannel(c.id)">
           <div class="grow">
             <div class="ov-name">
               {{ c.display }}<span v-if="c.summary.expiringSoon" class="ov-tag warn">即将到期</span>
@@ -588,6 +595,13 @@ const OVERVIEW = computed<Record<ModuleKey, { title: string; hint: string }>>(()
 }
 .ov-pick.selected {
   background: var(--accent-dim);
+  /* 左侧强调条：用 inset 阴影而不是 border-left，免得行宽位移把右侧数字挤动 */
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* 键盘操作（tabindex 行）：只在键盘聚焦时描边，鼠标点击不留描边 */
+.ov-pick:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: -2px;
 }
 /* 设备行：在可选中行之上叠加左滑删除手势（行体左移，露出右侧删除按钮） */
 .ov-device {

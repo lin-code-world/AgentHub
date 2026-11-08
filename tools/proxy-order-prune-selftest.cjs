@@ -101,18 +101,33 @@ console.log("6. 关闭渠道时不清");
   ok("关闭渠道的排序项原样保留（重开即可恢复）", JSON.stringify(after3["drop-model"]) === '["qoder","zcode"]', JSON.stringify(after3["drop-model"]));
 }
 
-// ===== 关键边界：模型被禁用（disabledModels）时视为失效，应清理 =====
-console.log("7. 模型被禁用时清理");
+// ===== 关键边界：模型被禁用（disabledModels）时**不清理** =====
+// 模型开关与渠道关闭同属用户的临时决定，重开时排序必须还在。
+// 判据只看目录：该渠道目录里仍有这个模型 → 不算失效。
+console.log("7. 模型被禁用时保留（不清）");
 {
   const cfg = config.loadConfig();
   cfg.proxy.modelOverrides = { "drop-model": ["qoder", "loomy"] };
   cfg.proxy.channelEnabled = {};
   cfg.proxy.disabledModels = ["drop-model"];
   config.saveConfig(cfg);
+  // drop-model 在 loomy 目录里有，qoder 目录里没有 → qoder 该被清（真下架），loomy 保留
   const n3 = prune("qoder");
   const after4 = config.loadConfig().proxy.modelOverrides;
-  ok("模型被禁用后 qoder 视为失效并清理", n3 === 1, `实际 ${n3}`);
+  ok("模型被禁用不影响「真下架」的判定（qoder 仍被清）", n3 === 1, `实际 ${n3}`);
   ok("清理后只剩 loomy（顺序保持）", JSON.stringify(after4["drop-model"]) === '["loomy"]', JSON.stringify(after4["drop-model"]));
+}
+{
+  // 模型在 qoder 目录里确实存在，只是被禁用 → 不得清理
+  const cfg = config.loadConfig();
+  cfg.proxy.modelOverrides = { "keep-model": ["qoder", "zcode"] };
+  cfg.proxy.channelEnabled = {};
+  cfg.proxy.disabledModels = ["keep-model"];
+  config.saveConfig(cfg);
+  const n4 = prune("qoder");
+  const after5 = config.loadConfig().proxy.modelOverrides;
+  ok("模型禁用但目录里仍有 → 不清理", n4 === 0, `实际 ${n4}`);
+  ok("顺序原样保留（重开模型即恢复）", JSON.stringify(after5["keep-model"]) === '["qoder","zcode"]', JSON.stringify(after5["keep-model"]));
 }
 
 console.log(`ORDER PRUNE SELFTEST OK（${pass} 项）`);

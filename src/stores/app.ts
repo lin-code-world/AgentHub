@@ -12,7 +12,7 @@
 import { defineStore } from "pinia";
 import { MODULES } from "../types";
 import { moduleEnabled } from "../api/caps";
-import type { AppConfig, SettingsTab, ModuleDef, ModuleKey, PageDef } from "../types";
+import type { AppConfig, SettingsTab, ModuleDef, ModuleKey, PageDef, ProxyChannelId } from "../types";
 import * as api from "../api/ipc";
 
 /** 递归合并：以 base 为基线补全 patch 缺失的嵌套字段；数组与原始值一律整体取 patch（有则覆盖）。
@@ -113,6 +113,14 @@ export const useAppStore = defineStore("app", {
     })(),
     /** 号池页 → 日志页的跨页传参：待生效的渠道筛选（日志页切回时消费并清空） */
     pendingLogChannel: "",
+    /** 号池页当前查看的渠道（页内切换条与左栏渠道额度行共用）。
+     *  放在全局是为了让左栏点渠道就能把号池切过去、并把正在看的那行点亮：
+     *  页内私存的话左栏无从得知、也没法指挥页内切换。 */
+    poolChannel: "trae" as ProxyChannelId,
+    /** 用户是否主动选过号池渠道（左栏点击 / 页内切换条）。
+     *  没选过时首次进号池页仍按原逻辑落「第一个有账号的渠道」，左栏也不点亮任何行——
+     *  否则默认值会让人误以为那个渠道是自己选的，还改变了原有默认落点。 */
+    poolChannelPicked: false,
   }),
   getters: {
     isDark: (s) => s.config.theme === "dark",
@@ -218,6 +226,14 @@ export const useAppStore = defineStore("app", {
     setPage(id: string) {
       this.settingsOpen = false;
       this.activePage = id;
+    },
+    /** 左栏渠道额度行：直接跳「号池」并把页面切到该渠道（高亮由侧栏读 poolChannel 自行点亮） */
+    openPoolChannel(channel: ProxyChannelId) {
+      this.poolChannel = channel;
+      this.poolChannelPicked = true;
+      this.settingsOpen = false;
+      this.activeModule = "proxy";
+      this.activePage = "agents";
     },
     /** 左栏收缩/展开：状态本机记住（与页面镜像同款 localStorage 方案） */
     toggleSideCollapsed() {

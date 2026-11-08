@@ -489,8 +489,10 @@ export interface ProxyModel {
   enabled: boolean;
   /** 渠道顺序（空数组 = 自动；服务端已把旧版单字符串归一成数组，并剔除不属于本模型的渠道） */
   override: string[];
-  /** 顺序表里已失效的渠道（模型下架 / 渠道被上游启闭 / 配置写错）：不参与路由，仅用于界面标注 */
+  /** 顺序表里已失效的渠道（模型下架 / 配置写错）：不参与路由，仅用于界面标注 */
   overrideStale?: string[];
+  /** 顺序表里因「渠道被上游启闭关闭」而暂时隐去的渠道：配置保留，重开自动恢复 */
+  overrideMuted?: string[];
   fallback: string;
   custom?: ModelCustomEntry;
 }

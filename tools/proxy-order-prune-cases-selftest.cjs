@@ -65,12 +65,14 @@ console.log("A. 渠道开着，上游把模型下架");
 }
 
 // ===== B. 渠道开着，模型目录里手动关了该模型 =====
+// 语义：模型开关是临时决定，重开时排序必须还在 → **不清**。
+// 判据只看目录里是否真有这个模型（keep-model 三渠道都有）。
 console.log("B. 模型被手动关闭（disabledModels）");
 {
   setCfg({ channelEnabled: {}, disabledModels: ["keep-model"], modelOverrides: { "keep-model": ["qoder", "zcode"] } });
   const n = pruneOrderOfChannel("qoder");
-  ok("拉取 qoder 时清掉 qoder（模型已被禁用）", n === 1, `实际 ${n}`);
-  ok("清理后只剩 zcode", JSON.stringify(readOrder("keep-model")) === '["zcode"]', JSON.stringify(readOrder("keep-model")));
+  ok("模型被禁用但目录里仍有 → 不清（保住重开后的排序）", n === 0, `实际 ${n}`);
+  ok("顺序原样保留", JSON.stringify(readOrder("keep-model")) === '["qoder","zcode"]', JSON.stringify(readOrder("keep-model")));
 }
 
 // ===== C. 渠道名字写错（拼错的不是真渠道）=====
