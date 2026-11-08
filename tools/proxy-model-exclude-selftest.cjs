@@ -77,5 +77,29 @@ console.log("1. 归属过滤");
   ok("非法配置按不排除处理", adapters.modelOwners("shared-model", c).includes("zcode"));
 }
 
+// ===== 2. 请求路径（resolveChannel）=====
+console.log("2. 请求路径");
+{
+  // 7) 被排除渠道不进主渠道候选（即便排序把它排第一）
+  let c = setCfg({ modelExcludedChannels: { "shared-model": ["qoder"] }, modelOverrides: { "shared-model": ["qoder", "zcode"] } });
+  ok("被排除渠道不当主渠道", server.resolveChannel({ route: "auto" }, "shared-model", c).channel === "zcode", JSON.stringify(server.resolveChannel({ route: "auto" }, "shared-model", c)));
+  // 对照：无排除时排序第一的 qoder 会被选中
+  c = setCfg({ modelOverrides: { "shared-model": ["qoder", "zcode"] } });
+  ok("对照：无排除时排第一的 qoder 成为主渠道", server.resolveChannel({ route: "auto" }, "shared-model", c).channel === "qoder", JSON.stringify(server.resolveChannel({ route: "auto" }, "shared-model", c)));
+
+  // 8) 全排除 → excludedModel
+  c = setCfg({ modelExcludedChannels: { "solo-model": ["zcode"] } });
+  ok("全排除返回 excludedModel", server.resolveChannel({ route: "auto" }, "solo-model", c).excludedModel === "solo-model", JSON.stringify(server.resolveChannel({ route: "auto" }, "solo-model", c)));
+
+  // 9) 全排除 + fixed 策略：不得透传打到固定渠道
+  c = setCfg({ routeStrategy: "fixed", fixedChannel: "zcode", modelExcludedChannels: { "solo-model": ["zcode"] } });
+  ok("全排除在 fixed 下仍拒绝", server.resolveChannel({ route: "auto" }, "solo-model", c).excludedModel === "solo-model", JSON.stringify(server.resolveChannel({ route: "auto" }, "solo-model", c)));
+
+  // 10) Key 绑定被排除渠道 → excludedBoundChannel
+  c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] } });
+  const bound = server.resolveChannel({ route: "zcode" }, "shared-model", c);
+  ok("Key 绑定被排除渠道 → excludedBoundChannel", !!(bound.excludedBoundChannel && bound.excludedBoundChannel.channel === "zcode"), JSON.stringify(bound));
+}
+
 console.log(`MODEL EXCLUDE SELFTEST OK（${pass} 项）`);
 process.exit(0);

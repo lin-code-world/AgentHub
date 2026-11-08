@@ -208,6 +208,11 @@ function resolveChannel(key, model, settings) {
     return { channel: slug };
   }
   const owners = adapters.modelOwners(model, settings);
+  // 归属渠道存在、但都被模型级渠道排除：这是「模型不可用」，不是「模型不存在」。
+  // 必须在此拦下，避免落到下面 fixed 分支被「透传试错」打到固定渠道。
+  if (!owners.length && adapters.modelOwnersIgnoringExclusions(model, settings).length) {
+    return { channel: null, excludedModel: model };
+  }
   // Key 绑定渠道是用户显式指定的物理边界：渠道被「上游启闭」关闭、或模型不在该渠道目录时
   // 一律 403 拒绝——不回落其它渠道、也不「透传试错」目录外模型（静默改道/放行会让人误以为绑定生效）。
   // 单源强制只留给智能路由。
@@ -220,6 +225,10 @@ function resolveChannel(key, model, settings) {
       return { channel: null, providerNeedsPrefix: { model, channel: key.route } };
     }
     if (!adapters.channelOn(key.route, settings)) return { channel: null, disabledBoundChannel: key.route };
+    // 该模型已把绑定渠道排除：绑定是硬边界，不静默改道，明确拒绝
+    if (adapters.modelExcludedChannelsOf(model, settings).includes(String(key.route))) {
+      return { channel: null, excludedBoundChannel: { model, channel: key.route } };
+    }
     // 绑定渠道是用户显式指定的物理边界：即使 model 是被某条反向映射占据的真名，
     // 这里也按「该渠道能接它」放行——绑定即授权直连，属有意为之（见设计稿判据补充）。
     const boundTarget = adapters.resolveModelTarget(model, key.route, settings);
@@ -1119,6 +1128,17 @@ async function handleChat(req, res, settings, surface, convNotes) {
     record({ status: 403, error: `bound channel ${c} disabled` });
     return sink.endErr(403, `没有权限，渠道「${store.channelDisplay(c)}」上游未启用，请在「上游启闭」中开启后再试`, "permission_error", "channel_disabled");
   }
+  // 模型级渠道排除：用锁定了被排除渠道的 Key 请求这个模型 → 明确拒绝（绑定是硬边界，不改道）
+  if (resolvedMain.excludedBoundChannel) {
+    const e = resolvedMain.excludedBoundChannel;
+    record({ status: 403, error: `model "${e.model}" excluded from bound channel ${e.channel}` });
+    return sink.endErr(
+      403,
+      `没有权限，模型 "${e.model}" 已被设置为不使用渠道「${store.channelDisplay(e.channel)}」（模型目录页可恢复）`,
+      "permission_error",
+      "excluded_bound_channel"
+    );
+  }
   if (resolvedMain.disabledMappedTarget) {
     const d = resolvedMain.disabledMappedTarget;
     record({ status: 403, error: "mapped target disabled" });
@@ -1151,6 +1171,16 @@ async function handleChat(req, res, settings, surface, convNotes) {
       record({ status: mappedReply.status, error: "mapped target disabled" });
       return sink.endErr(mappedReply.status, mappedReply.message, "invalid_request_error", mappedReply.code);
     }
+  }
+  // 模型级渠道排除把该模型的所有来源渠道都排除了：模型不可用（确定性原因，不吞进回退链）
+  if (resolvedMain.excludedModel) {
+    record({ status: 400, error: "model excluded from all channels" });
+    return sink.endErr(
+      400,
+      `模型 "${resolvedMain.excludedModel}" 的所有来源渠道都已被设置为不使用（模型目录页可恢复）`,
+      "invalid_request_error",
+      "model_excluded"
+    );
   }
   if (!resolvedMain.channel && !fallback) {
     const reply = unknownModelReply(actualModel, resolvedMain, settings);
