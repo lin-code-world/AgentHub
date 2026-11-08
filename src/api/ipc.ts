@@ -281,8 +281,8 @@ export const proxyQoderExportToolData = () =>
 // ===== 反代网关：模型 / 统计 / 规则 =====
 export const proxyModels = () => call<ProxyModel[]>("proxy_models");
 export const proxyModelsSync = (channel: string) =>
-  // 外网拉模型目录，主进程 httpJson 60s 上限
-  call<{ ok: boolean; channel?: string; count?: number; withRate?: number; message?: string }>("proxy_models_sync", { channel }, 0);
+  // 外网拉模型目录，主进程 httpJson 60s 上限；orderPruned = 顺手清掉的失效排序条数
+  call<{ ok: boolean; channel?: string; count?: number; withRate?: number; orderPruned?: number; message?: string }>("proxy_models_sync", { channel }, 0);
 
 // ===== 反代网关：自定义提供商（中转站 / 自建 OpenAI 兼容端点） =====
 

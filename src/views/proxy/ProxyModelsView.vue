@@ -458,9 +458,7 @@ async function setOrder(m: ProxyModel, list: string[]) {
 }
 
 /** 该模型已排的顺序（数组兜底：浏览器页面长时间开着、服务端已升级时，旧快照可能仍是字符串） */
-const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);
-
-/** 候选 = 该模型的全部来源渠道（顺序表只在这里面选）。
+const orderOf = (m: ProxyModel): string[] => (Array.isArray(m.override) ? m.override : m.override ? [m.override as string] : []);/** 候选 = 该模型的全部来源渠道（顺序表只在这里面选）。
  *  渠道 tab 下也给出全部来源：本行上方「来源渠道」列已经把各渠道列出来了，
  *  不存在「用户看不到的渠道」；只把当前 tab 的渠道排在下拉首位（见 orderCandidateOptions）。
  *  早先收窄成 [activeTab] 会让共享模型在渠道页里永远加不了第二个渠道。 */
@@ -482,20 +480,6 @@ function addToOrder(m: ProxyModel, v: string) {
 }
 function removeFromOrder(m: ProxyModel, v: string) {
   setOrder(m, orderOf(m).filter((x) => x !== v));
-}
-
-/** 清掉顺序表里已失效的渠道（模型下架 / 渠道被关闭 / 配置写错）。
- *  这些项已不参与路由，但会一直显示「已失效」；用户需要一个一键清理入口。
- *  注意：必须直接改原始配置（orderOf 已过滤掉失效项，拿不到它们）。 */
-function clearStale(m: ProxyModel) {
-  const stale = new Set(staleOf(m));
-  if (!stale.size) return;
-  const raw = app.config.proxy.modelOverrides || {};
-  const list = (Array.isArray(raw[m.id]) ? raw[m.id] : raw[m.id] ? [raw[m.id]] : []) as string[];
-  setOrder(
-    m,
-    list.filter((x) => !stale.has(x))
-  );
 }
 function moveInOrder(m: ProxyModel, v: string, delta: number) {
   const list = [...orderOf(m)];
@@ -519,7 +503,8 @@ async function syncCatalog(channel: string) {
       errFromRefresh = false;
     } else {
       const rateInfo = r.withRate ? `，其中 ${r.withRate} 个含倍率` : "";
-      msg.value = `已拉取 ${r.count ?? 0} 个模型到 ${channelName(channel)}目录${rateInfo}`;
+      const pruneInfo = r.orderPruned ? `，并清除了 ${r.orderPruned} 个模型里该渠道的失效排序` : "";
+      msg.value = `已拉取 ${r.count ?? 0} 个模型到 ${channelName(channel)}目录${rateInfo}${pruneInfo}`;
       setTimeout(() => (msg.value = ""), 3000);
     }
   } catch (e) {
@@ -835,10 +820,9 @@ watch(active, (on) => {
                           <div
                             v-if="staleOf(m).length"
                             class="order-stale"
-                            :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
+                            :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除。`"
                           >
                             已失效：{{ staleOf(m).map(channelName).join("、") }}
-                            <button class="order-btn" title="从顺序里清除这些失效项" @click="clearStale(m)">清除</button>
                           </div>
                         </div>
                       </td>
@@ -964,10 +948,9 @@ watch(active, (on) => {
                       <div
                         v-if="staleOf(m).length"
                         class="order-stale"
-                        :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由：${staleOf(m).map(channelName).join('、')}`"
+                        :title="`这些渠道当前已不属于该模型（下架 / 上游关闭 / 配置写错），不参与路由。\n拉取该渠道的模型目录后会自动清除。`"
                       >
                         已失效：{{ staleOf(m).map(channelName).join("、") }}
-                        <button class="order-btn" title="从顺序里清除这些失效项" @click="clearStale(m)">清除</button>
                       </div>
                     </div>
                   </td>

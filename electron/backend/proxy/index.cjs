@@ -297,6 +297,41 @@ function emitPool() {
   }
 }
 
+/** 把某个渠道从「它已经不再拥有的模型」的渠道排序里摘掉，返回清理条数。
+ *  时机安全性由调用方保证：只在拉取该渠道目录**成功**后调用，此时目录就是上游真实状态。
+ *  只处理顺序表里含该渠道的模型；不含的一律不动（一个模型都没有就完全不写盘）。
+ *
+ *  关键保护：渠道被「上游启闭」关闭时**一律不清**。关闭是用户的临时决定，
+ *  重开后指望排序原样回来；照清的后果是那些顺序永久丢失，且用户不会意识到是拉取干的。 */
+function pruneOrderOfChannel(channel) {
+  const ch = String(channel || "");
+  if (!ch) return 0;
+  const cfg = config.loadConfig();
+  const map = cfg.proxy && cfg.proxy.modelOverrides;
+  if (!map || typeof map !== "object") return 0;
+  // 渠道已关闭：目录状态不代表上游真实情况（关着的渠道根本拉不到目录），不动配置。
+  // 注意 channelOn 吃的是 proxy 段（不是整份配置），传错层级会恒判「启用」。
+  if (!adapters.channelOn(ch, cfg.proxy)) return 0;
+  let pruned = 0;
+  for (const model of Object.keys(map)) {
+    const list = server.normalizeModelOrder(map[model]);
+    if (!list.includes(ch)) continue;
+    // 该渠道此刻是否仍拥有这个模型（与路由同一口径：渠道启闭 / 模型禁用 / 目录逐字命中）
+    // modelOwners 同样吃 proxy 段
+    if (adapters.modelOwners(model, cfg.proxy).includes(ch)) continue;
+    const next = list.filter((x) => x !== ch);
+    if (next.length) map[model] = next;
+    else delete map[model]; // 清空即删键，配置保持干净（与前端「恢复自动路由」同口径）
+    pruned++;
+  }
+  if (!pruned) return 0;
+  config.saveConfig(cfg);
+  // 配置变了要通知各页面刷新，否则模型页仍显示旧的「已失效」
+  emitConfigChanged();
+  oplog.log("info", "模型目录", `已清除 ${store.channelDisplay(ch)} 在 ${pruned} 个模型渠道排序中的失效项`);
+  return pruned;
+}
+
 /** 服务端自动改写配置后的通知（单来源无账号模型自动关闭）：渲染层据此重拉快照，
  *  否则它随后的整份保存会用旧快照把刚写下的 disabledModels 回滚掉 */
 function emitConfigChanged() {
@@ -1578,11 +1613,15 @@ function register(ipcMain) {
     cur[ch] = { syncedAt: Date.now(), models };
     fs.writeFileSync(file, JSON.stringify(cur, null, 2), "utf8");
     rules.reload("catalog.json");
+    // 目录已刷新为上游真实状态：顺手清掉「本渠道」在其它模型排序里的失效项。
+    // 时机是安全的——只有拉取成功才走到这里，说明该渠道此刻确实没有那些模型（真下架）。
+    // 只清刚拉取的渠道：其它渠道可能是用户临时关闭的，清理会丢掉重开后就找不回的排序。
+    const orderPruned = pruneOrderOfChannel(ch);
     const withRate = models.filter((m) => m && m.rate != null).length;
     const agg = accounts.length > 1 ? `，聚合 ${lists.length}/${accounts.length} 个账号取交集` : "";
     const skipNote = skipped.length ? `；跳过 ${skipped.length} 个账号` : "";
     oplog.log("info", "模型目录", `${store.channelDisplay(ch)} 模型目录已同步（${models.length} 个模型${agg}${skipNote}）`, { channel: ch });
-    return ok({ channel: ch, count: models.length, withRate, accounts: accounts.length, used: lists.length });
+    return ok({ channel: ch, count: models.length, withRate, accounts: accounts.length, used: lists.length, orderPruned });
   }));
 
   // ===== 自定义提供商（中转站 / 自建 OpenAI 兼容端点） =====
@@ -1724,4 +1763,6 @@ function register(ipcMain) {
 }
 
 // 计划判定与抖动的纯函数一并导出：供自测直接验证跨午夜 / 不补欠账 / 已完成等分支
-module.exports = { boot, shutdown, stopTimers, setRuntime, register, settings, checkinJitterOffset, checkinPlannedAt, checkinDueKey, parseAccountsJson, normalizeAccountJson, METADATA_ONLY_MESSAGE };
+module.exports = { boot, shutdown, stopTimers, setRuntime, register, settings, checkinJitterOffset, checkinPlannedAt, checkinDueKey, parseAccountsJson, normalizeAccountJson, METADATA_ONLY_MESSAGE,
+  // 拉取目录后清理渠道排序失效项（tools/proxy-order-prune-selftest.cjs 断言真实实现用）
+  pruneOrderOfChannel };
