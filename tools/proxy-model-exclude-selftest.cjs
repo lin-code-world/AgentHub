@@ -60,32 +60,7 @@ function setCfg({ channelEnabled, modelOverrides, disabledModels, modelExcludedC
   return config.loadConfig().proxy;
 }
 
-/** 与 index.cjs 的 proxy_models 里 override 归类同构（那是闭包内联逻辑，抽不出来）：excluded > valid > muted > stale */
-function classify(model, orderArr, cfg) {
-  const raw = server.normalizeModelOrder(orderArr);
-  const validSet = new Set(adapters.modelOwners(model, cfg));
-  const excludedSet = new Set(adapters.modelExcludedChannelsOf(model, cfg));
-  const override = [];
-  const stale = [];
-  const muted = [];
-  const excluded = [];
-  for (const ch of raw) {
-    if (excludedSet.has(ch)) {
-      excluded.push(ch);
-      continue;
-    }
-    if (validSet.has(ch)) {
-      override.push(ch);
-      continue;
-    }
-    if (adapters.get(ch) && !adapters.channelOn(ch, cfg)) {
-      muted.push(ch);
-      continue;
-    }
-    stale.push(ch);
-  }
-  return { override, stale, muted, excluded };
-}
+// 归类逻辑直接调 adapters.classifyOverride（真实实现），不再在此复制一份
 
 // ===== 1. 归属过滤（modelOwners）=====
 console.log("1. 归属过滤");
@@ -140,9 +115,9 @@ console.log("3. 对外清单与排序归类");
     adapters.listableModels(c).some((m) => m.id === "shared-model")
   );
 
-  // 13) 排序归类：被排除渠道归入 overrideExcluded（与 index.cjs 同构）
+  // 13) 排序归类：被排除渠道归入 overrideExcluded（直接调真实实现）
   c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] }, modelOverrides: { "shared-model": ["zcode", "qoder"] } });
-  const r = classify("shared-model", ["zcode", "qoder"], c);
+  const r = adapters.classifyOverride("shared-model", server.normalizeModelOrder(["zcode", "qoder"]), c);
   ok("被排除渠道归入 overrideExcluded", JSON.stringify(r.excluded) === '["zcode"]', JSON.stringify(r.excluded));
   ok("有效项保留在 override", JSON.stringify(r.override) === '["qoder"]', JSON.stringify(r.override));
 }
@@ -165,6 +140,17 @@ console.log("4. 复查修复");
   c = setCfg({ modelExcludedChannels: { "solo-model": ["zcode"] } });
   const b2 = server.resolveChannel({ route: "zcode" }, "solo-model", c);
   ok("单源 Key 绑定被排除渠道 → excludedBoundChannel", !!b2.excludedBoundChannel, JSON.stringify(b2));
+}
+
+// ===== 5. 反向映射：排除按「对外请求名」作键（渠道真名不算）=====
+console.log("5. 反向映射的排除键");
+{
+  let c = setCfg({ modelReverseAliases: { "unified-name": { zcode: "solo-model" } } });
+  ok("映射命中：统一名的归属含 zcode", adapters.modelOwners("unified-name", c).includes("zcode"), JSON.stringify(adapters.modelOwners("unified-name", c)));
+  c = setCfg({ modelReverseAliases: { "unified-name": { zcode: "solo-model" } }, modelExcludedChannels: { "unified-name": ["zcode"] } });
+  ok("按对外请求名排除 → 生效", !adapters.modelOwners("unified-name", c).includes("zcode"), JSON.stringify(adapters.modelOwners("unified-name", c)));
+  c = setCfg({ modelReverseAliases: { "unified-name": { zcode: "solo-model" } }, modelExcludedChannels: { "solo-model": ["zcode"] } });
+  ok("按渠道真名排除 → 不生效（键必须是请求名）", adapters.modelOwners("unified-name", c).includes("zcode"), JSON.stringify(adapters.modelOwners("unified-name", c)));
 }
 
 console.log(`MODEL EXCLUDE SELFTEST OK（${pass} 项）`);

@@ -178,6 +178,18 @@ async function main() {
     check("B5 响应头明示回退", (rr.headers.get("x-agenthub-fallback") || "").includes("ai-only-model"), String(rr.headers.get("x-agenthub-fallback")));
     cfg.fallbackModel = "";
 
+    // ===== B10 回退模型被「模型级渠道排除」全排除 → 400 model_excluded（文案指向模型目录页）=====
+    // 回退链对回退模型的解析同样走 resolveChannel：全排除时返回 excludedModel，
+    // 必须与主模型同款文案，而不是被当成「模型不在任何渠道目录中」。
+    cfg.channelEnabled = {};
+    cfg.fallbackModel = "shared-model";
+    cfg.modelExcludedChannels = { "shared-model": ["trae", "workbuddy", "workbuddy_ai"] };
+    rr = await call({ model: "ai-only-model", stream: false, messages: bodyMsg });
+    body = await rr.text();
+    check("B10 回退模型全排除 → 400 且文案指向模型目录页", rr.status === 400 && /模型目录页/.test(body) && !/不在任何渠道目录/.test(body), `${rr.status} ${body.slice(0, 240)}`);
+    cfg.modelExcludedChannels = {};
+    cfg.fallbackModel = "";
+
     // ===== B8 写法大小写不匹配 → 400 model_case_mismatch（不得误报成渠道关闭）=====
     // 插在 B6 删号之前：本用例需要「渠道全开 + 号池有号」的正常状态，排除其它失败原因。
     // 目录里是 shared-model；严格匹配下 SHARED-MODEL 不属于任何渠道。

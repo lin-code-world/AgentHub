@@ -400,8 +400,10 @@ async function toggleEnabled(m: ProxyModel, v: string | number | boolean) {
 }
 
 // ===== 模型级渠道排除：该模型的来源渠道行内开关（关 = 这个模型不再走该渠道） =====
+/** 排除配置的键：反向映射吸收的真名要用「对外请求名」，否则路由按请求名判定时命中不了 */
+const excludeKey = (m: ProxyModel): string => aliasText(m) || m.id;
 /** 该模型被排除的渠道（本地配置优先，后端快照兜底） */
-const excludedOf = (m: ProxyModel): string[] => (app.config.proxy.modelExcludedChannels || {})[m.id] || m.excludedChannels || [];
+const excludedOf = (m: ProxyModel): string[] => (app.config.proxy.modelExcludedChannels || {})[excludeKey(m)] || m.excludedChannels || [];
 const isChannelExcluded = (m: ProxyModel, ch: string): boolean => excludedOf(m).includes(ch);
 
 /** 单渠道「停用最后来源」确认（与批量确认同一套弹窗样式） */
@@ -409,14 +411,15 @@ const excludeConfirm = ref<{ model: ProxyModel; channel: string } | null>(null);
 
 /** 该模型当前的排除集合（基于本地配置副本） */
 function excludedSetOf(m: ProxyModel): Set<string> {
-  return new Set((app.config.proxy.modelExcludedChannels || {})[m.id] || []);
+  return new Set((app.config.proxy.modelExcludedChannels || {})[excludeKey(m)] || []);
 }
 
 /** 落盘并刷新（真正的写动作，确认之后调用） */
 async function commitChannelExcluded(m: ProxyModel, arr: string[], on: boolean, ch: string) {
   const map = { ...(app.config.proxy.modelExcludedChannels || {}) };
-  if (arr.length) map[m.id] = arr;
-  else delete map[m.id];
+  const key = excludeKey(m);
+  if (arr.length) map[key] = arr;
+  else delete map[key];
   app.config.proxy.modelExcludedChannels = map;
   await persist(on ? `${m.id} 恢复使用${channelName(ch)}` : `${m.id} 不再使用${channelName(ch)}`);
   await refresh();
@@ -819,7 +822,7 @@ watch(active, (on) => {
                       </td>
                       <td>
                         <span class="src-ch-cell">
-                          <el-tooltip :content="isChannelExcluded(m, d.channel) ? '当前不参与该模型路由，点开启用' : '点关则此模型不再走该渠道'" placement="top">
+                          <el-tooltip :content="isChannelExcluded(m, d.channel) ? '当前不参与该模型路由，点开启用' : '点关则此模型不再走该渠道（只影响本渠道，不影响该模型在其它渠道）'" placement="top">
                             <span class="switch switch-sm" :class="{ on: !isChannelExcluded(m, d.channel) }" role="switch" :aria-checked="!isChannelExcluded(m, d.channel)" @click="toggleChannelExcluded(m, d.channel, isChannelExcluded(m, d.channel))"></span>
                           </el-tooltip>
                           <span>{{ channelName(d.channel) }}</span>
@@ -963,7 +966,7 @@ watch(active, (on) => {
                       <el-tooltip :content="displayId(m)" placement="top">
                         <div class="mono model-id">{{ displayId(m) }}</div>
                       </el-tooltip>
-                      <el-tooltip :content="isChannelExcluded(m, activeTab) ? '当前不参与该模型路由，点开启用' : `点关则此模型不再走${channelName(activeTab)}`" placement="top">
+                      <el-tooltip :content="isChannelExcluded(m, activeTab) ? '当前不参与该模型路由，点开启用' : `点关则此模型不再走${channelName(activeTab)}（只影响本渠道，不影响其它渠道）`" placement="top">
                         <span class="switch switch-sm" :class="{ on: !isChannelExcluded(m, activeTab) }" role="switch" :aria-checked="!isChannelExcluded(m, activeTab)" @click="toggleChannelExcluded(m, activeTab, isChannelExcluded(m, activeTab))"></span>
                       </el-tooltip>
                       <span v-if="activeTabRate(m) != null" class="rate-inline">×{{ activeTabRate(m) }}</span>
@@ -1870,7 +1873,16 @@ watch(active, (on) => {
   gap: 6px;
 }
 .switch-sm {
-  transform: scale(0.7);
-  transform-origin: left center;
+  width: 28px;
+  height: 16px;
+}
+.switch-sm::after {
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+}
+.switch-sm.on::after {
+  transform: translateX(12px);
 }
 </style>

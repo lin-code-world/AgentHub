@@ -1309,8 +1309,12 @@ async function handleChat(req, res, settings, surface, convNotes) {
       const resolved = resolveChannel(key, chainModel, settings);
       if (!resolved.channel) {
         // 绑定渠道的 403（模型不在目录 / 渠道未启用）已在首次解析直接返回；链内只剩智能路由的
-        // 未知模型（请求模型或回退模型不在任何目录）→ 继续尝试回退模型
-        lastErr = Object.assign(new Error(`模型 "${chainModel}" 不在任何渠道目录中`), { status: 400 });
+        // 未知模型（请求模型或回退模型不在任何目录）→ 继续尝试回退模型。
+        // 回退模型被「模型级渠道排除」全排除时给专用文案（与主模型一致），
+        // 否则会误报「不在任何渠道目录中」，把用户引去查目录而不是去模型页恢复排除。
+        lastErr = resolved.excludedModel
+          ? Object.assign(new Error(`模型 "${chainModel}" 的所有来源渠道都已被设置为不使用（模型目录页可恢复）`), { status: 400 })
+          : Object.assign(new Error(`模型 "${chainModel}" 不在任何渠道目录中`), { status: 400 });
         continue;
       }
       usedModel = chainModel;
