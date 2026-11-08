@@ -104,6 +104,52 @@ function mappedTargetDisabledReply(model, settings) {
   return { status: 400, code: "mapped_target_disabled", message: msg };
 }
 
+/** 无归属渠道时的 400 回复（纯函数，供主流程与自测复用）：查目录并分类。
+ *  返回 { status, code, message, logError }。 */
+function unknownModelReply(actualModel, resolvedMain, settings) {
+  const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
+  const catalog = adapters.mergedModels(settings);
+  // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
+  // 前者在合并目录里查得到、只是所有归属渠道都被关/空池，给出可操作指引。
+  // 查找必须**逐字**：严格匹配下写法（含大小写）不同即不同模型，用忽略大小写去找会把
+  // 「写法不一致」误报成「渠道被关闭/号池空」，把人引去查上游启闭（实际渠道完全正常）。
+  // 被反向映射吸收的真名不算「渠道关闭」：它在全量目录里仍查得到，但对已隐藏、不可直连，
+  // 必须按「模型不存在」报，否则会把用户引去查上游启闭（实际渠道完全正常）。
+  const cat = adapters.isAbsorbedName(actualModel, settings) ? undefined : catalog.find((m) => m.id === actualModel);
+  if (resolvedMain.disabledChannel || cat) {
+    const owners = (resolvedMain.disabledChannel ? [resolvedMain.disabledChannel] : (cat.sources || []))
+      .filter((c, i, arr) => arr.indexOf(c) === i);
+    return {
+      status: 400,
+      code: "channel_disabled",
+      logError: "channel disabled",
+      message:
+        `模型 "${actualModel}" 由渠道 ${owners.map((c) => `「${store.channelDisplay(c)}」`).join("、")}提供，` +
+        `当前该渠道已被关闭或号池不可用，请在上游启闭中开启、补充号池，或改用其它模型。可用模型：${hint}`,
+    };
+  }
+  // 只差大小写：目录里有这个名字的另一种写法。上游对未知名会静默回落或直接 4xx，
+  // 不点明「目录里的正确写法」，用户只能靠反复试错（严格匹配后这类请求必然落到这里）
+  const caseHint = caseWriteHint(actualModel, catalog.map((m) => m.id));
+  if (caseHint) {
+    return {
+      status: 400,
+      code: "model_case_mismatch",
+      logError: "model case mismatch",
+      message: `模型 "${actualModel}" 与目录里的写法不一致：${caseHint}。可用模型：${hint}`,
+    };
+  }
+  // 名字记错（漏后缀/写简写）是最常见的误用：先给最接近的几个，再给全量列表。
+  // 直接甩全量列表时用户对不上，会误判成「网关不支持这个模型」（issue #117）
+  const similar = nearModelIds(actualModel, adapters.mergedModels(settings));
+  return {
+    status: 400,
+    code: "model_not_found",
+    logError: "unknown model",
+    message: `模型 "${actualModel}" 不在任何渠道目录中。` + (similar.length ? `相近的模型有：${similar.join("、")}。` : "") + `可用模型：${hint}`,
+  };
+}
+
 /** 自定义参数的取值顺序：实际转发模型 + 命中渠道 → 请求模型 + 命中渠道 → 旧模型级。
  *  逐字、不折叠大小写：`deepseek-v4.1-flash` 与 `DeepSeek-V4.1-Flash` 各自一份。
  *  故障转移到备选渠道时调用方传入的 channel 已变，自动取备选渠道自己的配置。 */
@@ -1094,46 +1140,9 @@ async function handleChat(req, res, settings, surface, convNotes) {
     }
   }
   if (!resolvedMain.channel && !fallback) {
-    const hint = adapters.listableModels(settings).map((m) => m.id).join(", ");
-    const catalog = adapters.mergedModels(settings);
-    // 文案区分「渠道被上游启闭关闭」与「模型真不存在」（issue #90）：
-    // 前者在合并目录里查得到、只是所有归属渠道都被关/空池，给出可操作指引。
-    // 查找必须**逐字**：严格匹配下写法（含大小写）不同即不同模型，用忽略大小写去找会把
-    // 「写法不一致」误报成「渠道被关闭/号池空」，把人引去查上游启闭（实际渠道完全正常）。
-    const cat = catalog.find((m) => m.id === actualModel);
-    if (resolvedMain.disabledChannel || cat) {
-      const owners = (resolvedMain.disabledChannel ? [resolvedMain.disabledChannel] : (cat.sources || []))
-        .filter((c, i, arr) => arr.indexOf(c) === i);
-      record({ status: 400, error: "channel disabled" });
-      return sink.endErr(
-        400,
-        `模型 "${actualModel}" 由渠道 ${owners.map((c) => `「${store.channelDisplay(c)}」`).join("、")}提供，` +
-        `当前该渠道已被关闭或号池不可用，请在上游启闭中开启、补充号池，或改用其它模型。可用模型：${hint}`,
-        "invalid_request_error", "channel_disabled"
-      );
-    }
-    // 只差大小写：目录里有这个名字的另一种写法。上游对未知名会静默回落或直接 4xx，
-    // 不点明「目录里的正确写法」，用户只能靠反复试错（严格匹配后这类请求必然落到这里）
-    const caseHint = caseWriteHint(actualModel, catalog.map((m) => m.id));
-    if (caseHint) {
-      record({ status: 400, error: "model case mismatch" });
-      return sink.endErr(
-        400,
-        `模型 "${actualModel}" 与目录里的写法不一致：${caseHint}。可用模型：${hint}`,
-        "invalid_request_error", "model_case_mismatch"
-      );
-    }
-    record({ status: 400, error: "unknown model" });
-    // 名字记错（漏后缀/写简写）是最常见的误用：先给最接近的几个，再给全量列表。
-    // 直接甩全量列表时用户对不上，会误判成「网关不支持这个模型」（issue #117）
-    const similar = nearModelIds(actualModel, adapters.mergedModels(settings));
-    return sink.endErr(
-      400,
-      `模型 "${actualModel}" 不在任何渠道目录中。` +
-        (similar.length ? `相近的模型有：${similar.join("、")}。` : "") +
-        `可用模型：${hint}`,
-      "invalid_request_error", "model_not_found"
-    );
+    const reply = unknownModelReply(actualModel, resolvedMain, settings);
+    record({ status: reply.status, error: reply.logError });
+    return sink.endErr(reply.status, reply.message, "invalid_request_error", reply.code);
   }
 
   // ===== 出线准备 =====
@@ -2030,7 +2039,7 @@ function status() {
 
 module.exports = { start, stop, stopAsync, drainAndStop, status, channelHealthSnapshot, classifyUpstream,
   // 渠道解析与映射目标禁用判定（tools/proxy-mapped-target-selftest.cjs 行为断言用）
-  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, resolveCustomParams, clampReasoningEffort,
+  resolveChannel, mappedTargetDisabledMessage, mappedTargetDisabledReply, unknownModelReply, resolveCustomParams, clampReasoningEffort,
   // 成本感知路由纯函数（tools/proxy-cost-route-selftest.cjs / proxy-empty-pool-route-selftest.cjs 行为断言用）
   channelScore, costFirstScore, tierGroups, cmpByOrder, routeOrderOf, pickByOrder, routeUsable,
   // 模型渠道自定义顺序（tools/proxy-model-order-selftest.cjs 行为断言用）

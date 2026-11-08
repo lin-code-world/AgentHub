@@ -4771,6 +4771,8 @@ function absorbedByAlias(model, channel, cfg) {
   const c = cfg || proxyConfig();
   const rev = c.modelReverseAliases || {};
   const m = String(model || "");
+  // 该名本身是某条映射的统一名时不算被吸收：它是对外契约，不能因被别的映射当目标而藏没
+  if (Object.prototype.hasOwnProperty.call(rev, m)) return false;
   for (const u of Object.keys(rev)) {
     if (u === m) continue;
     const target = reverseAliasTarget(u, channel, c);
@@ -4784,6 +4786,8 @@ function isAbsorbedName(model, cfg) {
   const c = cfg || proxyConfig();
   const rev = c.modelReverseAliases || {};
   const m = String(model || "");
+  // 该名本身是某条映射的统一名时不算被吸收（与 absorbedByAlias 同口径）
+  if (Object.prototype.hasOwnProperty.call(rev, m)) return false;
   for (const u of Object.keys(rev)) {
     if (u === m) continue;
     const chMap = rev[u];

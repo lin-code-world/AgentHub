@@ -98,6 +98,25 @@ withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () =>
   eq(adapters.aliasRowAbsorbed("hy4", ["workbuddy"], cfg), false, "统一名不隐藏");
 });
 
+// [7] 被吸收真名被拒时按「模型不存在」报，不误报「渠道已关闭」（文案层回归）
+withChannels({ workbuddy: { models: () => ["hy4free"] } }, () => {
+  const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
+  const reply = server.unknownModelReply("hy4free", { channel: null }, cfg);
+  eq(reply.code, "model_not_found", "被吸收真名 → model_not_found（不是 channel_disabled）");
+  check("文案说「不在任何渠道目录中」", reply.message.includes("不在任何渠道目录中"), reply.message);
+  // 对照：显式关闭渠道时仍报 channel_disabled
+  const disabled = server.unknownModelReply("hy4free", { channel: null, disabledChannel: "workbuddy" }, cfg);
+  eq(disabled.code, "channel_disabled", "显式关闭渠道仍报 channel_disabled");
+});
+
+// [8] 链式映射：被当作目标的统一名不被误藏
+withChannels({ workbuddy: { models: () => ["B", "C"] } }, () => {
+  const cfg = { modelReverseAliases: { A: { workbuddy: "B" }, B: { workbuddy: "C" } } };
+  const ids = adapters.listableModels(cfg).map((m) => m.id);
+  check("统一名 B 未被误藏", ids.includes("B"));
+  check("统一名 A 在列", ids.includes("A"));
+});
+
 try {
   fs.rmSync(tmp, { recursive: true, force: true });
 } catch {
