@@ -5041,12 +5041,20 @@ function modelOwners(model, cfg) {
  * 否则停用模型无法恢复）。 */
 function listableModels(cfg) {
   const c = cfg || proxyConfig();
-  const disabled = c.disabledModels || [];
   // 逐字比对（与合并键、modelOwners 同口径）：合并视图已按精确写法分行后，
   // 忽略大小写的过滤会把禁用 `deepseek-v4.1-flash` 顺手抹掉 `DeepSeek-V4.1-Flash` 这条独立模型
-  const off = new Set((disabled || []).map((s) => String(s)));
+  const off = new Set((c.disabledModels || []).map((s) => String(s)));
   // enabledOnly：关闭上游的模型与来源整行不出现，行级字段也不取关闭渠道的值
-  return mergedModels(c, { enabledOnly: true }).filter((m) => !off.has(m.id));
+  const rows = mergedModels(c, { enabledOnly: true }).filter((m) => !off.has(m.id));
+  // 反向映射吸收的真名：按来源剔除被吸收的渠道；无剩余来源 → 整行不出现（对外只留统一名）
+  const out = [];
+  for (const m of rows) {
+    const all = m.sources || [];
+    const kept = all.filter((ch) => !absorbedByAlias(m.id, ch, c));
+    if (!kept.length) continue;
+    out.push(kept.length === all.length ? m : { ...m, sources: kept });
+  }
+  return out;
 }
 
 /** 双表一致性报告（CHANNELS ↔ ADAPTERS）：两向差集非空即自测失败（tools/proxy-smoke.cjs 断言）。

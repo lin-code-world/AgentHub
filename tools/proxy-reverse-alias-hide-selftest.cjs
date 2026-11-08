@@ -51,6 +51,20 @@ withChannels({ workbuddy: { models: () => ["hy4free", "GLM-5.3-Flash", "glm-5.3"
   check("统一名 glm-5.3-flash 归属含 zcode", adapters.modelOwners("glm-5.3-flash", cfg).includes("zcode"));
 });
 
+// [2] 对外清单：唯一来源被吸收 → 整行隐藏；另有来源 → 保留
+withChannels({ workbuddy: { models: () => ["hy4free"] } }, () => {
+  const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
+  const ids = adapters.listableModels(cfg).map((m) => m.id);
+  check("统一名 hy4 在对外清单", ids.includes("hy4"));
+  check("唯一来源被吸收 → hy4free 不在对外清单", !ids.includes("hy4free"));
+});
+withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () => ["hy4free"] } }, () => {
+  const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
+  const row = adapters.listableModels(cfg).find((m) => m.id === "hy4free");
+  check("仍有其它来源 → hy4free 保留", !!row);
+  eq(row && row.sources, ["catpaw"], "被吸收的来源 workbuddy 被剔除");
+});
+
 // [3] 别的渠道同名原生、未映射 → 归属保留
 withChannels({ workbuddy: { models: () => ["hy4free"] }, catpaw: { models: () => ["hy4free"] } }, () => {
   const cfg = { modelReverseAliases: { hy4: { workbuddy: "hy4free" } } };
