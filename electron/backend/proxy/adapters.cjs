@@ -5010,6 +5010,14 @@ function mergedModels(cfg, opts) {
   return [...seen.values()];
 }
 
+/** 模型级渠道排除：读取并归一化（缺省/非法 → []）。逐字比对，不折叠大小写。
+ *  只有数组里的字符串项算数——手改成字符串/数字/对象时一律按「不排除」处理，不能让脏配置抛错。 */
+function modelExcludedChannelsOf(model, cfg) {
+  const c = cfg || proxyConfig();
+  const v = (c.modelExcludedChannels || {})[String(model || "")];
+  return Array.isArray(v) ? v.map((s) => String(s || "")).filter(Boolean) : [];
+}
+
 /** 模型 → 渠道归属：返回拥有该模型的渠道列表（模型完全不存在 → 空数组）。
  *  **只算内置渠道**（ADAPTERS 静态表）：自定义提供商的归属走 provider.parseModelRef() 的 slug/ 前缀
  *  （或 allowBareProviderModel 的兜底），两者都在本函数之外——把提供商掺进来就等于让一个裸名可能
@@ -5017,10 +5025,14 @@ function mergedModels(cfg, opts) {
  *  反向映射命中的渠道**排在最前**，其后追加目录里同名 id 的渠道（去重、保序）：反向映射只表达
  *  「这个渠道上该用哪个模型名」，不该顺手把跨渠道自救的备选集合收窄成映射里写的那几个——
  *  原实现命中即 return，用户一旦给某模型配了反向映射，它的备选就只剩映射里的渠道（issue #78）。 */
-function modelOwners(model, cfg) {
+function modelOwnersInner(model, cfg, includeExcluded) {
   const c = cfg || proxyConfig();
   const rev = c.modelReverseAliases || {};
   const wanted = String(model || "");
+  // 模型级渠道排除：被排除的渠道不算归属（主渠道 / 故障转移备选 / 排序有效性全走这里）。
+  // includeExcluded 仅供 server 区分「模型本就不存在」与「归属渠道全被排除」，正常路由一律 false。
+  const excludedSet = new Set(modelExcludedChannelsOf(wanted, c));
+  const excluded = (ch) => !includeExcluded && excludedSet.has(ch);
   // 映射目标被禁用的渠道不算归属（逐字比对 disabledModels）：否则请求名配了
   // `→ 已关闭模型` 的反向映射后，智能路由仍会把请求打进该渠道、把已关闭的模型发给上游。
   // 判据必须同时作用于下面两个分支：渠道目录里逐字存在请求名时，exact 分支会把它加回来。
@@ -5033,7 +5045,7 @@ function modelOwners(model, cfg) {
   const entry = reverseAliasEntry(model, c);
   // channelOn 过滤（与目录循环 4114 同口径）：反向映射命中的已关闭渠道不算归属——
   // 否则统一请求名的唯一归属/固定策略可把请求强制打进已关闭渠道
-  if (entry) mapped.push(...Object.keys(entry).filter((ch) => ADAPTERS[ch] && channelOn(ch, c) && !targetDisabled(ch) && reverseAliasTarget(model, ch, c)));
+  if (entry) mapped.push(...Object.keys(entry).filter((ch) => ADAPTERS[ch] && channelOn(ch, c) && !targetDisabled(ch) && !excluded(ch) && reverseAliasTarget(model, ch, c)));
   const out = [];
   const seen = new Set();
   for (const ch of mapped) {
@@ -5051,6 +5063,8 @@ function modelOwners(model, cfg) {
     // 关闭的渠道不算归属：单源模型也判「不可用」（resolveChannel 拿到空列表 → 400 给可用模型提示），
     // 多源模型自动收窄到启用渠道（故障转移备选同步收窄，路由打分与备选队列全走这里）
     if (!channelOn(channel, c)) continue;
+    // 模型级渠道排除：该渠道明确不承载这个模型（同渠道其它模型不受影响）
+    if (excluded(channel)) continue;
     // 目录里逐字有请求名、但该渠道上它被映射到已禁用模型时同样剔除
     if (targetDisabled(channel)) continue;
     if (ad.models().some((m) => String(m) === wanted)) {
@@ -5062,6 +5076,16 @@ function modelOwners(model, cfg) {
   }
   // 反向映射命中的渠道已经在 out 里，逐字精确命中这一批追加在后面
   return [...out, ...exact];
+}
+
+/** 模型 → 渠道归属（应用模型级渠道排除） */
+function modelOwners(model, cfg) {
+  return modelOwnersInner(model, cfg, false);
+}
+
+/** 与 modelOwners 同口径但忽略模型级渠道排除：仅用于区分「模型不存在」与「归属渠道全被排除」 */
+function modelOwnersIgnoringExclusions(model, cfg) {
+  return modelOwnersInner(model, cfg, true);
 }
 
 /** /v1/models 对外可列模型：合并视图减去 disabledModels（口径与请求路径 400 拦截一致）。
@@ -5099,7 +5123,7 @@ function consistencyReport() {
   };
 }
 
-module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, absorbingAlias, mergedModels, listableModels, modelOwners, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
+module.exports = { get, ADAPTERS, channelModelIds, channelRateFlags, reverseAliasEntry, resolveModelTarget, absorbedByAlias, isAbsorbedName, aliasRowAbsorbed, absorbingAlias, mergedModels, listableModels, modelOwners, modelOwnersIgnoringExclusions, modelExcludedChannelsOf, channelOn, modelReasoningEfforts, channelModelContext, normalizeModelsUrl, httpJson, refreshTokenLocked, setPendingCaptcha, getPendingCaptcha,
   // 自定义提供商：动态实例化的通用 OpenAI 兼容适配器（provider.cjs 的探测与自测直用这一支）
   makeOpenaiCompat, compatUrl, statusFromCompatError, compatModelEntries,
   // 适配器契约（启动期校验 + 自测复验用）

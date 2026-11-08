@@ -136,6 +136,7 @@ function defaultConfig() {
                                 // 仅作用于智能路由：排过的按顺序优先，没排到的软兜底排后面，位次相同回落 score/cost-first
       humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
       disabledModels: [],       // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
+      modelExcludedChannels: {}, // 模型 → 不参与该模型路由的渠道列表（模型级渠道排除）：缺省 = 不排除
       modelFallback: {},        // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）
       modelReverseAliases: {},  // 反向模型映射：统一请求名 → { [channelId]: 渠道实际模型名 }
       modelCustom: {},          // 模型自定义参数覆盖：modelId → { contextLength?, maxOutputTokens?, reasoningEffort? }
