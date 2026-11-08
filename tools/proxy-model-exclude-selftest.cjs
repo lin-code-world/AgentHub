@@ -61,6 +61,33 @@ function setCfg({ channelEnabled, modelOverrides, disabledModels, modelExcludedC
   return config.loadConfig().proxy;
 }
 
+/** 与 index.cjs 的 proxy_models 里 override 归类同构（那是闭包内联逻辑，抽不出来）：excluded > valid > muted > stale */
+function classify(model, orderArr, cfg) {
+  const raw = server.normalizeModelOrder(orderArr);
+  const validSet = new Set(adapters.modelOwners(model, cfg));
+  const excludedSet = new Set(adapters.modelExcludedChannelsOf(model, cfg));
+  const override = [];
+  const stale = [];
+  const muted = [];
+  const excluded = [];
+  for (const ch of raw) {
+    if (excludedSet.has(ch)) {
+      excluded.push(ch);
+      continue;
+    }
+    if (validSet.has(ch)) {
+      override.push(ch);
+      continue;
+    }
+    if (adapters.get(ch) && !adapters.channelOn(ch, cfg)) {
+      muted.push(ch);
+      continue;
+    }
+    stale.push(ch);
+  }
+  return { override, stale, muted, excluded };
+}
+
 // ===== 1. 归属过滤（modelOwners）=====
 console.log("1. 归属过滤");
 {
@@ -99,6 +126,23 @@ console.log("2. 请求路径");
   c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] } });
   const bound = server.resolveChannel({ route: "zcode" }, "shared-model", c);
   ok("Key 绑定被排除渠道 → excludedBoundChannel", !!(bound.excludedBoundChannel && bound.excludedBoundChannel.channel === "zcode"), JSON.stringify(bound));
+}
+
+// ===== 3. 对外清单与排序归类 =====
+console.log("3. 对外清单与排序归类");
+{
+  // 11) 全排除 → 不出现在对外清单
+  let c = setCfg({ modelExcludedChannels: { "shared-model": ["qoder", "zcode"] } });
+  ok("全排除模型不出现在对外清单", !adapters.listableModels(c).some((m) => m.id === "shared-model"));
+  // 12) 部分排除 → 仍列出
+  c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] } });
+  ok("部分排除仍对外列出", adapters.listableModels(c).some((m) => m.id === "shared-model"));
+
+  // 13) 排序归类：被排除渠道归入 overrideExcluded（与 index.cjs 同构）
+  c = setCfg({ modelExcludedChannels: { "shared-model": ["zcode"] }, modelOverrides: { "shared-model": ["zcode", "qoder"] } });
+  const r = classify("shared-model", ["zcode", "qoder"], c);
+  ok("被排除渠道归入 overrideExcluded", JSON.stringify(r.excluded) === '["zcode"]', JSON.stringify(r.excluded));
+  ok("有效项保留在 override", JSON.stringify(r.override) === '["qoder"]', JSON.stringify(r.override));
 }
 
 console.log(`MODEL EXCLUDE SELFTEST OK（${pass} 项）`);

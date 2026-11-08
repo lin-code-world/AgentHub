@@ -5104,7 +5104,9 @@ function listableModels(cfg) {
   const out = [];
   for (const m of rows) {
     const all = m.sources || [];
-    const kept = all.filter((ch) => !absorbedByAlias(m.id, ch, c));
+    // 模型级渠道排除：被排除的渠道不算来源；无剩余来源 → 整行不出现（模型实际不可用）
+    const excl = new Set(modelExcludedChannelsOf(m.id, c));
+    const kept = all.filter((ch) => !absorbedByAlias(m.id, ch, c) && !excl.has(ch));
     if (!kept.length) continue;
     out.push(kept.length === all.length ? m : { ...m, sources: kept });
   }

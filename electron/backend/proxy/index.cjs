@@ -1547,6 +1547,8 @@ function register(ipcMain) {
         aliasAbsorbed: adapters.aliasRowAbsorbed(m.id, m.sources, cfg),
         // 无账号来源的开关在前端置灰：导入账号后仍需用户手动开启一次
         accountless: auto.accountless.has(m.id),
+        // 模型级渠道排除的原始配置（供界面渲染开关状态与恢复）
+        excludedChannels: (cfg.modelExcludedChannels || {})[m.id] || [],
         // 渠道顺序：与 resolveChannel 同一口径过滤掉「不属于本模型」的渠道。
         // 不过滤的话，模型下架 / 渠道被上游启闭 / 手写配置写错渠道名时，
         // 界面仍把它显示成 1 号位，实际路由早已跳过它——用户会以为功能没生效。
@@ -1557,10 +1559,17 @@ function register(ipcMain) {
         // 重开渠道后出现重复项。
         ...(() => {
           const raw = server.normalizeModelOrder((cfg.modelOverrides || {})[m.id]);
+          const excludedSet = new Set((cfg.modelExcludedChannels || {})[m.id] || []);
           const validSet = new Set(adapters.modelOwners(m.id, cfg));
           const stale = [];
           const muted = [];
+          const excluded = [];
           for (const ch of raw) {
+            // 模型级渠道排除优先：既不参与路由，也不该标成「已失效」
+            if (excludedSet.has(ch)) {
+              excluded.push(ch);
+              continue;
+            }
             if (validSet.has(ch)) continue;
             // 渠道被关闭 → 暂时隐去（配置保留），灰显而非标失效
             if (adapters.get(ch) && !adapters.channelOn(ch, cfg.proxy)) {
@@ -1573,6 +1582,7 @@ function register(ipcMain) {
             override: raw.filter((ch) => validSet.has(ch)),
             overrideStale: stale,
             overrideMuted: muted,
+            overrideExcluded: excluded,
           };
         })(),
         fallback: (cfg.modelFallback || {})[m.id] || "",
