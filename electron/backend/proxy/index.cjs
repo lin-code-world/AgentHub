@@ -1768,10 +1768,10 @@ function register(ipcMain) {
     oplog.log("info", "用量统计", all ? `手动清空全部请求流水（${r.deleted} 条）` : `按保留期手动清理请求流水（${r.deleted} 条）`, { target: "usage_requests" });
     return r;
   }));
-  // 手动清理操作日志：口径同 gc()（默认 30 天 / all 清空整表）。刻意不落 oplog——
-  // 清空后立刻又写一条「已清空」会让用户以为没清干净；这条操作本身在日志页是可见动作，无需再留痕。
+  // 手动清理操作日志：days 缺省取设置里的保留期（与流水同口径，实时读、改完设置不必重启），all 清空整表。
+  // 刻意不落 oplog——清空后立刻又写一条「已清空」会让用户以为没清干净；这条操作本身在日志页是可见动作，无需再留痕。
   ipcMain.handle("proxy_oplog_cleanup", handle(({ days, all }) =>
-    store.cleanupOpLogs(Math.round(Number(days)) || 30, !!all)));
+    store.cleanupOpLogs(Math.round(Number(days)) || Number(settings().usageRetentionDays) || 90, !!all)));
   ipcMain.handle("proxy_recent", handle(({ limit }) => store.recentRequests(limit)));
 
   // ===== 保险库状态 =====
