@@ -109,6 +109,44 @@ if (API_OK) {
   ok(total() === 0, `② 收尾清空（剩 ${total()} 条），下一段从空表开始`);
 }
 
+// ===== ②a 测试基座：insertOpLog 必须吃显式 ts（否则构造不出「老日志」来验证 GC 保留期）=====
+if (API_OK) {
+  const T0 = Date.now();
+  store.insertOpLog({ ts: T0 - 45 * DAY, level: "info", op: "自测时间戳", message: "x" });
+  const got = store.listOpLogs({ op: "自测时间戳", limit: 1 }).rows[0];
+  const offDays = got ? (Date.now() - got.ts) / DAY : -1;
+  ok(!!got && Math.abs(offDays - 45) < 0.1,
+    `②a insertOpLog 吃显式 ts（供 GC 测试构造老日志；实测该行 ts 偏移 ${offDays.toFixed(1)} 天，应为 45）`);
+  store.cleanupOpLogs(undefined, true);
+}
+
+// ===== ②b 操作日志跟随同一保留期（不再写死 30 天）=====
+// 样本刻意取 45 天：写死 30 天时会被删，统一到 90 天后应保留——这条能区分「30」与「90」两种实现。
+if (API_OK) {
+  const T = Date.now();
+  const putLog = (ageDays, tag) => store.insertOpLog({ ts: T - ageDays * DAY, level: "info", op: "自测保留期", message: tag });
+  const logs = () => store.listOpLogs({ op: "自测保留期", limit: 50 }).rows;
+
+  putLog(0, "fresh"); putLog(45, "d45"); putLog(400, "d400");
+  store.setUsageRetention(90);
+  reopen(); // 触发 gc()
+  ok(logs().length === 2 && logs().some((r) => r.message === "d45"),
+    `②b 启动 GC 按 90 天保留 op_logs：45 天前的留、400 天前的删（实测剩 ${logs().length} 条）`);
+
+  // 手动清理缺省吃模块级保留期（90）：45 天前的仍留
+  const rb = store.cleanupOpLogs(undefined, false);
+  ok(rb.deleted === 0 && logs().some((r) => r.message === "d45"),
+    `②b cleanupOpLogs 缺省吃模块级保留期 90（deleted=${rb.deleted}）`);
+
+  // 显式传 30：45 天前的被删（证明参数仍主导，且 45 确实落在 30 与 90 之间）
+  const rb2 = store.cleanupOpLogs(30, false);
+  ok(rb2.deleted === 1, `②b cleanupOpLogs(30) 删掉 45 天前那条（deleted=${rb2.deleted}）`);
+
+  store.cleanupOpLogs(undefined, true);
+  ok(logs().length === 0, "②b 收尾：all=true 清空");
+  store.setUsageRetention(90);
+}
+
 // ===== ③ 接线逐点钉：每条都要求「恰好命中一次」，命中 0 或多次都判红 =====
 {
   const pins = [
@@ -152,6 +190,7 @@ if (API_OK) {
   ok(!/>90 天（启动时自动清理）</.test(cfgSec), "③ 设置页那行不再是写死的只读文本");
   const storeSrc = fs.readFileSync(path.join(ROOT, "electron/backend/proxy/store.cjs"), "utf8");
   ok(!/Date\.now\(\) - 90 \* 86400000/.test(storeSrc), "③ gc() 里没有残留的 90 天硬编码");
+  ok(!/Date\.now\(\) - 30 \* 86400000/.test(storeSrc), "③ gc() 里没有残留的 30 天日志硬编码（操作日志已统一到保留期）");
 }
 
 // ===== ④ 设置页钳位：把 .vue 里那两行原样抠出来真跑，而不是正则看过就算 =====

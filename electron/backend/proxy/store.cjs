@@ -376,11 +376,12 @@ function purgeRemovedChannels() {
   }
 }
 
-/** 流水保留期（天）：设置页 proxy.usageRetentionDays 可调，启动 GC 与统计页「清理」共用。
+/** 数据保留期（天）：设置页 proxy.usageRetentionDays 可调，启动 GC 与统计页 / 日志页的「清理」共用，
+ *  同时管请求流水、余额历史与操作日志。
  *  放本模块的模块级变量（与 pool.expiringSoonDays 同一套做法），让热路径模块不依赖 config；
  *  由 index.cjs 的 register() 从设置灌入一次——它跑在 main.cjs 的 proxy.boot() 之前，
  *  所以首次 open() 里的 gc() 看到的已经是用户配的值，不是这里的默认值。
- *  默认 90 = 本改动之前写死在 gc() 里的那个数。 */
+ *  默认 90 = 本改动之前写死在流水 gc() 里的那个数。 */
 let usageRetentionDays = 90;
 function setUsageRetention(days) {
   // 只接受 1~3650 的整数：非法值（NaN / 0 / 负数 / 超界）一律忽略并保留现值，
@@ -389,15 +390,15 @@ function setUsageRetention(days) {
   if (n >= 1 && n <= 3650) usageRetentionDays = n;
 }
 
-/** 流水按保留期 GC，启动时执行；余额历史同步清理；操作日志 30 天 + 5 万行上限 */
+/** 流水 / 余额历史 / 操作日志按同一保留期 GC（共用 usageRetentionDays），启动时执行；
+ *  操作日志另有 5 万行上限（超限删最老）。 */
 function gc() {
   const cutoff = Date.now() - Math.max(1, usageRetentionDays) * 86400000;
   db.prepare("DELETE FROM usage_requests WHERE ts < ?").run(cutoff);
   const dayCut = dayStr(cutoff);
   db.prepare("DELETE FROM credits_history WHERE day < ?").run(dayCut);
-  // 操作日志：30 天 + 行数上限（每条代理请求一条，量级同 usage_requests；超限删最老）
-  const logCut = Date.now() - 30 * 86400000;
-  db.prepare("DELETE FROM op_logs WHERE ts < ?").run(logCut);
+  // 操作日志：与流水同一保留期 + 行数上限（每条代理请求一条，量级同 usage_requests；超限删最老）
+  db.prepare("DELETE FROM op_logs WHERE ts < ?").run(cutoff);
   db.prepare("DELETE FROM op_logs WHERE id NOT IN (SELECT id FROM op_logs ORDER BY id DESC LIMIT 50000)").run();
   // 流水行数上限：未认证请求也写流水（401 早退处记账），仅 90 天裁剪挡不住
   // 失控进程刷 401 撑大 stats.db——超限删最老，口径对齐 op_logs 的双上限
@@ -1154,11 +1155,11 @@ function noteOnboardingGrant(id, settled) {
 
 // ===== 操作日志（op_logs：反代网关各项操作一条一条落库；写入永不抛错由 oplog.cjs 兜） =====
 
-/** 记一条操作日志（字段截断防脏数据撑爆行；ts 用当前时刻） */
+/** 记一条操作日志（字段截断防脏数据撑爆行；ts 默认当前时刻，可传 row.ts 指定） */
 function insertOpLog(row) {
   open();
   db.prepare("INSERT INTO op_logs (ts, level, op, message, channel, target, detail) VALUES (?,?,?,?,?,?,?)").run(
-    Date.now(),
+    Number(row.ts) || Date.now(),
     String(row.level || "info"),
     String(row.op || "").slice(0, 32),
     String(row.message || "").slice(0, 500),
@@ -1838,7 +1839,7 @@ function cleanupUsage(days, all) {
 }
 
 /** 手动清理操作日志：all=true 清空整表；否则删保留线之前的记录。
- *  保留期默认 30 天、与 gc() 同口径（op_logs 没有可配保留期，写死的 30 天就是它现在的自动回收线）。
+ *  保留期跟随设置的数据保留期（模块级 usageRetentionDays），与 gc() 同口径。
  *  返回 { deleted, cutoff } 与 cleanupUsage 同形，前端按同一套文案展示。 */
 function cleanupOpLogs(days, all) {
   open();
@@ -1847,7 +1848,7 @@ function cleanupOpLogs(days, all) {
     return { deleted: r.changes, cutoff: 0 };
   }
   const raw = Number(days);
-  const n = Math.min(3650, Math.max(1, Math.round(Number.isFinite(raw) && raw > 0 ? raw : 30)));
+  const n = Math.min(3650, Math.max(1, Math.round(Number.isFinite(raw) && raw > 0 ? raw : usageRetentionDays)));
   const cutoff = Date.now() - n * 86400000;
   const r = db.prepare("DELETE FROM op_logs WHERE ts < ?").run(cutoff);
   return { deleted: r.changes, cutoff };
