@@ -241,7 +241,7 @@ async function doExport() {
 }
 
 // ===== 清理操作日志：交互与总览页的清理一致（仅超期 / 全部），清的就是本页展示的数据（op_logs 表）。
-// 保留期固定 30 天（与启动 GC 同口径，op_logs 没有可配的保留期），不可恢复所以先问一道。
+// 保留期跟随「设置 · 监控与安全」的数据保留期（与启动 GC 同口径），不可恢复所以先问一道。
 const cleanOpen = ref(false);
 const cleanScope = ref<"expired" | "all">("expired");
 const cleaning = ref(false);
@@ -254,7 +254,7 @@ async function doCleanup() {
   try {
     const all = cleanScope.value === "all";
     const r = await api.proxyOpLogCleanup(undefined, all);
-    ElMessage.success(all ? `已清空全部日志 ${fmtInt(r.deleted)} 条` : `已清理 30 天之前的日志 ${fmtInt(r.deleted)} 条`);
+    ElMessage.success(all ? `已清空全部日志 ${fmtInt(r.deleted)} 条` : `已清理 ${app.config.proxy.usageRetentionDays} 天之前的日志 ${fmtInt(r.deleted)} 条`);
     cleanOpen.value = false;
     page.value = 0; // 与总览一致：清理后回到第一页，避免当前页已超范围
     load();
@@ -274,7 +274,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
     <div class="page-head">
       <div>
         <div class="page-title">日志</div>
-        <div class="page-sub">反代网关各项操作记录（代理请求 / 签到 / 账号 / 配置等），本地存储 30 天；等级：信息=成功 · 警告=需人工/4xx · 错误=失败</div>
+        <div class="page-sub">反代网关各项操作记录（代理请求 / 签到 / 账号 / 配置等），本地存储 {{ app.config.proxy.usageRetentionDays }} 天；等级：信息=成功 · 警告=需人工/4xx · 错误=失败</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-primary" @click="load(); loadOps()">刷新</button>
@@ -368,7 +368,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
           </table>
         </div>
         <div class="pager">
-          <span class="pg-info">共 {{ total }} 条 · 第 {{ page + 1 }} / {{ totalPages }} 页</span>
+          <span class="pg-info">共 {{ total }} 条 · 每页 {{ pageSize }} 条 · 第 {{ page + 1 }} / {{ totalPages }} 页</span>
           <button class="btn-ghost" :disabled="page === 0" @click="page--; load()">上一页</button>
           <button class="btn-ghost" :disabled="(page + 1) * pageSize >= total" @click="page++; load()">下一页</button>
         </div>
@@ -385,7 +385,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize))
             <button class="chip" :class="{ active: cleanScope === 'all' }" @click="cleanScope = 'all'">全部日志</button>
           </div>
           <div class="set-desc">
-            <template v-if="cleanScope === 'expired'"> 将删除 30 天之前的全部操作日志（与启动时自动回收的保留期一致），此操作不可恢复。 </template>
+            <template v-if="cleanScope === 'expired'"> 将删除 {{ app.config.proxy.usageRetentionDays }} 天之前的全部操作日志（与启动时自动回收的保留期一致），此操作不可恢复。 </template>
             <template v-else> 将清空<b>整张操作日志表</b>（含当前筛选范围之外的全部记录），此操作不可恢复。 </template>
           </div>
           <div class="p-actions">

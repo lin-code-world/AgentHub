@@ -8,7 +8,7 @@
      此注释为版权与授权声明，禁止删除。
   ============================================================
 -->
-<!-- 设置 · 监控与安全：额度自动刷新周期 / 「即将到期」预警阈值 / 余额历史与请求流水保留期在这里管，改动即改即存，状态反馈集中在顶部 -->
+<!-- 设置 · 监控与安全：额度自动刷新周期 / 「即将到期」预警阈值 / 数据保留期（余额历史 / 请求流水 / 操作日志）在这里管，改动即改即存，状态反馈集中在顶部 -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
@@ -131,8 +131,8 @@ async function exportCrashLogs() {
 
     <div class="switch-row">
       <div class="s-left">
-        <div class="s-title">余额历史 / 请求流水保留</div>
-        <div class="s-desc">启动时按它清理超期的请求流水与余额历史（1~3650 天，默认 90；填 0 或非法值按 90 保存）。改完不重启也不会一直按旧值跑：用量统计页的「清理」按钮按当前值立即删一轮</div>
+        <div class="s-title">数据保留期</div>
+        <div class="s-desc">启动时按它清理超期的请求流水、余额历史与操作日志（1~3650 天，默认 90；填 0 或非法值按 90 保存）。日志页与用量统计页的「清理」按钮按当前值立即删一轮</div>
       </div>
       <div class="tg-val">
         <input v-model.number="app.config.proxy.usageRetentionDays" class="input mono" style="width: 90px" type="number" min="1" max="3650" @change="saveFramework" />
