@@ -368,31 +368,33 @@ onUnmounted(() => {
       </div>
 
       <div v-else class="tbl-wrap">
-        <table class="tbl expiry-tbl">
-          <tbody>
-            <tr>
-              <th>渠道 · 账号</th><th>包名</th><th class="num">剩余 / 总额</th><th>到期</th><th class="num">剩余天数</th><th>状态</th>
-            </tr>
-            <tr v-for="r in pagedRows" :key="r.key" :class="rowCls(r.pkg)">
-              <td>
-                <div class="src-ch">{{ r.channelDisplay }}</div>
-                <div class="src-acc">{{ r.accountName }}</div>
-              </td>
-              <el-tooltip :content="r.pkg.name" :disabled="!r.pkg.name" placement="top">
-                <td>{{ r.pkg.name || pkgFallbackName(r.channelId) }}</td>
-              </el-tooltip>
-              <!-- 逐行带单位：Token 渠道（zcode 家）过 fmtToken 换算，积分渠道原值；
-                   「/ —」是上游不给总额（账号级聚合行等），与「不限」哨兵不是一回事 -->
-              <td class="mono num">{{ fmtBalancePair(r.pkg.remaining, r.pkg.total, r.channelId) }}</td>
-              <td class="mono">{{ r.pkg.expiresAt ? fmtDate(r.pkg.expiresAt) : "长期" }}</td>
-              <td class="mono num">{{ daysText(r.pkg) }}</td>
-              <td><span class="tag" :class="statusCls(r.pkg)">{{ statusText(r.pkg) }}</span></td>
-            </tr>
-            <tr v-if="!rows.length">
-              <td colspan="6" style="text-align: center; color: var(--text-3); padding: 18px">{{ emptyText }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="expiry-scroll">
+          <table class="tbl expiry-tbl">
+            <tbody>
+              <tr>
+                <th>渠道 · 账号</th><th>包名</th><th class="num">剩余 / 总额</th><th>到期</th><th class="num">剩余天数</th><th>状态</th>
+              </tr>
+              <tr v-for="r in pagedRows" :key="r.key" :class="rowCls(r.pkg)">
+                <td>
+                  <div class="src-ch">{{ r.channelDisplay }}</div>
+                  <div class="src-acc">{{ r.accountName }}</div>
+                </td>
+                <el-tooltip :content="r.pkg.name" :disabled="!r.pkg.name" placement="top">
+                  <td>{{ r.pkg.name || pkgFallbackName(r.channelId) }}</td>
+                </el-tooltip>
+                <!-- 逐行带单位：Token 渠道（zcode 家）过 fmtToken 换算，积分渠道原值；
+                     「/ —」是上游不给总额（账号级聚合行等），与「不限」哨兵不是一回事 -->
+                <td class="mono num">{{ fmtBalancePair(r.pkg.remaining, r.pkg.total, r.channelId) }}</td>
+                <td class="mono">{{ r.pkg.expiresAt ? fmtDate(r.pkg.expiresAt) : "长期" }}</td>
+                <td class="mono num">{{ daysText(r.pkg) }}</td>
+                <td><span class="tag" :class="statusCls(r.pkg)">{{ statusText(r.pkg) }}</span></td>
+              </tr>
+              <tr v-if="!rows.length">
+                <td colspan="6" style="text-align: center; color: var(--text-3); padding: 18px">{{ emptyText }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <div class="pager">
           <span class="pg-info">共 {{ rows.length }} 条 · 每页 {{ pageSize }} 条 · 第 {{ page + 1 }} / {{ totalPages }} 页</span>
           <button class="btn-ghost" :disabled="page === 0" @click="page--">上一页</button>
@@ -462,6 +464,21 @@ onUnmounted(() => {
   color: var(--danger, #e5484d);
   font-size: 13px;
   margin-bottom: 8px;
+}
+/* 表格区内部上下滚动、整页不滚动（与日志页 .table-scroll 同口径：max-height 480px / 62vh + 表头吸顶） */
+.expiry-scroll {
+  max-height: min(480px, 62vh);
+  overflow: auto;
+}
+/* 本表表头是 tbody 首行的 th（不是 thead），吸顶靠首个 tr 定位 */
+.expiry-tbl tr:first-child th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel, var(--bg-soft));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--line-strong);
 }
 .expiry-tbl {
   width: 100%;
