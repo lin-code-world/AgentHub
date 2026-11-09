@@ -113,125 +113,122 @@ async function saveRoute() {
 
 <template>
   <div class="cfg-sec">
-    <div class="card">
-      <div class="card-title">
-        请求与路由
-        <span v-if="msg" class="tag" :class="msgErr ? 'tag-err' : 'tag-ok'" style="margin-left: 8px">{{ msg }}</span>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">
+          默认路由策略
+          <span v-if="msg" class="tag" :class="msgErr ? 'tag-err' : 'tag-ok'" style="margin-left: 8px">{{ msg }}</span>
+        </div>
+        <div class="set-desc">模型仅存在于单渠道时强制走该渠道，此策略处理多源重叠</div>
       </div>
+      <el-select v-model="app.config.proxy.routeStrategy" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
+        <el-option value="smart" label="智能路由（健康度 × 余额打分）" />
+        <el-option value="fixed" label="指定渠道优先" />
+      </el-select>
+    </div>
+    <div class="set-row" v-if="app.config.proxy.routeStrategy === 'fixed'">
+      <div class="set-info"><div class="set-name">优先渠道</div></div>
+      <el-select v-model="app.config.proxy.fixedChannel" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
+        <el-option v-for="c in channels" :key="c.id" :value="c.id" :label="c.display" />
+      </el-select>
+    </div>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">渠道优先顺序</div>
+        <div class="set-desc">智能打分 = 按健康度 × 余额排序（默认）；免费优先 = 魔搭等免费/低成本渠道的额度优先消耗，不可用（耗尽/降级）时自动落付费渠道，恢复后自动回切。免费额度每日限量，耗尽属正常现象；Key 上可单独覆盖</div>
+      </div>
+      <el-select v-model="app.config.proxy.routeOrder" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
+        <el-option value="score" label="智能打分（默认）" />
+        <el-option value="cost-first" label="免费 / 低成本优先" />
+      </el-select>
+    </div>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">单 Key 限速</div>
+        <div class="set-desc">令牌桶；新 Key 默认继承，Key 上可单独覆盖</div>
+      </div>
+      <input v-model.number="app.config.proxy.rateLimitPerMin" class="input mono" style="width: 90px" type="number" min="0" @change="saveRoute" />
+      <span style="font-size: 11px; color: var(--text-3)">次 / 分钟</span>
+    </div>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">单渠道并发上限</div>
+        <div class="set-desc">每个渠道同时打上游的请求数；打满只跳备选渠道，不拒绝请求（旧版按全渠道合计、会误伤空闲渠道）</div>
+      </div>
+      <input v-model.number="app.config.proxy.concurrency" class="input mono" style="width: 90px" type="number" min="1" @change="saveRoute" />
+      <span style="font-size: 11px; color: var(--text-3)">并发</span>
+    </div>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">拟人抖动（防监测）</div>
+        <div class="set-desc">每次上游请求前随机停 40~220ms，模拟真实客户端节奏，降低被风控识别为反代的概率</div>
+      </div>
+      <button
+        class="switch"
+        :class="{ on: app.config.proxy.humanizeJitter }"
+        @click="
+          app.config.proxy.humanizeJitter = !app.config.proxy.humanizeJitter;
+          saveRoute();
+        "
+      ></button>
+    </div>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">跨渠道故障转移</div>
+        <div class="set-desc">渠道报 503/429 或号池耗尽时，请求内自动跳到其他渠道（按余额充足度排序），客户端无感；关闭后只在单渠道内换号</div>
+      </div>
+      <button
+        class="switch"
+        :class="{ on: app.config.proxy.channelFailover !== false }"
+        @click="
+          app.config.proxy.channelFailover = app.config.proxy.channelFailover === false;
+          saveRoute();
+        "
+      ></button>
+    </div>
+    <template v-if="app.config.proxy.channelFailover !== false">
       <div class="set-row">
         <div class="set-info">
-          <div class="set-name">默认路由策略</div>
-          <div class="set-desc">模型仅存在于单渠道时强制走该渠道，此策略处理多源重叠</div>
+          <div class="set-name">单请求最多尝试渠道数</div>
+          <div class="set-desc">范围 1~10；超出上限按 10 保存（上游尝试预算随上限放大：每模型 上限+1 次、最低 6 次）</div>
         </div>
-        <el-select v-model="app.config.proxy.routeStrategy" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
-          <el-option value="smart" label="智能路由（健康度 × 余额打分）" />
-          <el-option value="fixed" label="指定渠道优先" />
-        </el-select>
-      </div>
-      <div class="set-row" v-if="app.config.proxy.routeStrategy === 'fixed'">
-        <div class="set-info"><div class="set-name">优先渠道</div></div>
-        <el-select v-model="app.config.proxy.fixedChannel" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
-          <el-option v-for="c in channels" :key="c.id" :value="c.id" :label="c.display" />
-        </el-select>
+        <input v-model.number="app.config.proxy.channelFailoverMax" class="input mono" style="width: 90px" type="number" min="1" max="10" @change="saveRoute" />
+        <span style="font-size: 11px; color: var(--text-3)">个（含主渠道）</span>
       </div>
       <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">渠道优先顺序</div>
-          <div class="set-desc">智能打分 = 按健康度 × 余额排序（默认）；免费优先 = 魔搭等免费/低成本渠道的额度优先消耗，不可用（耗尽/降级）时自动落付费渠道，恢复后自动回切。免费额度每日限量，耗尽属正常现象；Key 上可单独覆盖</div>
-        </div>
-        <el-select v-model="app.config.proxy.routeOrder" class="f-el-select" popper-class="glass-popper" style="width: 208px" @change="saveRoute">
-          <el-option value="score" label="智能打分（默认）" />
-          <el-option value="cost-first" label="免费 / 低成本优先" />
-        </el-select>
+        <div class="set-info"><div class="set-name">降级基础时长</div></div>
+        <input v-model.number="channelCooldownSec" class="input mono" style="width: 90px" type="number" min="10" @change="saveRoute" />
+        <span style="font-size: 11px; color: var(--text-3)">秒（失败翻倍）</span>
       </div>
       <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">单 Key 限速</div>
-          <div class="set-desc">令牌桶；新 Key 默认继承，Key 上可单独覆盖</div>
-        </div>
-        <input v-model.number="app.config.proxy.rateLimitPerMin" class="input mono" style="width: 90px" type="number" min="0" @change="saveRoute" />
-        <span style="font-size: 11px; color: var(--text-3)">次 / 分钟</span>
+        <div class="set-info"><div class="set-name">降级时长封顶</div></div>
+        <input v-model.number="channelCooldownCapSec" class="input mono" style="width: 90px" type="number" min="10" @change="saveRoute" />
+        <span style="font-size: 11px; color: var(--text-3)">秒</span>
       </div>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">单渠道并发上限</div>
-          <div class="set-desc">每个渠道同时打上游的请求数；打满只跳备选渠道，不拒绝请求（旧版按全渠道合计、会误伤空闲渠道）</div>
-        </div>
-        <input v-model.number="app.config.proxy.concurrency" class="input mono" style="width: 90px" type="number" min="1" @change="saveRoute" />
-        <span style="font-size: 11px; color: var(--text-3)">并发</span>
+    </template>
+    <div class="set-row">
+      <div class="set-info">
+        <div class="set-name">不可用时自动切换模型</div>
+        <div class="set-desc">统一设置（默认开）：模型未知或号池耗尽时自动切到下方回退模型，客户端无感（响应模型字段保持请求值）</div>
       </div>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">拟人抖动（防监测）</div>
-          <div class="set-desc">每次上游请求前随机停 40~220ms，模拟真实客户端节奏，降低被风控识别为反代的概率</div>
-        </div>
-        <button
-          class="switch"
-          :class="{ on: app.config.proxy.humanizeJitter }"
-          @click="
-            app.config.proxy.humanizeJitter = !app.config.proxy.humanizeJitter;
-            saveRoute();
-          "
-        ></button>
+      <button
+        class="switch"
+        :class="{ on: app.config.proxy.autoFallbackEnabled !== false }"
+        @click="
+          app.config.proxy.autoFallbackEnabled = app.config.proxy.autoFallbackEnabled === false;
+          saveRoute();
+        "
+      ></button>
+    </div>
+    <div class="set-row" v-if="app.config.proxy.autoFallbackEnabled !== false">
+      <div class="set-info">
+        <div class="set-name">全局回退模型</div>
+        <div class="set-desc">候选来自合并模型目录；留空则不切换</div>
       </div>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">跨渠道故障转移</div>
-          <div class="set-desc">渠道报 503/429 或号池耗尽时，请求内自动跳到其他渠道（按余额充足度排序），客户端无感；关闭后只在单渠道内换号</div>
-        </div>
-        <button
-          class="switch"
-          :class="{ on: app.config.proxy.channelFailover !== false }"
-          @click="
-            app.config.proxy.channelFailover = app.config.proxy.channelFailover === false;
-            saveRoute();
-          "
-        ></button>
-      </div>
-      <template v-if="app.config.proxy.channelFailover !== false">
-        <div class="set-row">
-          <div class="set-info">
-            <div class="set-name">单请求最多尝试渠道数</div>
-            <div class="set-desc">范围 1~10；超出上限按 10 保存（上游尝试预算随上限放大：每模型 上限+1 次、最低 6 次）</div>
-          </div>
-          <input v-model.number="app.config.proxy.channelFailoverMax" class="input mono" style="width: 90px" type="number" min="1" max="10" @change="saveRoute" />
-          <span style="font-size: 11px; color: var(--text-3)">个（含主渠道）</span>
-        </div>
-        <div class="set-row">
-          <div class="set-info"><div class="set-name">降级基础时长</div></div>
-          <input v-model.number="channelCooldownSec" class="input mono" style="width: 90px" type="number" min="10" @change="saveRoute" />
-          <span style="font-size: 11px; color: var(--text-3)">秒（失败翻倍）</span>
-        </div>
-        <div class="set-row">
-          <div class="set-info"><div class="set-name">降级时长封顶</div></div>
-          <input v-model.number="channelCooldownCapSec" class="input mono" style="width: 90px" type="number" min="10" @change="saveRoute" />
-          <span style="font-size: 11px; color: var(--text-3)">秒</span>
-        </div>
-      </template>
-      <div class="set-row">
-        <div class="set-info">
-          <div class="set-name">不可用时自动切换模型</div>
-          <div class="set-desc">统一设置（默认开）：模型未知或号池耗尽时自动切到下方回退模型，客户端无感（响应模型字段保持请求值）</div>
-        </div>
-        <button
-          class="switch"
-          :class="{ on: app.config.proxy.autoFallbackEnabled !== false }"
-          @click="
-            app.config.proxy.autoFallbackEnabled = app.config.proxy.autoFallbackEnabled === false;
-            saveRoute();
-          "
-        ></button>
-      </div>
-      <div class="set-row" v-if="app.config.proxy.autoFallbackEnabled !== false">
-        <div class="set-info">
-          <div class="set-name">全局回退模型</div>
-          <div class="set-desc">候选来自合并模型目录；留空则不切换</div>
-        </div>
-        <el-select v-model="app.config.proxy.fallbackModel" class="f-el-select" popper-class="glass-popper" style="width: 208px" filterable @change="saveRoute">
-          <el-option value="" label="（不回退）" />
-          <el-option v-for="m in models" :key="m.id" :value="m.id" :label="m.id" />
-        </el-select>
-      </div>
+      <el-select v-model="app.config.proxy.fallbackModel" class="f-el-select" popper-class="glass-popper" style="width: 208px" filterable @change="saveRoute">
+        <el-option value="" label="（不回退）" />
+        <el-option v-for="m in models" :key="m.id" :value="m.id" :label="m.id" />
+      </el-select>
     </div>
   </div>
 </template>
