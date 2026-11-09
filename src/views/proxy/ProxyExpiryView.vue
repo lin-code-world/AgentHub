@@ -131,6 +131,14 @@ const summary = computed(() => countByState(allRows.value));
 /** 呈现档：表格（默认）↔ 泳道时间轴 ↔ 见底曲线。表格是逐包明细的权威面，
  *  时间轴补「哪几天集中掉」，见底曲线补「哪天腰斩、什么时候归零」——三者各答一个问题 */
 const viewMode = ref<"table" | "lane" | "decay">("table");
+/** 表格档分页：每页 20 条（与日志页一致）。时间轴 / 见底曲线两个图形档不分页 */
+const page = ref(0);
+const pageSize = 20;
+const totalPages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize)));
+const pagedRows = computed(() => rows.value.slice(page.value * pageSize, (page.value + 1) * pageSize));
+// 切筛选 / 排序 / 历史档时回到第 1 页；刷新后行数变少（筛选后越界）时回落到最后一页
+watch([statusFilter, channelFilter, sortKey, historyOpen], () => { page.value = 0; });
+watch(totalPages, (tp) => { if (page.value > tp - 1) page.value = tp - 1; if (page.value < 0) page.value = 0; });
 // 喂给两档图形的都是表格正在显示的那一批行 ⇒ 渠道/状态筛选与历史档对三档同时生效，不会各说一套
 const lanes = computed(() => buildExpiryLanes(rows.value, nowMs.value));
 const decay = computed(() => buildDecaySeries(rows.value, nowMs.value));
@@ -365,7 +373,7 @@ onUnmounted(() => {
             <tr>
               <th>渠道 · 账号</th><th>包名</th><th class="num">剩余 / 总额</th><th>到期</th><th class="num">剩余天数</th><th>状态</th>
             </tr>
-            <tr v-for="r in rows" :key="r.key" :class="rowCls(r.pkg)">
+            <tr v-for="r in pagedRows" :key="r.key" :class="rowCls(r.pkg)">
               <td>
                 <div class="src-ch">{{ r.channelDisplay }}</div>
                 <div class="src-acc">{{ r.accountName }}</div>
@@ -385,6 +393,11 @@ onUnmounted(() => {
             </tr>
           </tbody>
         </table>
+        <div class="pager">
+          <span class="pg-info">共 {{ rows.length }} 条 · 每页 {{ pageSize }} 条 · 第 {{ page + 1 }} / {{ totalPages }} 页</span>
+          <button class="btn-ghost" :disabled="page === 0" @click="page--">上一页</button>
+          <button class="btn-ghost" :disabled="(page + 1) * pageSize >= rows.length" @click="page++">下一页</button>
+        </div>
       </div>
     </div>
   </section>

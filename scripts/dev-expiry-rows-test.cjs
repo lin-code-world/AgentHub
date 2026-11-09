@@ -146,7 +146,7 @@ function main() {
   // ===== E. 源码接线钉：纯函数对了但模板没接上也白搭 =====
   const view = fs.readFileSync(path.join(ROOT, VIEW), "utf8");
   check("⑲ 默认档钉在 usable", /const statusFilter = ref<ExpiryStatusFilter>\("usable"\)/.test(view));
-  check("⑳ 模板遍历的是过滤后的 rows，不是全量 allRows", /v-for="r in rows"/.test(view) && !/v-for="r in allRows"/.test(view));
+  check("⑳ 模板遍历的是分页后的 pagedRows（源自过滤后的 rows），不是全量 allRows", /v-for="r in pagedRows"/.test(view) && /const pagedRows = computed\(\(\) => rows\.value\.slice/.test(view) && !/v-for="r in allRows"/.test(view));
   check("㉑ 下拉选项来自纯函数模块（不是视图里另抄一份）",
     /STATUS_OPTIONS/.test(view) && /SORT_OPTIONS/.test(view) && STATUS_OPTIONS.length === 6 && SORT_OPTIONS.length === 4);
 
