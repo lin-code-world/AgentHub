@@ -144,6 +144,14 @@ if (API_OK) {
 
   store.cleanupOpLogs(undefined, true);
   ok(logs().length === 0, "②b 收尾：all=true 清空");
+
+  // Review Focus：保留期 = 1 天时，操作日志与流水用同一 cutoff（一旦脱钩会立刻被抓到）
+  putLog(0, "f0"); putLog(2, "d2");
+  store.setUsageRetention(1);
+  reopen();
+  ok(logs().length === 1 && logs()[0].message === "f0",
+    `②b 保留期 1 天时 op_logs 也按 1 天 gc：2 天前的删、当天的留（实测剩 ${logs().length} 条）`);
+  store.cleanupOpLogs(undefined, true);
   store.setUsageRetention(90);
 }
 

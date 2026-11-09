@@ -14,7 +14,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useAppStore } from "../../stores/app";
 import * as api from "../../api/ipc";
-import { denyState } from "../../api/caps";
+import { denyState, isWebTransport } from "../../api/caps";
 import { coalesceAsync } from "../../utils/timing";
 import { applyIncrement, isSnapshotCurrent, planIncrement, snapshotKey } from "../../utils/oplogIncrement";
 import type { IncrementSnapshot } from "../../utils/oplogIncrement";
@@ -175,6 +175,15 @@ onMounted(() => {
   load();
   loadOps();
   loadChannels();
+  // 浏览器形态拿不到整份配置（load_config 被 deny → app.config.proxy 恒默认值），但日志页头 /
+  // 清理弹窗显示的天数要取真实保留期：单独读一次反代段回填（口径同「监控与安全」板块）。
+  if (isWebTransport()) {
+    api.proxyConfigGet().then((remote) => {
+      if (remote) app.config.proxy = remote;
+    }).catch(() => {
+      /* 读不到就保留默认值，不阻断日志列表 */
+    });
+  }
   // 新日志落库（后端 300ms 节流为 {type:"oplog"}，事件体不带内容）→ 拉增量，页面不可见不处理；
   // resync = SSE 断线重连后的补偿信号（断线期间可能漏了事件，也可能被清理过），走一次全量
   offEvent = api.onUpdateEvent((e) => {
