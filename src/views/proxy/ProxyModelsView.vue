@@ -963,11 +963,11 @@ watch(active, (on) => {
                 <tr v-for="(m, i) in rows" :key="m.id" :class="{ 'row-excluded': !!activeTab && isChannelExcluded(m, activeTab) }" :style="{ '--i': i }">
                   <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                     <div class="model-id-line">
-                      <el-tooltip :content="displayId(m)" placement="top">
-                        <div class="mono model-id">{{ displayId(m) }}</div>
-                      </el-tooltip>
                       <el-tooltip :content="isChannelExcluded(m, activeTab) ? '当前不参与该模型路由，点开启用' : `点关则此模型不再走${channelName(activeTab)}（只影响本渠道，不影响其它渠道）`" placement="top">
                         <span class="switch switch-sm" :class="{ on: !isChannelExcluded(m, activeTab) }" role="switch" :aria-checked="!isChannelExcluded(m, activeTab)" @click="toggleChannelExcluded(m, activeTab, isChannelExcluded(m, activeTab))"></span>
+                      </el-tooltip>
+                      <el-tooltip :content="displayId(m)" placement="top">
+                        <div class="mono model-id">{{ displayId(m) }}</div>
                       </el-tooltip>
                       <span v-if="activeTabRate(m) != null" class="rate-inline">×{{ activeTabRate(m) }}</span>
                       <!-- 合并进来的统一请求名：点它不是另一个模型，只是这张渠道页上的别名入口 -->
@@ -1612,12 +1612,15 @@ watch(active, (on) => {
 .model-name {
   font-size: 12px;
   color: var(--text-3);
-  margin-top: 2px;
+  margin-top: 4px;
 }
-/* 模型名列：id 与渠道倍率同一行，倍率是模型名右侧的灰字，不额外占行高 */
+/* 模型名列：渠道开关在最左，随后 id 与渠道倍率同一行，倍率是模型名右侧的灰字，不额外占行高。
+   元素间距统一走 gap（开关/名称/倍率/别名 8px）；长 id 省略号截断后 gap 仍保留，
+   开关不会贴到省略号上 */
 .model-id-line {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 .model-id {
   min-width: 0;
@@ -1629,14 +1632,12 @@ watch(active, (on) => {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--text-3);
-  margin-left: 6px;
 }
 /* 合并行的别名标签：不参与省略，跟随 id 行右侧 */
 .alias-tag {
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 4px;
-  margin-left: 6px;
 }
 /* 全部视图「实际模型」子列：该渠道真正发往上游的模型名 */
 .model-actual {
@@ -1799,7 +1800,7 @@ watch(active, (on) => {
 }
 .accountless-tag {
   display: inline-block;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 10px;
   padding: 1px 4px;
 }
