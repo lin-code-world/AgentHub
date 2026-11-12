@@ -135,10 +135,69 @@ async function testOAuth() {
   }
 }
 
+// ===== 身份与指纹：同账号稳定、不同账号不共享、user/info 解析与 401 =====
+async function testIdentity() {
+  const http = require("node:http");
+  const identity = require("../electron/backend/proxy/minimaxcode/identity.cjs");
+  const a = identity.deviceIdentity({ id: "acc-1", uid: "uid-1" });
+  const a2 = identity.deviceIdentity({ id: "acc-1", uid: "uid-1" });
+  const b = identity.deviceIdentity({ id: "acc-2", uid: "uid-2" });
+  eq(a, a2, "同账号两次派生完全一致");
+  ok(a.deviceId !== b.deviceId && a.uuid !== b.uuid, "不同账号不共享指纹");
+  ok(/^\d{8}$/.test(a.deviceId), "deviceId 是 8 位数字（贴近官方形态）");
+  ok(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.uuid), "uuid 是 v4 形态");
+  eq(identity.deviceIdentity({ id: "x", uid: "u", meta: { deviceId: "12345678", uuid: "keep-me" } }), { deviceId: "12345678", uuid: "keep-me" }, "meta 已有时原样沿用");
+
+  const seen = { url: "", headers: null };
+  const server = http.createServer((req, res) => {
+    seen.url = req.url;
+    seen.headers = req.headers;
+    const bad401 = String(req.headers.authorization || "").includes("bad401");
+    res.writeHead(bad401 ? 401 : 200, { "content-type": "application/json" });
+    res.end(JSON.stringify(bad401 ? { error: "invalid access token" } : { data: { userInfo: { realUserID: "577097653167349763", name: "MiniMax380993" } } }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const cfg = {
+    agentBase: `http://127.0.0.1:${server.address().port}`,
+    userInfoPath: "/v1/api/user/info",
+    desktopVersion: "3.1.14",
+    screenWidth: 2048,
+    screenHeight: 1152,
+    deviceMemory: 32,
+    cpuCoreNum: 12,
+  };
+  try {
+    const r = await identity.fetchUserInfo({ token: "mmoat_x", cfg, deviceId: a.deviceId, uuid: a.uuid, httpJson: adapters.httpJson });
+    ok(r.ok && r.realUserID === "577097653167349763" && r.name === "MiniMax380993", "user/info 解析 realUserID / name");
+    ok(/user_id=0/.test(seen.url), "首次引导的签名 user_id 填 0");
+    ok(/Bearer mmoat_x/.test(String(seen.headers && seen.headers.authorization)), "带 Bearer");
+
+    const bad = await identity.fetchUserInfo({ token: "bad", cfg: { ...cfg, agentBase: "http://127.0.0.1:1" }, deviceId: "1", uuid: "u", httpJson: adapters.httpJson });
+    ok(!bad.ok && bad.authError === false, "网络失败不误判 authError");
+
+    const unauthorized = await identity.fetchUserInfo({ token: "bad401", cfg, deviceId: a.deviceId, uuid: a.uuid, httpJson: adapters.httpJson });
+    ok(!unauthorized.ok && unauthorized.authError === true, "401 判 authError");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+
+  const saved = {};
+  const uid = await identity.ensureRealUserID({
+    account: { id: "acc-1", uid: "uid-1", meta: { realUserID: "cached-uid" } },
+    secrets: { token: "x" },
+    cfg: {},
+    httpJson: async () => ({ status: 500, ok: false, data: null, text: "" }),
+    save: (patch) => Object.assign(saved, patch),
+  });
+  eq(uid, "cached-uid", "meta 命中不再请求上游");
+  eq(saved, {}, "命中时不做无谓写回");
+}
+
 (async () => {
   testRegistry();
   testSign();
   await testOAuth();
+  await testIdentity();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();
