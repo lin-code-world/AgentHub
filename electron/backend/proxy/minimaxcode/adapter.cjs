@@ -44,9 +44,11 @@ function rememberSpent(refreshToken) {
 }
 
 function makeMinimaxCode(deps) {
-  const { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs } = deps;
+  const { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs, store } = deps;
   const channel = "minimaxcode";
   const cfg = () => (rules.get("headers.json") || {}).minimaxcode || {};
+  const identityMod = require("./identity.cjs");
+  const creditsMod = require("./credits.cjs");
 
   return {
     id: channel,
@@ -169,8 +171,24 @@ function makeMinimaxCode(deps) {
       return null;
     },
 
-    async queryCredits() {
-      throw new Error("MiniMax Code 余额查询尚未实现");
+    async queryCredits(account, secrets) {
+      const c = cfg();
+      const token = String((secrets && secrets.token) || "");
+      if (!token) return { authError: true, message: "该账号没有凭据" };
+      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      // realUserID 不在令牌里：meta 命中直接用，缺失才问上游并写回（同轮不再重复请求）
+      const save = (patch) => {
+        try {
+          const cur = (account && account.meta) || {};
+          store.updateAccount(account.id, { meta: { ...cur, ...patch } });
+          account.meta = { ...cur, ...patch };
+        } catch { /* 写回失败不影响本次结果 */ }
+      };
+      const userId = await identityMod.ensureRealUserID({ account, secrets, cfg: c, httpJson, save });
+      if (!userId) return { error: "取不到账号身份（realUserID），暂时无法查询余额" };
+      const r = await creditsMod.query({ token, userId, deviceId, uuid, cfg: c, httpJson });
+      if (!r.ok) return r.authError ? { authError: true, message: r.message } : { error: r.message };
+      return { credits: r.credits, expiresAt: 0 };
     },
   };
 }

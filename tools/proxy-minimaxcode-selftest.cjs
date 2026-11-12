@@ -462,6 +462,78 @@ async function testRefresh() {
   }
 }
 
+// ===== 余额：字符串小数、401 两种形态、适配器返回形状 =====
+async function testCredits() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const credits = require("../electron/backend/proxy/minimaxcode/credits.cjs");
+  let mode = "ok";
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      if (mode === "auth") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid access token" }));
+        return;
+      }
+      if (mode === "biz401") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ base_resp: { status_code: 401, status_msg: "not login" } }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        plan_type: 1,
+        plan_name: "",
+        has_token_plan: false,
+        op_credit_summary: { total_remaining_amount: mode === "decimal" ? "1492.125" : "400", free_remaining_amount: "400", purchased_remaining_amount: "0" },
+        base_resp: { status_code: 0, status_msg: "success" },
+      }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cfg = { agentBase: base, membershipPath: "/matrix/api/v1/commerce/get_membership_info" };
+  const args = { token: "mmoat_x", userId: "u1", deviceId: "12345678", uuid: "u1-uuid", cfg, httpJson: adapters.httpJson };
+  try {
+    const one = await credits.query(args);
+    ok(one.ok && one.credits === 400, "字符串积分转数字 400");
+    mode = "decimal";
+    const dec = await credits.query(args);
+    ok(dec.ok && dec.credits === 1492.125, "小数积分不截断");
+    mode = "auth";
+    const a = await credits.query(args);
+    ok(!a.ok && a.authError === true, "HTTP 401 判 authError");
+    mode = "biz401";
+    const b = await credits.query(args);
+    ok(!b.ok && b.authError === true, "业务码 401 也判 authError");
+
+    // 适配器层：meta 已有 realUserID 时不再打 user/info；返回 { credits, expiresAt: 0 }
+    const hf = path.join(rules.rulesDir(), "headers.json");
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+    all.minimaxcode = { ...(all.minimaxcode || {}), ...cfg };
+    fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+    rules.reload("headers.json");
+    mode = "ok";
+    const r = await adapters.get("minimaxcode").queryCredits(
+      { id: "a1", uid: "u1", meta: { realUserID: "u1", deviceId: "12345678", uuid: "u1-uuid" } },
+      { token: "mmoat_x" },
+    );
+    eq(r, { credits: 400, expiresAt: 0 }, "适配器返回 { credits, expiresAt: 0 }");
+    mode = "auth";
+    const authErr = await adapters.get("minimaxcode").queryCredits(
+      { id: "a1", uid: "u1", meta: { realUserID: "u1", deviceId: "12345678", uuid: "u1-uuid" } },
+      { token: "mmoat_x" },
+    );
+    ok(authErr.authError === true, "适配器把 401 转成 authError（刷新重试由通用层做）");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
@@ -471,6 +543,7 @@ async function testRefresh() {
   await testModels();
   await testChat();
   await testRefresh();
+  await testCredits();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();

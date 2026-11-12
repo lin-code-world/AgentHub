@@ -4692,7 +4692,7 @@ ADAPTERS.loomy = makeLoomy(loomyDeps);
 // zcodeAnthropic.cjs；余额 / 签到走账号类接口，另需 yy + x-signature 双签名（见 minimaxcode/sign.cjs）。
 // refresh token 一次性：预刷新窗口收窄到 10 分钟，401 的刷新重试由通用层统一处理。
 const { makeMinimaxCode } = require("./minimaxcode/adapter.cjs");
-const minimaxcodeDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs };
+const minimaxcodeDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs, store };
 ADAPTERS.minimaxcode = makeMinimaxCode(minimaxcodeDeps);
 
 // ===== Accio 双区（accio 国际版 / accio_cn 国内版）=====
