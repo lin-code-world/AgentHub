@@ -29,7 +29,7 @@ const store = require("../electron/backend/proxy/store.cjs");
 const adapters = require("../electron/backend/proxy/adapters.cjs");
 
 // ===== 渠道注册 =====
-(function testRegistry() {
+function testRegistry() {
   const row = store.CHANNELS.find((c) => c.id === "minimaxcode");
   ok(!!row, "CHANNELS 含 minimaxcode");
   eq(row && row.display, "MiniMax Code", "显示名");
@@ -40,12 +40,12 @@ const adapters = require("../electron/backend/proxy/adapters.cjs");
   eq(report.adaptersWithoutChannel, [], "无缺渠道的适配器");
   const ad = adapters.get("minimaxcode");
   ok(ad && typeof ad.cfg === "function", "cfg 是函数");
-})();
+}
 
 // ===== 签名：encodeURIComponent 口径 / 两个摘要的固定向量 / 指纹查询串顺序 =====
 // 向量取自实现公式（与实测探针同一套：用该实现打 get_membership_info 实测 200），
 // 固化字面量是为了防"改签名顺手改坏"的回归，不是用实现验证自己。
-(function testSign() {
+function testSign() {
   const sign = require("../electron/backend/proxy/minimaxcode/sign.cjs");
   eq(sign.encodeUriComponent("a b!~*'()中"), "a%20b!~*'()%E4%B8%AD", "encodeURIComponent 口径（!*'() 不编码、中文按 UTF-8）");
   eq(sign.formEncode("a b"), "a+b", "formEncode 空格变 +");
@@ -65,7 +65,80 @@ const adapters = require("../electron/backend/proxy/adapters.cjs");
   );
   ok(q.includes("user_id=123"), "user_id 进查询串");
   ok(q.includes("device_id=d1"), "device_id 进查询串");
-})();
+}
 
-console.log(`\n${pass} 通过 / ${fail} 失败`);
-if (fail) process.exitCode = 1;
+// ===== OAuth 设备码：表单参数 / 只有 user_code 的变体 / 三态轮询 / 刷新 =====
+async function testOAuth() {
+  const http = require("node:http");
+  const oauth = require("../electron/backend/proxy/minimaxcode/oauth.cjs");
+  const seen = { device: null, polls: [], refreshes: [] };
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      const p = new URLSearchParams(raw);
+      if (req.url === "/oauth2/device/code") {
+        seen.device = Object.fromEntries(p);
+        res.writeHead(200, { "content-type": "application/json" });
+        // 真实变体之一：只回 user_code，没有 device_code
+        res.end(JSON.stringify({ user_code: "ABCD-EFGH", verification_uri: "https://example.test/activate", expires_in: 600, interval: 1 }));
+        return;
+      }
+      if (req.url === "/oauth2/token") {
+        if (p.get("grant_type") === "refresh_token") {
+          seen.refreshes.push(Object.fromEntries(p));
+          res.writeHead(p.get("refresh_token") === "mmort_bad" ? 400 : 200, { "content-type": "application/json" });
+          res.end(p.get("refresh_token") === "mmort_bad"
+            ? JSON.stringify({ error: "invalid_grant" })
+            : JSON.stringify({ access_token: "mmoat_new", refresh_token: "mmort_new", expires_in: 43200, token_type: "Bearer" }));
+          return;
+        }
+        seen.polls.push(Object.fromEntries(p));
+        const n = seen.polls.length;
+        res.writeHead(200, { "content-type": "application/json" });
+        if (n === 1) res.end(JSON.stringify({ status: "pending" }));
+        else if (n === 2) res.end(JSON.stringify({ status: "slow_down" }));
+        else res.end(JSON.stringify({ access_token: "mmoat_a", refresh_token: "mmort_a", expires_in: 43200, token_type: "Bearer" }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const cfg = { accountBase: `http://127.0.0.1:${server.address().port}` };
+  try {
+    const { verifier, challenge } = oauth.pkce();
+    ok(verifier.length >= 32 && challenge.length > 10, "PKCE 生成");
+    const dev = await oauth.requestDeviceCode(challenge, cfg, adapters.httpJson);
+    ok(dev.ok, "设备码申请成功");
+    eq(seen.device.client_id, "mcode-public", "client_id");
+    eq(seen.device.scope, "agent.default", "scope");
+    eq(seen.device.audience, "agent-backend", "audience");
+    eq(seen.device.code_challenge_method, "S256", "PKCE 方法");
+    eq(seen.device.code_challenge, challenge, "challenge 原样上送");
+    eq(dev.pollByUser, true, "无 device_code 时按 user_code 轮询");
+    const device = { deviceCode: dev.deviceCode, pollByUser: dev.pollByUser, verifier };
+    eq((await oauth.pollToken(device, cfg, adapters.httpJson)).kind, "pending", "第一次 pending");
+    eq((await oauth.pollToken(device, cfg, adapters.httpJson)).kind, "slowDown", "第二次 slow_down");
+    const done = await oauth.pollToken(device, cfg, adapters.httpJson);
+    eq(done.kind, "confirmed", "第三次 confirmed");
+    eq(done.tokens.accessToken, "mmoat_a", "拿到 accessToken");
+    eq(seen.polls[0].user_code, "ABCD-EFGH", "轮询体用 user_code");
+    ok(!("device_code" in seen.polls[0]), "不该同时带 device_code");
+    const rf = await oauth.refresh({ refreshToken: "mmort_a", cfg, httpJson: adapters.httpJson });
+    ok(rf.ok && rf.accessToken === "mmoat_new" && rf.refreshToken === "mmort_new", "刷新成功");
+    ok(rf.expiresAt > Date.now(), "刷新写回到期");
+    const bad = await oauth.refresh({ refreshToken: "mmort_bad", cfg, httpJson: adapters.httpJson });
+    ok(!bad.ok && bad.authError === true, "invalid_grant 判 authError");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+(async () => {
+  testRegistry();
+  testSign();
+  await testOAuth();
+  console.log(`\n${pass} 通过 / ${fail} 失败`);
+  if (fail) process.exitCode = 1;
+})();
