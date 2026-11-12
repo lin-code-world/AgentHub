@@ -42,6 +42,8 @@ const wbCrypto = require("./wbCrypto.cjs");
 const qoderAuth = require("./qoderAuth.cjs");
 const clineCredentials = require("./cline/credentials.cjs");
 const clineLogin = require("./cline/login.cjs");
+const minimaxOAuth = require("./minimaxcode/oauth.cjs");
+const minimaxIdentity = require("./minimaxcode/identity.cjs");
 
 const OAUTH_PORT = 17388; // 首选回环端口；被占用时退到系统随机端口（授权地址里会带实际端口）
 const OAUTH_TIMEOUT_MS = 180000;
@@ -604,7 +606,9 @@ function scanAll() {
  * （只关界面会留下"藏了入口但接口还能灌"的绕过）。
  */
 function isScanImportAllowed(channel) {
-  return String(channel || "") !== "zcode";
+  // MiniMax Code 同样下线：目标部署机没装客户端，且本机导入会与客户端共用同一枚
+  // 一次性 refresh token（互相踢下线）。加号一律走设备码登录。
+  return !["zcode", "minimaxcode"].includes(String(channel || ""));
 }
 
 /**
@@ -1704,6 +1708,125 @@ function saveClineAccount(channel, sess) {
     source: "oauth",
     expiresAt: expiresAt || undefined,
     meta: { email: name.includes("@") ? name : "" },
+  });
+  return { id, uid, updated: false };
+}
+
+// ===== MiniMax Code（国内站）：OAuth 设备码 + PKCE（官方 mcode-public） =====
+// 与 Cline 同形态（显示用户码 + 浏览器确认，无本地回调端口）。MiniMax 变体：设备码响应
+// 可能只回 user_code，此时按 user_code 轮询（见 minimaxcode/oauth.cjs 的 pollByUser）。
+// 落库前先拉一次 /v1/api/user/info 取 realUserID —— 它不在任何令牌里，是余额/签到的必要参数。
+async function beginMinimaxCodeOAuth(channel, onDone) {
+  const c = (rules.get("headers.json") || {}).minimaxcode || {};
+  const { verifier, challenge } = minimaxOAuth.pkce();
+  const start = await minimaxOAuth.requestDeviceCode(challenge, c, adapters.httpJson);
+  if (!start.ok) return { ok: false, message: start.message };
+  // 网络 await 期间用户可能已另发登录并占位了 oauthSession（与 Cline 同一条窗口守卫）
+  if (oauthSession) return { ok: false, message: "已有进行中的登录，请先完成或取消" };
+  const deviceCode = start.deviceCode;
+  const intervalMs = Math.max(2000, Number(start.interval) * 1000 || 5000);
+  const timeoutMs = Math.max(OAUTH_TIMEOUT_MS, (Number(start.expiresIn) || 600) * 1000);
+  oauthSession = {
+    mode: "device",
+    channel,
+    state: deviceCode,
+    onDone,
+    server: null,
+    timer: null,
+    intervalMs,
+    deadline: Date.now() + timeoutMs,
+    timeoutMin: Math.round(timeoutMs / 60000),
+  };
+  const tick = async () => {
+    const session = oauthSession;
+    if (!session || session.state !== deviceCode) return;
+    if (Date.now() > session.deadline) {
+      finishOAuth({ ok: false, message: `登录超时（${session.timeoutMin || 3} 分钟），请重新发起` });
+      return;
+    }
+    const r = await minimaxOAuth.pollToken({ deviceCode, pollByUser: start.pollByUser, verifier }, c, adapters.httpJson);
+    // 会话一致性守卫：await 在途期间用户可能已取消并另发登录——旧 tick 的结果必须丢弃
+    if (oauthSession !== session) return;
+    if (r.kind === "confirmed") {
+      const { deviceId, uuid } = minimaxIdentity.deviceIdentity({ id: r.tokens.accessToken });
+      const info = await minimaxIdentity
+        .fetchUserInfo({ token: r.tokens.accessToken, cfg: c, deviceId, uuid, httpJson: adapters.httpJson })
+        .catch(() => ({ ok: false }));
+      // fetchUserInfo 也是网络 await：恢复后同样先确认会话未被取消/替换
+      if (oauthSession !== session) return;
+      try {
+        const saved = saveMinimaxCodeAccount(channel, r.tokens, {
+          realUserID: info && info.ok ? info.realUserID : "",
+          name: info && info.ok ? info.name : "",
+        });
+        finishOAuth({ ok: true, id: saved.id, uid: saved.uid });
+      } catch (e) {
+        finishOAuth({ ok: false, message: String((e && e.message) || e) });
+      }
+      return;
+    }
+    if (r.kind === "failed") {
+      finishOAuth({ ok: false, message: r.message });
+      return;
+    }
+    // slow_down：按 RFC 8628 拉长间隔（上限 30s）；pending 维持原间隔
+    if (r.kind === "slowDown") session.intervalMs = Math.min(session.intervalMs + 2000, 30000);
+    if (oauthSession && oauthSession.state === deviceCode) session.timer = setTimeout(tick, session.intervalMs);
+  };
+  oauthSession.timer = setTimeout(tick, intervalMs);
+  return { ok: true, url: start.verificationUri, mode: "device", userCode: start.userCode };
+}
+
+/** MiniMax Code 登录结果落库：uid = realUserID（拿不到时回落 accessToken 摘要并标注），
+ *  设备指纹首次登录派生后固化（同 uid 再登录沿用原指纹，不换设备）。 */
+function saveMinimaxCodeAccount(channel, tokens, profile) {
+  const token = String((tokens && tokens.accessToken) || "").trim();
+  if (!token) throw new Error("登录结果缺少 accessToken");
+  const realUserID = String((profile && profile.realUserID) || "").trim();
+  const uid = realUserID || crypto.createHash("sha256").update(token).digest("hex").slice(0, 16);
+  const name = String((profile && profile.name) || "").trim() || `MiniMax ${uid.slice(-6)}`;
+  const refreshToken = String((tokens && tokens.refreshToken) || "").trim();
+  const expiresAt = Number(tokens && tokens.expiresAt) || 0;
+  const derived = minimaxIdentity.deviceIdentity({ id: uid, uid });
+  const existing = store.listAccounts(channel).find((a) => a.uid === uid);
+  if (existing) {
+    const oldMeta = readAccountMeta(existing.id);
+    store.updateAccount(existing.id, {
+      token,
+      refreshToken: refreshToken || undefined,
+      expiresAt: expiresAt || undefined,
+      status: "online",
+      coolUntil: 0,
+      coolReason: "",
+      meta: {
+        ...oldMeta,
+        realUserID,
+        userName: name,
+        deviceId: oldMeta.deviceId || derived.deviceId,
+        uuid: oldMeta.uuid || derived.uuid,
+        accessExpiresAt: expiresAt,
+        uidFallback: !realUserID,
+      },
+    });
+    return { id: existing.id, uid, updated: true };
+  }
+  const id = store.addAccount({
+    channel,
+    uid,
+    name,
+    token,
+    refreshToken,
+    source: "oauth",
+    expiresAt: expiresAt || undefined,
+    meta: {
+      realUserID,
+      userName: name,
+      deviceId: derived.deviceId,
+      uuid: derived.uuid,
+      accessExpiresAt: expiresAt,
+      loginEpoch: crypto.randomUUID(),
+      ...(realUserID ? {} : { uidFallback: true }),
+    },
   });
   return { id, uid, updated: false };
 }
@@ -3297,6 +3420,8 @@ async function beginOAuth(channel, onDone, helpers, opts) {
   if (ch === "qoder" || ch === "qoder_intl") return beginQoderOAuth(ch, onDone);
   // Cline 双池：WorkOS 设备授权（显示用户码 + 浏览器确认，无本地回调端口，少一处失败面）
   if (ch === "cline_free" || ch === "cline_pass") return beginClineOAuth(ch, onDone);
+  // MiniMax Code：官方 mcode-public 设备授权（同样无本地回调端口；变体按 user_code 轮询）
+  if (ch === "minimaxcode") return beginMinimaxCodeOAuth(ch, onDone);
   // Accio 双区：OAuth 2.0 授权码 + PKCE（S256），回环回调（见 beginAccioOAuth）
   if (ch === "accio" || ch === "accio_cn") return beginAccioOAuth(ch, onDone);
   // CodeArts：OAuth + PKCE（SHA-256）+ DPoP，回环回调（见 beginCodeArtsOAuth）
@@ -3742,6 +3867,8 @@ module.exports = {
   saveAccioAccount,
   // CodeArts：OAuth 登录（begin 由 beginOAuth 分派）+ 落库
   saveCodeArtsAccount,
+  // MiniMax Code：设备码登录（begin 由 beginOAuth 分派）+ 落库（自测直接用落库函数锁字段）
+  saveMinimaxCodeAccount,
   // Loomy（讯飞）：手机验证码登录两跳（IPC 直调，不走 oauthSession）
   loomySendCode,
   loomyLoginWithCode,

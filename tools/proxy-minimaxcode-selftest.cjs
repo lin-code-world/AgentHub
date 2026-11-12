@@ -193,11 +193,104 @@ async function testIdentity() {
   eq(saved, {}, "命中时不做无谓写回");
 }
 
+// ===== 登录：设备码形态、轮询入池、meta 完整、同 uid 不重复、本机导入被拒 =====
+function waitFor(predicate, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const v = predicate();
+      if (v) { clearInterval(timer); resolve(v); }
+      else if (Date.now() - started > timeoutMs) { clearInterval(timer); reject(new Error("等待超时")); }
+    }, 50);
+  });
+}
+
+async function testLogin() {
+  const fs = require("node:fs");
+  const http = require("node:http");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const discovery = require("../electron/backend/proxy/discovery.cjs");
+
+  let pollCount = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      const p = new URLSearchParams(raw);
+      if (req.url === "/oauth2/device/code") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ user_code: "ABCD-EFGH", verification_uri: "https://example.test/activate", expires_in: 600, interval: 1 }));
+        return;
+      }
+      if (req.url === "/oauth2/token") {
+        if (p.get("grant_type") === "refresh_token") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ access_token: "mmoat_r", refresh_token: "mmort_r", expires_in: 43200 }));
+          return;
+        }
+        pollCount += 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        if (pollCount === 1) res.end(JSON.stringify({ status: "pending" }));
+        else res.end(JSON.stringify({ access_token: "mmoat_login", refresh_token: "mmort_login", expires_in: 43200, token_type: "Bearer" }));
+        return;
+      }
+      if (String(req.url).startsWith("/v1/api/user/info")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: { userInfo: { realUserID: "577097653167349763", name: "MiniMax380993" } } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const rulesDir = rules.rulesDir();
+    const hf = path.join(rulesDir, "headers.json");
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+    all.minimaxcode = { ...(all.minimaxcode || {}), accountBase: base, agentBase: base };
+    fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+    rules.reload("headers.json");
+
+    let done = null;
+    const started = await discovery.beginOAuth("minimaxcode", (r) => { done = r; });
+    ok(started.ok && started.mode === "device" && started.userCode === "ABCD-EFGH", "begin 返回设备码形态");
+    ok(started.url === "https://example.test/activate", "回传授权地址");
+    await waitFor(() => done, 20000);
+    ok(done && done.ok, "轮询到 confirmed 后 onDone ok");
+
+    const accs = store.listAccounts("minimaxcode");
+    eq(accs.length, 1, "入池一条账号");
+    const acc = accs[0];
+    const secrets = store.accountSecrets(store.accountRows("minimaxcode")[0]);
+    eq(acc.uid, "577097653167349763", "uid = realUserID");
+    ok(/mmoat_login/.test(secrets.token), "token 落库");
+    ok(/mmort_login/.test(secrets.refreshToken || ""), "refreshToken 落库");
+    ok((acc.expiresAt || 0) > Date.now(), "expiresAt 落在未来");
+    const meta = acc.meta || {};
+    eq(meta.realUserID, "577097653167349763", "meta.realUserID");
+    ok(!!meta.deviceId && !!meta.uuid, "meta 固化设备指纹");
+    ok((meta.accessExpiresAt || 0) > Date.now(), "meta.accessExpiresAt");
+    eq(discovery.isScanImportAllowed("minimaxcode"), false, "本机导入被拒");
+
+    // 同 uid 再登一次：更新而不是新增
+    let done2 = null;
+    await discovery.beginOAuth("minimaxcode", (r) => { done2 = r; });
+    await waitFor(() => done2, 20000);
+    ok(done2 && done2.ok, "二次登录成功");
+    eq(store.listAccounts("minimaxcode").length, 1, "同 uid 不重复入池");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
   await testOAuth();
   await testIdentity();
+  await testLogin();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();
