@@ -347,6 +347,121 @@ async function testModels() {
   }
 }
 
+// ===== 对话：请求体翻译、SSE 事件桥、未知模型 400、401 交给通用层 =====
+async function testChat() {
+  const http = require("node:http");
+  const ad = adapters.get("minimaxcode");
+  const seen = { body: null, headers: null };
+  const sse = [
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"m1","usage":{"input_tokens":5}}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好"}}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ].join("");
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      seen.body = raw;
+      seen.headers = req.headers;
+      if (String(req.headers.authorization || "").includes("bad401")) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ code: 401, message: "auth failed" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(sse);
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const hf = path.join(rules.rulesDir(), "headers.json");
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+  all.minimaxcode = { ...(all.minimaxcode || {}), agentBase: `http://127.0.0.1:${server.address().port}`, messagesPath: "/mavis/api/v1/llm/v1/messages" };
+  fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+  rules.reload("headers.json");
+  try {
+    const events = [];
+    const result = await ad.chat({
+      account: { id: "a1", uid: "u1", meta: {} },
+      secrets: { token: "mmoat_ok" },
+      model: "MiniMax-M3.1-Flash",
+      body: { messages: [{ role: "system", content: "be brief" }, { role: "user", content: "hi" }] },
+      emit: (ev) => events.push(ev),
+      meta: {},
+    });
+    eq(result.status, 200, "chat 返回 200");
+    const sent = JSON.parse(seen.body);
+    eq(sent.model, "MiniMax-M3.1-Flash", "模型逐字透传");
+    eq(sent.stream, true, "恒开流式");
+    eq(sent.max_tokens, 128000, "max_tokens 用目录里的输出上限");
+    eq(Array.isArray(sent.system) || typeof sent.system === "string" ? "has" : "none", "has", "system 抽到顶层");
+    ok(events.some((e) => e.type === "delta" && String(JSON.stringify(e.delta)).includes("你好")), "SSE 文本增量 emit");
+    ok(/Bearer mmoat_ok/.test(String(seen.headers.authorization)), "带 Bearer");
+
+    // 未知模型：入口 400（不猜模型名）
+    let unknownErr = null;
+    await ad.chat({ account: { id: "a1", meta: {} }, secrets: { token: "mmoat_ok" }, model: "MiniMax-Not-Exist", body: { messages: [{ role: "user", content: "hi" }] }, emit: () => {}, meta: {} }).catch((e) => { unknownErr = e; });
+    ok(unknownErr && unknownErr.status === 400 && /可用/.test(unknownErr.message), "未知模型 400 并给可用清单");
+
+    // 401：抛给通用层（适配器不自己刷新）
+    let authErr = null;
+    await ad.chat({ account: { id: "a1", meta: {} }, secrets: { token: "bad401" }, model: "MiniMax-M3", body: { messages: [{ role: "user", content: "hi" }] }, emit: () => {}, meta: {} }).catch((e) => { authErr = e; });
+    ok(authErr && authErr.status === 401, "401 原样抛出交通用层");
+
+    // 分类器：对话 401 与账号接口 401 都判 auth
+    eq(ad.classifyError({ status: 401, body: JSON.stringify({ code: 401, message: "auth failed" }) }), { kind: "auth", switchable: false }, "对话 401 分类");
+    eq(ad.classifyError({ status: 401, body: JSON.stringify({ error: "invalid access token" }) }), { kind: "auth", switchable: false }, "账号接口 401 分类");
+    eq(ad.classifyError({ status: 400, body: JSON.stringify({ type: "error", error: { message: "invalid params, unknown model 'X' (2013)" } }) }), null, "未知模型 400 交通用层（400 → fatal，不罚号）");
+    eq(ad.classifyError({ status: 500, body: "" }), null, "其它错误交通用分类器");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+// ===== 续期：窗口收窄、一次性 token 不重复花费、写回形状 =====
+async function testRefresh() {
+  const ad = adapters.get("minimaxcode");
+  eq(ad.refreshWindowSec, 600, "预刷新窗口 10 分钟（默认 24h 会把每轮余额刷新变成一次续期）");
+  eq(ad.tokenExpiryMs({ meta: { accessExpiresAt: 123456 } }, {}), 123456, "到期取 meta.accessExpiresAt");
+  eq(ad.tokenExpiryMs({ meta: {} }, {}), 0, "没有到期信息返回 0（不预刷新）");
+  ok(typeof ad.refreshToken === "function", "实现 refreshToken");
+  ok(typeof ad.classifyError === "function", "实现 classifyError");
+
+  const http = require("node:http");
+  let hits = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      hits += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: "mmoat_r2", refresh_token: "mmort_r2", expires_in: 43200 }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const hf = path.join(rules.rulesDir(), "headers.json");
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+  all.minimaxcode = { ...(all.minimaxcode || {}), accountBase: `http://127.0.0.1:${server.address().port}` };
+  fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+  rules.reload("headers.json");
+  try {
+    const first = await ad.refreshToken({ id: "a1", meta: {} }, { refreshToken: "mmort_once" });
+    ok(first.ok && first.token === "mmoat_r2", "续期成功并回传新令牌");
+    eq(hits, 1, "上游只被请求一次");
+    const second = await ad.refreshToken({ id: "a1", meta: {} }, { refreshToken: "mmort_once" });
+    ok(!second.ok && second.authError === true, "同一枚 refresh token 第二次直接拒绝");
+    eq(hits, 1, "第二次没有再打上游（一次性 token 不会被花第二次）");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
@@ -354,6 +469,8 @@ async function testModels() {
   await testIdentity();
   await testLogin();
   await testModels();
+  await testChat();
+  await testRefresh();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();
