@@ -592,6 +592,10 @@ async function syncAll() {
   err.value = "";
   errFromRefresh = false;
   try {
+    // 号池快照可能落后于刚完成的登录/导入（页面停在模型页时不会自动重拉）：
+    // 先刷新一次，否则新账号所在渠道会被「没有可用账号」误判跳过——用户看到的现象就是
+    // 「全部拉取」跑完却没有这个渠道。
+    await refresh();
     // 号池里没有可用账号、且目录接口需要登录态的渠道直接跳过：这类渠道拉取必然返回
     // 「无可用账号」，属于没配置而非失败，不该堆成一片红字（单渠道「拉取」仍会如实报错）
     const targets = channels.value.filter((c) => c.modelsNeedAuth === false || c.accounts.some((a) => a.status === "online" && a.hasToken));
