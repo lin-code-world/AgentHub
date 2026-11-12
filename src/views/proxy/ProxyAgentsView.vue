@@ -246,6 +246,9 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // 后端同样拒绝（见 discovery.isScanImportAllowed / index.cjs 的 proxy_scan_import），
   // 这里隐藏页签只挡正常操作，绕过界面直接调接口那一路由后端兜底。
   if (channel === "zcode" && key === "local") return false;
+  // MiniMax Code 同样不做本机导入：部署目标机没装客户端，且本机导入会与客户端共用同一枚
+  // 一次性 refresh token（互相踢下线）。加号一律走设备码登录，后端同样拒绝。
+  if (channel === "minimaxcode" && key === "local") return false;
   return true;
 }
 
