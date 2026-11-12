@@ -60,10 +60,19 @@ function makeMinimaxCode(deps) {
     return m && typeof m === "object" && !Array.isArray(m) ? m : {};
   }
 
-  /** 写回 meta：对象合并后落库，并就地更新内存里的两处快照（同轮不再重复问上游）。 */
+  /** 写回 meta：**读-改-写**（以库里最新一份为底），与 store.noteCheckin / setCreditsDetail 同口径。
+   *  整份覆盖会抹掉别的链路在这期间写入的键（签到记录、最近错误），表现为「偶发消失」。 */
   function saveMeta(account, secrets, patch) {
-    const cur = metaOf(account, secrets);
-    const next = { ...cur, ...patch };
+    let base = metaOf(account, secrets);
+    try {
+      if (account && account.id) {
+        const row = store.getAccount(account.id);
+        const raw = row && row.meta;
+        const latest = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null;
+        if (latest && typeof latest === "object" && !Array.isArray(latest)) base = latest;
+      }
+    } catch { /* 读不到就用内存快照 */ }
+    const next = { ...base, ...patch };
     try {
       if (account && account.id) store.updateAccount(account.id, { meta: next });
     } catch { /* 写回失败不影响本次结果 */ }
@@ -207,14 +216,16 @@ function makeMinimaxCode(deps) {
      *  都变成一次续期，一轮轮花掉一次性 refresh token——小浣熊渠道踩过的同一个坑）。 */
     refreshWindowSec: 600,
 
-    /** 渠道级错误分类：两种 401 错误体（对话 `{"code":401,...}`、账号接口 `{"error":"invalid access token"}`）
-     *  都要判 auth；其余交给通用分类器（400 → fatal 不罚号）。 */
+    /** 渠道级错误分类：401 = 凭据失效（判 auth，通用层刷新/标 relogin）；
+     *  403 = 套餐/模型权限不足或风控（**与凭据无关**，判 model_denied：零动作、不罚号），
+     *  只有 403 正文明确写凭据失效时才归 auth；其余交给通用分类器（400 → fatal 不罚号）。 */
     classifyError(e) {
       const status = Number(e && e.status) || 0;
       const body = String((e && e.body) || "");
-      if (status === 401 || status === 403 || /invalid access token|auth failed/i.test(body)) {
-        return { kind: "auth", switchable: false };
-      }
+      const authInBody = /invalid access token|auth failed|invalid_token|unauthorized/i.test(body);
+      if (status === 401) return { kind: "auth", switchable: false };
+      if (status === 403) return authInBody ? { kind: "auth", switchable: false } : { kind: "model_denied", switchable: false };
+      if (authInBody) return { kind: "auth", switchable: false };
       return null;
     },
 
@@ -227,8 +238,10 @@ function makeMinimaxCode(deps) {
       const { deviceId, uuid } = identityOf(account, secrets);
       const r = await creditsMod.query({ token, userId, deviceId, uuid, cfg: c, httpJson });
       if (!r.ok) return r.authError ? { authError: true, message: r.message } : { error: r.message };
-      // 套餐信息只入 meta（默认账号没有 Token Plan，不在界面展示）
-      if (r.hasTokenPlan || r.planName) saveMeta(account, secrets, { hasTokenPlan: !!r.hasTokenPlan, planName: r.planName || "" });
+      // 套餐信息只入 meta（默认账号没有 Token Plan，不在界面展示）。
+      // **无论有没有套餐都写**：`false` 也是事实，缺了它界面/日志会分不清「没套餐」与「没查到」。
+      // 键名刻意不含 token/secret 等词——store.stripSensitiveMeta 会把这些键整条剔除。
+      saveMeta(account, secrets, { planSubscribed: !!r.hasTokenPlan, planName: r.planName || "" });
       return { credits: r.credits, expiresAt: 0 };
     },
 

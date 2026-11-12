@@ -180,17 +180,6 @@ async function testIdentity() {
   } finally {
     await new Promise((r) => server.close(r));
   }
-
-  const saved = {};
-  const uid = await identity.ensureRealUserID({
-    account: { id: "acc-1", uid: "uid-1", meta: { realUserID: "cached-uid" } },
-    secrets: { token: "x" },
-    cfg: {},
-    httpJson: async () => ({ status: 500, ok: false, data: null, text: "" }),
-    save: (patch) => Object.assign(saved, patch),
-  });
-  eq(uid, "cached-uid", "meta 命中不再请求上游");
-  eq(saved, {}, "命中时不做无谓写回");
 }
 
 // ===== 登录：设备码形态、轮询入池、meta 完整、同 uid 不重复、本机导入被拒 =====
@@ -340,6 +329,20 @@ async function testModels() {
 
     eq(models.resolveId(rulesDir, "minimaxcode", "MiniMax-M3"), "MiniMax-M3", "逐字命中");
     eq(models.resolveId(rulesDir, "minimaxcode", "minimax-m3"), null, "大小写不同不命中");
+
+    // 外部改写 catalog.json（index.cjs 的 proxy_models_sync 会独立写同一份）后，进程内缓存必须失效
+    const file = path.join(rulesDir, "catalog.json");
+    const all2 = JSON.parse(fs.readFileSync(file, "utf8"));
+    all2.minimaxcode = {
+      syncedAt: Date.now() + 1000,
+      models: [{ id: "MiniMax-New", name: "New", rate: null, capabilities: { images: false, reasoning: false, tools: true }, contextLength: 1, maxOutputTokens: 1 }],
+    };
+    fs.writeFileSync(file, JSON.stringify(all2, null, 2), "utf8");
+    eq(models.list(rulesDir, "minimaxcode"), ["MiniMax-New"], "外部改写目录文件后 list 按文件变化失效");
+    // 复原：后续 chat 用例按真实目录校验模型名
+    all2.minimaxcode = { syncedAt: Date.now(), models: parsed };
+    fs.writeFileSync(file, JSON.stringify(all2, null, 2), "utf8");
+    eq(models.list(rulesDir, "minimaxcode").sort(), ["MiniMax-M3", "MiniMax-M3.1-Flash"], "复原目录后缓存跟随");
     eq(adapters.get("minimaxcode").models().sort(), ["MiniMax-M3", "MiniMax-M3.1-Flash"], "适配器 models() 读同一份目录");
     eq(adapters.get("minimaxcode").mapModel("MiniMax-M3"), "MiniMax-M3", "mapModel 原样透传");
   } finally {
@@ -411,9 +414,11 @@ async function testChat() {
     await ad.chat({ account: { id: "a1", meta: {} }, secrets: { token: "bad401" }, model: "MiniMax-M3", body: { messages: [{ role: "user", content: "hi" }] }, emit: () => {}, meta: {} }).catch((e) => { authErr = e; });
     ok(authErr && authErr.status === 401, "401 原样抛出交通用层");
 
-    // 分类器：对话 401 与账号接口 401 都判 auth
+    // 分类器：对话 401 与账号接口 401 都判 auth；403 是「未订阅该模型/权限不足」，不罚号
     eq(ad.classifyError({ status: 401, body: JSON.stringify({ code: 401, message: "auth failed" }) }), { kind: "auth", switchable: false }, "对话 401 分类");
     eq(ad.classifyError({ status: 401, body: JSON.stringify({ error: "invalid access token" }) }), { kind: "auth", switchable: false }, "账号接口 401 分类");
+    eq(ad.classifyError({ status: 403, body: JSON.stringify({ error: "model not subscribed" }) }), { kind: "model_denied", switchable: false }, "403 判 model_denied，不罚号");
+    eq(ad.classifyError({ status: 403, body: JSON.stringify({ error: "invalid access token" }) }), { kind: "auth", switchable: false }, "403 明确写凭据失效时才判 auth");
     eq(ad.classifyError({ status: 400, body: JSON.stringify({ type: "error", error: { message: "invalid params, unknown model 'X' (2013)" } }) }), null, "未知模型 400 交通用层（400 → fatal，不罚号）");
     eq(ad.classifyError({ status: 500, body: "" }), null, "其它错误交通用分类器");
   } finally {
@@ -483,6 +488,16 @@ async function testCredits() {
         res.end(JSON.stringify({ base_resp: { status_code: 401, status_msg: "not login" } }));
         return;
       }
+      if (mode === "forbidden") {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "model not subscribed" }));
+        return;
+      }
+      if (mode === "wrapped") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: { op_credit_summary: { total_remaining_amount: "88" } }, base_resp: { status_code: 0 } }));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
         plan_type: 1,
@@ -509,6 +524,12 @@ async function testCredits() {
     mode = "biz401";
     const b = await credits.query(args);
     ok(!b.ok && b.authError === true, "业务码 401 也判 authError");
+    mode = "forbidden";
+    const f = await credits.query(args);
+    ok(!f.ok && !f.authError, "403 不判 authError（不烧一次性令牌、不打死账号）");
+    mode = "wrapped";
+    const w = await credits.query(args);
+    ok(w.ok && w.credits === 88, "兼容 { data: {...} } 包裹形态");
 
     // 适配器层：meta 已有 realUserID 时不再打 user/info；返回 { credits, expiresAt: 0 }
     const hf = path.join(rules.rulesDir(), "headers.json");
@@ -583,7 +604,7 @@ async function testCheckin() {
   try {
     const st = await checkin.status(args);
     ok(st.ok && st.checkedIn === true, "今日已签");
-    eq([st.consecutiveDays, st.creditsEarnedToday], [1, 400], "面板字段");
+    eq([st.streakDays, st.credit], [1, 400], "面板字段用仓库签到契约 credit / streakDays");
 
     mode = "already";
     const al = await checkin.claim(args);
@@ -591,7 +612,7 @@ async function testCheckin() {
 
     mode = "claim";
     const cl = await checkin.claim(args);
-    ok(cl.ok && cl.already === false && cl.reward === 400, "领取成功带积分");
+    ok(cl.ok && cl.already === false && cl.credit === 400, "领取成功带回 credit（前端只认这个键）");
 
     mode = "auth";
     const au = await checkin.status(args);
@@ -631,7 +652,7 @@ async function testMetaIntegrity() {
       return;
     }
     calls.membership += 1;
-    res.end(JSON.stringify({ op_credit_summary: { total_remaining_amount: "400" }, base_resp: { status_code: 0 } }));
+    res.end(JSON.stringify({ has_token_plan: false, plan_name: "", op_credit_summary: { total_remaining_amount: "400" }, base_resp: { status_code: 0 } }));
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const hf = path.join(rules.rulesDir(), "headers.json");
@@ -653,7 +674,17 @@ async function testMetaIntegrity() {
     const view = store.listAccounts("minimaxcode").find((a) => a.id === id);
     eq([view.meta.deviceId, view.meta.uuid, view.meta.accessExpiresAt], ["11111111", meta.uuid, meta.accessExpiresAt], "余额刷新不破坏 meta（deviceId/uuid/到期）");
     ok(!Object.keys(view.meta).some((k) => /^\d+$/.test(k)), "meta 没被字符串展开成索引键");
+    // 套餐事实要能落库：键名必须避开 store.stripSensitiveMeta 的 /token/i 脱敏
+    ok(view.meta.planSubscribed === false, "「确认没有套餐」也存进 meta（键名避开脱敏词）");
     eq(calls.userInfo, 0, "meta 命中时不再打 user/info");
+
+    // saveMeta 必须是读-改-写：库里有别的链路刚写的 checkin，不能被整份覆盖抹掉
+    const id2 = store.addAccount({ channel: "minimaxcode", uid: `uid-e2e-noid-${Date.now()}`, name: "e2e2", token: "mmoat_e2e2", refreshToken: "mmort_e2e2", meta: { deviceId: "22222222", uuid: "22222222-2222-4222-8222-222222222222" } });
+    store.noteCheckin(id2, { ok: true, credit: 400, streakDays: 1 }, "checkin");
+    await creditsMod.refreshAccount(id2);
+    const view2 = store.listAccounts("minimaxcode").find((a) => a.id === id2);
+    ok(view2.meta.checkin && view2.meta.checkin.credit === 400, "补 realUserID 写回时不抹掉 checkin 记录");
+    eq(view2.meta.realUserID, "uid-e2e", "确实写回了 realUserID");
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -717,6 +748,13 @@ async function testRefreshNotBlacklistedOnNetworkError() {
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
       hits += 1;
+      const p = new URLSearchParams(raw);
+      if (p.get("refresh_token") === "mmort_param") {
+        // 参数类 400：这枚令牌其实还活着，不能拉黑
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid_request", error_description: "unsupported scope" }));
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ access_token: "mmoat_net", refresh_token: "mmort_net", expires_in: 43200 }));
     });
@@ -738,6 +776,13 @@ async function testRefreshNotBlacklistedOnNetworkError() {
     const retried = await ad.refreshToken({ id: "acc-net", meta: {} }, { refreshToken: "mmort_net_once" });
     ok(retried.ok && retried.token === "mmoat_net", "同一枚 token 在恢复后可重试");
     eq(hits, 1, "上游只真正收到一次");
+
+    // 参数类 400（invalid_request）不是「令牌已作废」：不判 authError，也不拉黑
+    const param = await ad.refreshToken({ id: "acc-param", meta: {} }, { refreshToken: "mmort_param" });
+    ok(!param.ok && param.authError === false, "参数类 400 不判 authError");
+    const param2 = await ad.refreshToken({ id: "acc-param", meta: {} }, { refreshToken: "mmort_param" });
+    ok(!param2.ok, "重试仍失败（上游确实拒绝）");
+    eq(hits, 3, "参数类 400 没有被拉黑，第二次仍打到上游");
   } finally {
     await new Promise((r) => server.close(r));
   }

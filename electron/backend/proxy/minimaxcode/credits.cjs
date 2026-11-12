@@ -42,29 +42,38 @@ async function query({ token, userId, deviceId, uuid, cfg, httpJson }) {
   } catch (e) {
     return { ok: false, message: `余额查询失败：${String((e && e.message) || e)}` };
   }
-  if (r.status === 401 || r.status === 403) {
+  if (r.status === 401) {
     return { ok: false, authError: true, message: "登录态已失效（401），请重新登录" };
   }
+  // 403 是套餐/模型权限不足，与凭据无关：判成 authError 会让通用层白花一枚一次性 refresh token
+  // 并把好账号标「需重登」。这里只当普通失败上报。
+  if (r.status === 403) {
+    return { ok: false, message: `余额接口拒绝访问（HTTP 403，通常是套餐/权限不足）：${(r.text || "").slice(0, 120)}` };
+  }
   const payload = r.data && typeof r.data === "object" ? r.data : {};
-  const statusCode = Number((payload.base_resp && payload.base_resp.status_code) ?? NaN);
-  if (statusCode === 401 || statusCode === 403) {
+  // 上游可能把业务包放在 data 里，也可能直接平铺在顶层：两处都认（签到侧同一口径）
+  const core = payload.data && typeof payload.data === "object" ? payload.data : payload;
+  const baseResp = (payload.base_resp && typeof payload.base_resp === "object" ? payload.base_resp : null)
+    || (core.base_resp && typeof core.base_resp === "object" ? core.base_resp : {});
+  const statusCode = Number(baseResp.status_code ?? NaN);
+  if (statusCode === 401) {
     return { ok: false, authError: true, message: `登录态已失效（业务码 ${statusCode}），请重新登录` };
   }
   if (r.status >= 400) {
     return { ok: false, message: `余额查询失败（HTTP ${r.status}）：${(r.text || "").slice(0, 160)}` };
   }
   if (Number.isFinite(statusCode) && statusCode !== 0) {
-    const msg = String((payload.base_resp && payload.base_resp.status_msg) || "");
+    const msg = String(baseResp.status_msg || "");
     return { ok: false, message: `余额接口返回业务码 ${statusCode}${msg ? `：${msg}` : ""}` };
   }
-  const summary = payload.op_credit_summary && typeof payload.op_credit_summary === "object" ? payload.op_credit_summary : {};
-  const raw = summary.total_remaining_amount ?? payload.total_remains_credit ?? payload.opcredit_balance ?? 0;
+  const summary = core.op_credit_summary && typeof core.op_credit_summary === "object" ? core.op_credit_summary : {};
+  const raw = summary.total_remaining_amount ?? core.total_remains_credit ?? core.opcredit_balance ?? 0;
   const credits = Number(raw);
   return {
     ok: true,
     credits: Number.isFinite(credits) ? credits : 0,
-    hasTokenPlan: payload.has_token_plan === true,
-    planName: String(payload.plan_name || ""),
+    hasTokenPlan: core.has_token_plan === true,
+    planName: String(core.plan_name || ""),
   };
 }
 

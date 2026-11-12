@@ -345,3 +345,25 @@ OpenAI body ──zcodeAnthropic.toAnthropic(model, body, { defaultMaxTokens })�
 8. **网络失败不拉黑 refresh token**：只有上游真的消费/作废（`invalid_grant`）才记入「已花」集合；
    网络/5xx 失败保留可用，自测锁「恢复后同一枚可重试、上游只收到一次」。
 
+## 十二、评审修复（2026-11-12 第二轮，herdr reviewer）
+
+1. **套餐键改名 `planSubscribed`**：`hasTokenPlan` 含 `token` 子串，会被 `store.stripSensitiveMeta`
+   的 `/token|secret|.../i` 整条剔除（等于永远存不进库）；且「确认没有套餐」时原条件不写。
+   现无论有无套餐都写 `planSubscribed`，自测锁「false 也落库」。
+2. **403 不再判 `auth`**：`kind:"auth"` 会被归一成 `relogin`，连续 3 次判废账号；而 403 多半是
+   套餐/模型权限不足（`model_denied`：零动作、不罚号）。现在 401 才判 auth，403 只有正文明确写
+   `invalid access token` 时才判 auth；余额/登录侧 403 也不返回 `authError`（不白烧一次性令牌）。
+3. **签到结果字段改用仓库契约 `credit` / `streakDays`**：前端与 `store.noteCheckin` 只认这两个键，
+   原先的 `credits/consecutiveDays/creditsEarnedToday` 会让「本次获得」「连续天数」永不显示。
+4. **续期 authError 精确化**：只有 `invalid_grant|invalid_token|unauthorized|access_denied` 或 HTTP 401
+   才算「令牌已被作废」；参数类 400（scope/client_id 写错）不再把仍存活的令牌永久拉黑。
+5. **模型目录缓存按文件签名（mtime+size）失效**：`index.cjs` 的 `proxy_models_sync` 会独立写同一份
+   `catalog.json`，原先「本进程写过一次就永不再读盘」会让拉取成功后路由仍报模型不存在。
+6. **`saveMeta` 改为读-改-写**：以库里最新 meta 为底合并，避免整份覆盖抹掉别的链路刚写入的
+   `checkin` / 最近错误（与 `store.noteCheckin` / `setCreditsDetail` 同口径）。
+7. **响应解包统一**：余额与签到都同时认 `{...}` 与 `{data:{...}}` 两种形态（此前只有签到兼容）。
+8. **补齐渠道图标**：取自官方桌面客户端 exe 的内嵌位图，随包发布（目标机无客户端也能显示）。
+9. **清理无消费方的实现**：删除 `headers.json` 的 `platformBase`（套餐接口未实现）与
+   `identity.ensureRealUserID`（适配器侧 `userIdOf` 是同一件事的唯一实现）。
+
+

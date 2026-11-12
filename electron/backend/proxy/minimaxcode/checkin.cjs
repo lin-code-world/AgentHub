@@ -66,14 +66,15 @@ async function status(args) {
   const r = await call("status", args);
   if (!r.ok) return r;
   const { today, days } = todayOf(r.payload);
+  const points = today ? Number(today.points) || 0 : 0;
   return {
     ok: true,
     checkedIn: !!(today && Number(today.status) === 3),
-    // 面板不给总余额，这里只回报「今天能领/已领」的积分
-    credits: today ? Number(today.points) || 0 : 0,
-    consecutiveDays: today ? Number(today.day_no) || 0 : 0,
-    creditsEarnedToday: today ? Number(today.points) || 0 : 0,
-    message: today && Number(today.status) === 3 ? `今日已签到（第 ${Number(today.day_no) || 1} 天，${Number(today.points) || 0} 积分）` : "今日未签到",
+    // 字段名沿用仓库签到契约（store.noteCheckin 与前端只认 credit / streakDays）：
+    // 写成 credits / consecutiveDays 会让「本次获得」「连续天数」在界面上永远不显示。
+    credit: points,
+    streakDays: today ? Number(today.day_no) || 0 : 0,
+    message: today && Number(today.status) === 3 ? `今日已签到（第 ${Number(today.day_no) || 1} 天，${points} 积分）` : "今日未签到",
     days,
   };
 }
@@ -86,10 +87,10 @@ async function claim(args) {
   const reward = Number(data.points) || 0;
   if (result === 2) {
     const st = await status(args).catch(() => null);
-    return { ok: true, already: true, reward: 0, status: st && st.ok ? st : null, message: "今天已经签到过了" };
+    return { ok: true, already: true, credit: 0, status: st && st.ok ? st : null, message: "今天已经签到过了" };
   }
   const st = await status(args).catch(() => null);
-  return { ok: true, already: false, reward, status: st && st.ok ? st : null, message: `签到成功${reward ? `，获得 ${reward} 积分` : ""}` };
+  return { ok: true, already: false, credit: reward, status: st && st.ok ? st : null, message: `签到成功${reward ? `，获得 ${reward} 积分` : ""}` };
 }
 
 module.exports = { status, claim };

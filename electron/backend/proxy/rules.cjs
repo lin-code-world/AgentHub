@@ -517,7 +517,6 @@ const DEFAULTS = {
     minimaxcode: {
       accountBase: "https://account.minimax.cn",
       agentBase: "https://agent.minimax.cn",
-      platformBase: "https://www.minimaxi.com",
       messagesPath: "/mavis/api/v1/llm/v1/messages",
       modelsPath: "/mavis/api/v1/models?region=cn&buildEnv=prod",
       userInfoPath: "/v1/api/user/info",

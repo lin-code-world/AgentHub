@@ -31,6 +31,8 @@ import accioIcon from "../../assets/channels/accio.png";
 import accioCnIcon from "../../assets/channels/accio_cn.png";
 import codeartsIcon from "../../assets/channels/codearts.png";
 import loomyIcon from "../../assets/channels/loomy.png";
+// MiniMax Code：取自官方桌面客户端 exe 的内嵌图标（与系统里显示的为同一张），随包发布
+import minimaxcodeIcon from "../../assets/channels/minimaxcode.png";
 
 export const CHANNEL_ICONS: Record<string, string> = {
   trae: traeIcon,
@@ -49,6 +51,7 @@ export const CHANNEL_ICONS: Record<string, string> = {
   accio_cn: accioCnIcon,
   codearts: codeartsIcon,
   loomy: loomyIcon,
+  minimaxcode: minimaxcodeIcon,
 };
 
 /** 无图标渠道的字母角标：优先用服务端回的 display（与卡片上显示的名称一致），

@@ -78,19 +78,4 @@ async function fetchUserInfo({ token, cfg, deviceId, uuid, httpJson }) {
   return { ok: true, realUserID, name: String(info.name || "").trim() };
 }
 
-/**
- * 取 realUserID：账号 meta 命中直接返回；否则问上游并把结果交给 `save` 落库。
- * 失败返回空串（调用方据此把该账号的余额标记为「查不到」，而不是判死账号）。
- */
-async function ensureRealUserID({ account, secrets, cfg, httpJson, save }) {
-  const meta = (account && account.meta) || {};
-  const cached = String(meta.realUserID || "").trim();
-  if (cached) return cached;
-  const { deviceId, uuid } = deviceIdentity(account);
-  const r = await fetchUserInfo({ token: String((secrets && secrets.token) || ""), cfg, deviceId, uuid, httpJson });
-  if (!r.ok) return "";
-  if (typeof save === "function") save({ realUserID: r.realUserID, ...(r.name ? { userName: r.name } : {}) });
-  return r.realUserID;
-}
-
-module.exports = { deviceIdentity, fetchUserInfo, ensureRealUserID, deviceIdFrom, uuidFrom };
+module.exports = { deviceIdentity, fetchUserInfo, deviceIdFrom, uuidFrom };

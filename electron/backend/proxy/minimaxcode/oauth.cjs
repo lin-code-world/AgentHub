@@ -170,10 +170,11 @@ async function refresh({ refreshToken, cfg, httpJson }) {
       expiresAt: Date.now() + expiresIn * 1000,
     };
   }
-  // invalid_grant = 这一枚已被用过/已作废（一次性语义），只能重新登录
+  // 只有「上游明确作废了这枚令牌」才算 authError：一次性 refresh token 一旦被本地拉黑就不再重试，
+  // 把参数类 400（scope/client_id 写错）也算进去会让仍存活的令牌永久失效，账号只能重登。
   const err = str(body, "error") || "";
-  const authError = /invalid_grant|invalid_request|unauthorized|invalid_token/i.test(err) || r.status === 400 || r.status === 401;
-  return { ok: false, authError, message: `续期失败（HTTP ${r.status}）${err ? `：${err}` : ""}` };
+  const revoked = /invalid_grant|invalid_token|unauthorized|access_denied/i.test(err) || r.status === 401;
+  return { ok: false, authError: revoked, message: `续期失败（HTTP ${r.status}）${err ? `：${err}` : ""}` };
 }
 
 module.exports = { pkce, requestDeviceCode, pollToken, refresh, DEVICE_GRANT };
