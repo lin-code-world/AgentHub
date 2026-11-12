@@ -629,4 +629,5 @@ async function testCheckin() {
   await testCheckin();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
+  else console.log("全部通过");
 })();
