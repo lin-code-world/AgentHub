@@ -893,7 +893,7 @@ watch(active, (on) => {
                         </el-tooltip>
                       </td>
                       <td style="text-align: center; color: var(--text-3)">{{ fmtRate(d.rate) }}</td>
-                      <td v-if="di === 0" :rowspan="rowsOf(m).length">
+                      <td v-if="di === 0" :rowspan="rowsOf(m).length" style="text-align: center">
                         <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
                         <div v-else class="order-cell">
                           <div v-for="(ch, oi) in orderOf(m)" :key="ch" class="order-tag">
@@ -1044,7 +1044,7 @@ watch(active, (on) => {
                       </span>
                     </el-tooltip>
                   </td>
-                  <td>
+                  <td style="text-align: center">
                     <span v-if="m.sources.length === 1" style="color: var(--text-3)">单源模型</span>
                     <div v-else class="order-cell">
                       <div v-for="(ch, oi) in orderOf(m)" :key="ch" class="order-tag">
@@ -1817,6 +1817,7 @@ watch(active, (on) => {
 .order-cell {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 4px;
 }
 .order-tag {

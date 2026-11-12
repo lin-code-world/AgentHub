@@ -16,7 +16,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import * as api from "../../api/ipc";
 import type { ProxyChannelView, ProxyAccount, ProxyChannelId, ProxyPoolStrategy, ProxyCostTier, ProxyScanCandidate, ProxyCheckinRow, ZcodeDeviceRow } from "../../types";
 import { useAppStore } from "../../stores/app";
-import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr, fmtDetailNum } from "./format";
+import { fmtInt, fmtK, fmtDate, fmtAgo, fmtCredits, ACCOUNT_STATUS, channelName, fmtBalance, fmtPkgTotal, fmtPkgUsed, pkgFallbackName, balanceUnit, isQoderChannel, isClineChannel, checkinLabels, todayStr, fmtDetailNum, fmtExpiry } from "./format";
 // 顶部渠道切换（收起态方块）与「上游启闭」弹窗共用同一份渠道图标映射
 import { CHANNEL_ICONS, channelInitial } from "./channelIcons";
 import { coalesceAsync } from "../../utils/timing";
@@ -1913,7 +1913,7 @@ onUnmounted(() => {
           </div>
           <div class="agg-item"><span>账号数</span><b>{{ ch.summary.accountCount }}</b></div>
           <div class="agg-item"><span>可用</span><b class="agg-online">{{ ch.summary.onlineCount }}</b></div>
-          <div class="agg-item"><span>最早到期</span><b>{{ ch.summary.earliestExpire ? fmtDate(ch.summary.earliestExpire) : "-" }}</b></div>
+          <div class="agg-item"><span>最早到期</span><b>{{ ch.summary.earliestExpire ? fmtDate(ch.summary.earliestExpire) : ch.summary.lastCreditsAt ? "长期" : "-" }}</b></div>
           <div class="agg-item"><span>今日消耗</span><b>{{ ch.summary.todayReq }} 次 · {{ fmtK(ch.summary.todayTokens) }}</b></div>
           <div class="agg-item"><span>上次刷新</span><b>{{ fmtAgo(ch.summary.lastCreditsAt) }}</b></div>
         </div>
@@ -2025,7 +2025,7 @@ onUnmounted(() => {
                     <!-- 多钱包渠道（Loomy）：合计之下拆出永久 / 每日赠送，避免两个账户混成一个数 -->
                     <div v-if="acc.creditsDetail && acc.creditsDetail.length" class="credits-split">{{ acc.creditsDetail.map((w) => `${w.displayName} ${fmtDetailNum(w.balance)}`).join(" · ") }}</div>
                   </td>
-                  <td class="mono">{{ acc.expiresAt ? fmtDate(acc.expiresAt) : "-" }}</td>
+                  <td class="mono">{{ fmtExpiry(acc.expiresAt, acc.creditsAt) }}</td>
                   <td class="mono num">{{ acc.todayReq }} 次 · {{ fmtK(acc.todayTokens) }}</td>
                   <td style="text-align: right">
                     <button class="btn-link btn-sm" :disabled="refreshingId === acc.id" @click="refreshOne(acc)">

@@ -138,6 +138,15 @@ export function fmtPkgTotal(total: number, remaining: number, channel?: string):
 }
 export const fmtPkgUsed = (used: number, total: number, channel?: string) => (total === -1 ? "—" : fmtBalance(used, channel));
 
+/** 账号「到期」展示：有到期日 → 日期；已查过余额但无到期（0）→「长期」；从未查过 →「-」。
+ *  0 在这套数据里既可能是「积分不过期」（本家 MiniMax Code），也可能是「还没查过余额」，
+ *  用 creditsAt 区分：查过之后的 0 才是真的长期。 */
+export function fmtExpiry(expiresAt?: number, creditsAt?: number): string {
+  const exp = Number(expiresAt) || 0;
+  if (exp > 0) return fmtDate(exp);
+  return Number(creditsAt) > 0 ? "长期" : "-";
+}
+
 /** 本地时区的今天（YYYY-MM-DD）：与主进程 store.dayStr 同口径，签到记录的跨天判定用 */
 export function todayStr(): string {
   const d = new Date();
