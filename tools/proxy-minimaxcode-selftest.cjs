@@ -534,6 +534,88 @@ async function testCredits() {
   }
 }
 
+// ===== 签到：面板解析、已签幂等、领取成功回查、401 =====
+async function testCheckin() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const checkin = require("../electron/backend/proxy/minimaxcode/checkin.cjs");
+  let mode = "status";
+  const panel = {
+    data: {
+      scene: 2,
+      days: [
+        { status: 3, is_today: true, bonus_points: 0, day_no: 1, points: 400 },
+        { status: 1, is_today: false, bonus_points: 0, day_no: 2, points: 400 },
+      ],
+    },
+    base_resp: { status_code: 0, status_msg: "ok" },
+  };
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      if (mode === "auth") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid access token" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      if (mode === "already") {
+        res.end(JSON.stringify({ data: { claim_result: 2, day_no: 1, points: 0 }, base_resp: { status_code: 0 } }));
+        return;
+      }
+      if (mode === "claim") {
+        res.end(JSON.stringify({ data: { claim_result: 0, day_no: 1, points: 400 }, base_resp: { status_code: 0 } }));
+        return;
+      }
+      res.end(JSON.stringify(panel));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cfg = {
+    agentBase: base,
+    signinStatusPath: "/minimax-cloud/api/v1/signin/status",
+    signinClaimPath: "/minimax-cloud/api/v1/signin/claim",
+  };
+  const args = { token: "mmoat_x", userId: "u1", deviceId: "12345678", uuid: "u1-uuid", cfg, httpJson: adapters.httpJson };
+  try {
+    const st = await checkin.status(args);
+    ok(st.ok && st.checkedIn === true, "今日已签");
+    eq([st.consecutiveDays, st.creditsEarnedToday], [1, 400], "面板字段");
+
+    mode = "already";
+    const al = await checkin.claim(args);
+    ok(al.ok && al.already === true, "claim_result=2 判已签（幂等，不算失败）");
+
+    mode = "claim";
+    const cl = await checkin.claim(args);
+    ok(cl.ok && cl.already === false && cl.reward === 400, "领取成功带积分");
+
+    mode = "auth";
+    const au = await checkin.status(args);
+    ok(!au.ok && au.authError === true, "401 判 authError");
+
+    // 适配器层
+    const hf = path.join(rules.rulesDir(), "headers.json");
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+    all.minimaxcode = { ...(all.minimaxcode || {}), ...cfg };
+    fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+    rules.reload("headers.json");
+    const acc = { id: "a1", uid: "u1", meta: { realUserID: "u1", deviceId: "12345678", uuid: "u1-uuid" } };
+    mode = "status";
+    const s = await adapters.get("minimaxcode").checkinStatus(acc, { token: "mmoat_x" });
+    ok(s.ok && s.checkedIn === true, "适配器 checkinStatus");
+    mode = "already";
+    const c = await adapters.get("minimaxcode").checkin(acc, { token: "mmoat_x" });
+    ok(c.ok && c.already === true, "适配器 checkin 幂等");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
@@ -544,6 +626,7 @@ async function testCredits() {
   await testChat();
   await testRefresh();
   await testCredits();
+  await testCheckin();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();

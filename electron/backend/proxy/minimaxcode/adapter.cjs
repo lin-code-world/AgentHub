@@ -49,6 +49,20 @@ function makeMinimaxCode(deps) {
   const cfg = () => (rules.get("headers.json") || {}).minimaxcode || {};
   const identityMod = require("./identity.cjs");
   const creditsMod = require("./credits.cjs");
+  const checkinMod = require("./checkin.cjs");
+
+  /** realUserID 不在令牌里：meta 命中直接用，缺失才问上游并写回（同轮不再重复请求）。
+   *  取不到返回空串，调用方据此只把该项（余额/签到）标为不可用，不判死账号。 */
+  async function userIdOf(account, secrets, c) {
+    const save = (patch) => {
+      try {
+        const cur = (account && account.meta) || {};
+        store.updateAccount(account.id, { meta: { ...cur, ...patch } });
+        account.meta = { ...cur, ...patch };
+      } catch { /* 写回失败不影响本次结果 */ }
+    };
+    return identityMod.ensureRealUserID({ account, secrets, cfg: c, httpJson, save });
+  }
 
   return {
     id: channel,
@@ -175,20 +189,34 @@ function makeMinimaxCode(deps) {
       const c = cfg();
       const token = String((secrets && secrets.token) || "");
       if (!token) return { authError: true, message: "该账号没有凭据" };
-      const { deviceId, uuid } = identityMod.deviceIdentity(account);
-      // realUserID 不在令牌里：meta 命中直接用，缺失才问上游并写回（同轮不再重复请求）
-      const save = (patch) => {
-        try {
-          const cur = (account && account.meta) || {};
-          store.updateAccount(account.id, { meta: { ...cur, ...patch } });
-          account.meta = { ...cur, ...patch };
-        } catch { /* 写回失败不影响本次结果 */ }
-      };
-      const userId = await identityMod.ensureRealUserID({ account, secrets, cfg: c, httpJson, save });
+      const userId = await userIdOf(account, secrets, c);
       if (!userId) return { error: "取不到账号身份（realUserID），暂时无法查询余额" };
+      const { deviceId, uuid } = identityMod.deviceIdentity(account);
       const r = await creditsMod.query({ token, userId, deviceId, uuid, cfg: c, httpJson });
       if (!r.ok) return r.authError ? { authError: true, message: r.message } : { error: r.message };
       return { credits: r.credits, expiresAt: 0 };
+    },
+
+    /** 签到面板（未签 → checkedIn=false；已签 → true + 连续天数/今日积分） */
+    async checkinStatus(account, secrets) {
+      const c = cfg();
+      const token = String((secrets && secrets.token) || "");
+      if (!token) return { ok: false, authError: true, message: "该账号没有凭据" };
+      const userId = await userIdOf(account, secrets, c);
+      if (!userId) return { ok: false, message: "取不到账号身份（realUserID），暂时无法查询签到" };
+      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      return checkinMod.status({ token, userId, deviceId, uuid, cfg: c, httpJson });
+    },
+
+    /** 签到领取：claim_result=2 判 already（幂等成功，不算失败）；成功后回查面板 */
+    async checkin(account, secrets) {
+      const c = cfg();
+      const token = String((secrets && secrets.token) || "");
+      if (!token) return { ok: false, authError: true, message: "该账号没有凭据" };
+      const userId = await userIdOf(account, secrets, c);
+      if (!userId) return { ok: false, message: "取不到账号身份（realUserID），暂时无法签到" };
+      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      return checkinMod.claim({ token, userId, deviceId, uuid, cfg: c, httpJson });
     },
   };
 }
