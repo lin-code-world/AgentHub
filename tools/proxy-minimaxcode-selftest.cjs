@@ -285,12 +285,75 @@ async function testLogin() {
   }
 }
 
+// ===== 模型目录：归一、落盘、空清单不覆盖、大小写敏感 =====
+async function testModels() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const models = require("../electron/backend/proxy/minimaxcode/models.cjs");
+  const payload = {
+    providers: [
+      {
+        providerId: "minimax",
+        config: {
+          models: {
+            "MiniMax-M3.1-Flash": {
+              name: "M3.1-Flash",
+              limit: { context: 512000, output: 128000 },
+              modalities: { input: ["text", "image", "video"] },
+              tool_call: true,
+              reasoning: true,
+              variants: { thinking: {}, "none-thinking": {} },
+            },
+            "MiniMax-M3": { name: "M3", limit: { context: 512000, output: 128000 }, modalities: { input: ["text"] }, tool_call: true },
+          },
+        },
+      },
+    ],
+  };
+  const parsed = models.parseModels(payload);
+  eq(parsed.length, 2, "解析两个模型");
+  const flash = parsed.find((m) => m.id === "MiniMax-M3.1-Flash");
+  eq(flash.capabilities, { images: true, reasoning: true, tools: true }, "能力归一");
+  eq([flash.contextLength, flash.maxOutputTokens], [512000, 128000], "上下文与输出上限");
+  eq(flash.rate, null, "倍率不编造");
+
+  let mode = "ok";
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(mode === "ok" ? payload : { providers: [] }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const rulesDir = require("../electron/backend/proxy/rules.cjs").rulesDir();
+  const cfg = { agentBase: `http://127.0.0.1:${server.address().port}`, modelsPath: "/mavis/api/v1/models?region=cn&buildEnv=prod" };
+  try {
+    const r = await models.refresh({ token: "mmoat_x", cfg, httpJson: adapters.httpJson }, rulesDir, "minimaxcode", true);
+    ok(r.ok && r.count === 2, "拉取成功计数");
+    eq(models.list(rulesDir, "minimaxcode").sort(), ["MiniMax-M3", "MiniMax-M3.1-Flash"], "落盘后 list 读到");
+    const onDisk = JSON.parse(fs.readFileSync(path.join(rulesDir, "catalog.json"), "utf8"));
+    ok(onDisk.minimaxcode && Array.isArray(onDisk.minimaxcode.models) && onDisk.minimaxcode.syncedAt > 0, "catalog.json 的 minimaxcode 段");
+
+    // 空清单：失败且不覆盖已有清单（Review Focus 4）
+    mode = "empty";
+    const bad = await models.refresh({ token: "mmoat_x", cfg, httpJson: adapters.httpJson }, rulesDir, "minimaxcode", true);
+    ok(!bad.ok, "空清单报失败");
+    eq(models.list(rulesDir, "minimaxcode").length, 2, "空清单不覆盖已有清单");
+
+    eq(models.resolveId(rulesDir, "minimaxcode", "MiniMax-M3"), "MiniMax-M3", "逐字命中");
+    eq(models.resolveId(rulesDir, "minimaxcode", "minimax-m3"), null, "大小写不同不命中");
+    eq(adapters.get("minimaxcode").models().sort(), ["MiniMax-M3", "MiniMax-M3.1-Flash"], "适配器 models() 读同一份目录");
+    eq(adapters.get("minimaxcode").mapModel("MiniMax-M3"), "MiniMax-M3", "mapModel 原样透传");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
   await testOAuth();
   await testIdentity();
   await testLogin();
+  await testModels();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
 })();
