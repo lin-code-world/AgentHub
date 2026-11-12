@@ -511,6 +511,31 @@ const DEFAULTS = {
       integrationBase: "https://loomyad.xunfei.cn",
       modelBase: "https://loomyad.xunfei.cn/api/v1",
     },
+    // MiniMax Code（国内站）：OAuth 设备码（account.minimax.cn）+ Anthropic Messages 上游
+    // （agent.minimax.cn，Bearer 即可）。账号类接口（余额 / 签到）另需 yy + x-signature 双签名，
+    // 盐与后缀来自客户端 bundle（公开常量）；查询串顺序是契约的一部分，改动前先对签名向量。
+    minimaxcode: {
+      accountBase: "https://account.minimax.cn",
+      agentBase: "https://agent.minimax.cn",
+      platformBase: "https://www.minimaxi.com",
+      messagesPath: "/mavis/api/v1/llm/v1/messages",
+      modelsPath: "/mavis/api/v1/models?region=cn&buildEnv=prod",
+      userInfoPath: "/v1/api/user/info",
+      membershipPath: "/matrix/api/v1/commerce/get_membership_info",
+      signinStatusPath: "/minimax-cloud/api/v1/signin/status",
+      signinClaimPath: "/minimax-cloud/api/v1/signin/claim",
+      clientId: "mcode-public",
+      scope: "agent.default",
+      audience: "agent-backend",
+      desktopVersion: "3.1.14",
+      userAgent: "MiniMaxAgent Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MiniMax/3.1.14 Chrome/148.0.7778.280 Safari/537.36",
+      signSalt: "I*7Cf%WZ#S&%1RlZJ&C2",
+      signSuffix: "ooui",
+      screenWidth: 2048,
+      screenHeight: 1152,
+      deviceMemory: 32,
+      cpuCoreNum: 12,
+    },
   },
 };
 

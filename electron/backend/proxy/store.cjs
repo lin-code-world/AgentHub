@@ -215,6 +215,11 @@ const CHANNELS = [
   // Loomy（讯飞）：无状态 OpenAI 兼容，HMAC-SHA1 签名（账号域），手机验证码登录，每日签到
   // 刷赠送积分。无地区分叉。
   { id: "loomy", display: "Loomy（讯飞）", domain: "loomyad.xunfei.cn", costTier: "low" },
+  // MiniMax Code（国内站）：官方 CLI / 客户端同一套 OAuth（client_id=mcode-public），
+  // 对话上游是 Anthropic Messages（/mavis/api/v1/llm/v1/messages），只需 Bearer；
+  // 余额与签到另需 yy + x-signature 双签名（常量取自客户端 bundle，公开非机密）。
+  // 只做国内站；套餐口径未实测，不标 costTier（错标 free 会把付费渠道排前面）。
+  { id: "minimaxcode", display: "MiniMax Code", domain: "agent.minimax.cn" },
 ];
 
 // 内置渠道 id 的只读名单：凡是「这一行是不是提供商」的判定都走它，而不是看 kind 列——

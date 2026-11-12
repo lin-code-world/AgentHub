@@ -4687,6 +4687,14 @@ const { makeLoomy } = require("./loomy/adapter.cjs");
 const loomyDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs };
 ADAPTERS.loomy = makeLoomy(loomyDeps);
 
+// ===== MiniMax Code（国内站）=====
+// OAuth 设备码登录 + Anthropic Messages 上游（Bearer 即可，无签名）。请求翻译与 SSE 桥复用
+// zcodeAnthropic.cjs；余额 / 签到走账号类接口，另需 yy + x-signature 双签名（见 minimaxcode/sign.cjs）。
+// refresh token 一次性：预刷新窗口收窄到 10 分钟，401 的刷新重试由通用层统一处理。
+const { makeMinimaxCode } = require("./minimaxcode/adapter.cjs");
+const minimaxcodeDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs };
+ADAPTERS.minimaxcode = makeMinimaxCode(minimaxcodeDeps);
+
 // ===== Accio 双区（accio 国际版 / accio_cn 国内版）=====
 // 同套实现按渠道参数化（与 qoder/autoclaw 双区同款手法）：上游是阿里 ADK 的 Gemini 风格信封
 // （非 OpenAI 协议），声明 stateful 走会话式转发 chatSession。两地同网关，差别只在
