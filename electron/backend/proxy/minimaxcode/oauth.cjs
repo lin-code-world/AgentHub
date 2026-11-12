@@ -122,10 +122,15 @@ async function pollToken({ deviceCode, pollByUser, verifier }, cfg, httpJson) {
   if (status === "slow_down") return { kind: "slowDown" };
   if (status === "denied" || status === "access_denied") return { kind: "failed", message: "授权被拒绝" };
   if (status === "expired" || status === "expired_token") return { kind: "failed", message: "设备码已过期，请重新发起登录" };
-  if (str(body, "error")) {
-    const desc = str(body, "error_description");
-    return { kind: "failed", message: `${str(body, "error")}${desc ? `: ${desc}` : ""}` };
-  }
+  // 标准 OAuth 设备流（RFC 8628）把「还没授权」放在 error 字段里、HTTP 400：
+  // {"error":"authorization_pending"} / {"error":"slow_down"} / {"error":"access_denied"}。
+  // 实测 MiniMax 两种形态都会出现——只认 status 会把正常等待判成登录失败。
+  const oauthError = str(body, "error");
+  if (oauthError === "authorization_pending" || oauthError === "pending") return { kind: "pending" };
+  if (oauthError === "slow_down") return { kind: "slowDown" };
+  if (oauthError === "access_denied" || oauthError === "denied") return { kind: "failed", message: "授权被拒绝" };
+  if (oauthError === "expired_token" || oauthError === "expired") return { kind: "failed", message: "设备码已过期，请重新发起登录" };
+  if (oauthError) return { kind: "failed", message: `${oauthError}${str(body, "error_description") ? `: ${str(body, "error_description")}` : ""}` };
   const accessToken = str(body, "access_token");
   if (!accessToken) return { kind: "failed", message: `登录未返回令牌（HTTP ${r.status}）：${(r.text || "").slice(0, 200)}` };
   const expiresIn = num(body, "expires_in") || 43200;

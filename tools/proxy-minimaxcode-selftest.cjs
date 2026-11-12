@@ -743,10 +743,55 @@ async function testRefreshNotBlacklistedOnNetworkError() {
   }
 }
 
+// ===== OAuth 标准错误体：authorization_pending / slow_down / access_denied =====
+async function testOAuthStandardErrors() {
+  const http = require("node:http");
+  const oauth = require("../electron/backend/proxy/minimaxcode/oauth.cjs");
+  let n = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      n += 1;
+      if (n === 1) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "authorization_pending", error_description: "the user has not finished authorizing yet" }));
+        return;
+      }
+      if (n === 2) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "slow_down" }));
+        return;
+      }
+      if (n === 3) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "access_denied" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: "mmoat_std", refresh_token: "mmort_std", expires_in: 43200 }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const cfg = { accountBase: `http://127.0.0.1:${server.address().port}` };
+  const device = { deviceCode: "DEV-CODE", pollByUser: false, verifier: "v" };
+  try {
+    eq((await oauth.pollToken(device, cfg, adapters.httpJson)).kind, "pending", "标准 authorization_pending 继续等");
+    eq((await oauth.pollToken(device, cfg, adapters.httpJson)).kind, "slowDown", "标准 slow_down 拉长间隔");
+    const denied = await oauth.pollToken(device, cfg, adapters.httpJson);
+    ok(denied.kind === "failed" && /拒绝/.test(denied.message), "access_denied 判失败");
+    const okd = await oauth.pollToken(device, cfg, adapters.httpJson);
+    eq(okd.kind, "confirmed", "标准体下拿到令牌");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
   await testOAuth();
+  await testOAuthStandardErrors();
   await testIdentity();
   await testLogin();
   await testModels();
