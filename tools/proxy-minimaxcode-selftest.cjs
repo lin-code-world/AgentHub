@@ -42,5 +42,30 @@ const adapters = require("../electron/backend/proxy/adapters.cjs");
   ok(ad && typeof ad.cfg === "function", "cfg 是函数");
 })();
 
+// ===== 签名：encodeURIComponent 口径 / 两个摘要的固定向量 / 指纹查询串顺序 =====
+// 向量取自实现公式（与实测探针同一套：用该实现打 get_membership_info 实测 200），
+// 固化字面量是为了防"改签名顺手改坏"的回归，不是用实现验证自己。
+(function testSign() {
+  const sign = require("../electron/backend/proxy/minimaxcode/sign.cjs");
+  eq(sign.encodeUriComponent("a b!~*'()中"), "a%20b!~*'()%E4%B8%AD", "encodeURIComponent 口径（!*'() 不编码、中文按 UTF-8）");
+  eq(sign.formEncode("a b"), "a+b", "formEncode 空格变 +");
+  eq(sign.xSignature(1700000000, "{}"), "b0c74b46e28053fb22e53239b1061505", "x-signature 固定向量");
+  eq(sign.yy("/v1/api/user/info?user_id=0", "{}", 1700000000000), "8ab80a4e733088ee2ae62df69ee8345d", "yy 固定向量");
+  const q = sign.desktopQuery({
+    unixMs: 1700000000000,
+    userId: "123",
+    deviceId: "d1",
+    uuid: "u1",
+    cfg: { desktopVersion: "3.1.14", screenWidth: 2048, screenHeight: 1152, deviceMemory: 32, cpuCoreNum: 12 },
+  });
+  eq(
+    q.split("&").map((p) => p.split("=")[0]).join(","),
+    "device_platform,biz_id,app_id,version_code,unix,timezone_offset,is_desktop,desktop_version,sys_language,lang,uuid,device_id,os_name,browser_name,device_memory,cpu_core_num,browser_language,browser_platform,user_id,screen_width,screen_height,client,region",
+    "指纹查询串顺序（顺序是契约的一部分）",
+  );
+  ok(q.includes("user_id=123"), "user_id 进查询串");
+  ok(q.includes("device_id=d1"), "device_id 进查询串");
+})();
+
 console.log(`\n${pass} 通过 / ${fail} 失败`);
 if (fail) process.exitCode = 1;
