@@ -1758,6 +1758,9 @@ async function beginMinimaxCodeOAuth(channel, onDone) {
         const saved = saveMinimaxCodeAccount(channel, r.tokens, {
           realUserID: info && info.ok ? info.realUserID : "",
           name: info && info.ok ? info.name : "",
+          // 首查 user/info 用的指纹原样落库：同一次登录里两处请求必须同源
+          deviceId,
+          uuid,
         });
         finishOAuth({ ok: true, id: saved.id, uid: saved.uid });
       } catch (e) {
@@ -1787,7 +1790,9 @@ function saveMinimaxCodeAccount(channel, tokens, profile) {
   const name = String((profile && profile.name) || "").trim() || `MiniMax ${uid.slice(-6)}`;
   const refreshToken = String((tokens && tokens.refreshToken) || "").trim();
   const expiresAt = Number(tokens && tokens.expiresAt) || 0;
-  const derived = minimaxIdentity.deviceIdentity({ id: uid, uid });
+  const derived = profile && profile.deviceId && profile.uuid
+    ? { deviceId: String(profile.deviceId), uuid: String(profile.uuid) }
+    : minimaxIdentity.deviceIdentity({ id: uid, uid });
   const existing = store.listAccounts(channel).find((a) => a.uid === uid);
   if (existing) {
     const oldMeta = readAccountMeta(existing.id);

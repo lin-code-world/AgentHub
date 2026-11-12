@@ -51,17 +51,44 @@ function makeMinimaxCode(deps) {
   const creditsMod = require("./credits.cjs");
   const checkinMod = require("./checkin.cjs");
 
+  /** 账号 meta 的事实源：`store.accountSecrets()` 返回的 `secrets.meta` 是**已解析的对象**，
+   *  而 `credits.refreshAccount()` 传进来的是数据库原始行（`account.meta` 是 JSON 字符串）。
+   *  统一以 secrets.meta 为准，避免把字符串当对象展开（会把整份 meta 写成索引键）。 */
+  function metaOf(account, secrets) {
+    if (secrets && secrets.meta && typeof secrets.meta === "object" && !Array.isArray(secrets.meta)) return secrets.meta;
+    const m = account && account.meta;
+    return m && typeof m === "object" && !Array.isArray(m) ? m : {};
+  }
+
+  /** 写回 meta：对象合并后落库，并就地更新内存里的两处快照（同轮不再重复问上游）。 */
+  function saveMeta(account, secrets, patch) {
+    const cur = metaOf(account, secrets);
+    const next = { ...cur, ...patch };
+    try {
+      if (account && account.id) store.updateAccount(account.id, { meta: next });
+    } catch { /* 写回失败不影响本次结果 */ }
+    if (secrets) secrets.meta = next;
+    if (account && account.meta && typeof account.meta === "object") account.meta = next;
+    return next;
+  }
+
+  /** 设备指纹：meta 已固化就沿用（secrets.meta 优先），否则按 uid 稳定派生 */
+  function identityOf(account, secrets) {
+    const meta = metaOf(account, secrets);
+    const seed = String((account && (account.uid || account.id)) || "minimaxcode");
+    return identityMod.deviceIdentity({ id: seed, uid: account && account.uid, meta });
+  }
+
   /** realUserID 不在令牌里：meta 命中直接用，缺失才问上游并写回（同轮不再重复请求）。
    *  取不到返回空串，调用方据此只把该项（余额/签到）标为不可用，不判死账号。 */
   async function userIdOf(account, secrets, c) {
-    const save = (patch) => {
-      try {
-        const cur = (account && account.meta) || {};
-        store.updateAccount(account.id, { meta: { ...cur, ...patch } });
-        account.meta = { ...cur, ...patch };
-      } catch { /* 写回失败不影响本次结果 */ }
-    };
-    return identityMod.ensureRealUserID({ account, secrets, cfg: c, httpJson, save });
+    const cached = String(metaOf(account, secrets).realUserID || "").trim();
+    if (cached) return cached;
+    const { deviceId, uuid } = identityOf(account, secrets);
+    const r = await identityMod.fetchUserInfo({ token: String((secrets && secrets.token) || ""), cfg: c, deviceId, uuid, httpJson });
+    if (!r.ok) return "";
+    saveMeta(account, secrets, { realUserID: r.realUserID, ...(r.name ? { userName: r.name } : {}) });
+    return r.realUserID;
   }
 
   return {
@@ -149,24 +176,30 @@ function makeMinimaxCode(deps) {
       return { status: 200, planLimit: false };
     },
 
-    /** 续期：一次性 refresh token 只花一次；成功即由调用方写回（通用层负责落库）。
-     *  失败不重试——invalid_grant 意味着这一枚已经作废，重试只会更糟。 */
+    /** 续期：一次性 refresh token 只在**上游真的消费了它**之后才记录为已花。
+     *  网络失败/5xx（上游没收到）不拉黑，否则一次抖动就让账号永久「需重登」。
+     *  成功后立即把新到期写回 meta —— 不写会让预刷新窗口每轮都命中，一轮轮花掉一次性令牌。 */
     async refreshToken(account, secrets) {
       const refreshToken = String((secrets && secrets.refreshToken) || "");
       if (!refreshToken) return { ok: false, authError: true, message: "没有续期凭据，请重新登录" };
       if (spentRefresh.has(digestOf(refreshToken))) {
         return { ok: false, authError: true, message: "续期凭据已被使用过（一次性），请重新登录" };
       }
-      rememberSpent(refreshToken);
       const r = await oauth.refresh({ refreshToken, cfg: cfg(), httpJson });
-      if (!r.ok) return { ok: false, authError: !!r.authError, message: r.message };
+      if (!r.ok) {
+        // invalid_grant = 上游已作废这一枚：记下来别再试；网络错误保持可用
+        if (r.authError) rememberSpent(refreshToken);
+        return { ok: false, authError: !!r.authError, message: r.message };
+      }
+      rememberSpent(refreshToken);
+      saveMeta(account, secrets, { accessExpiresAt: r.expiresAt });
       return { ok: true, token: r.accessToken, refreshToken: r.refreshToken, expiresAt: r.expiresAt };
     },
 
     /** access token 是 opaque（`mmoat_` 前缀），JWT 解不出 exp，必须由这里回答到期时间，
      *  否则 ensureFreshSecrets 认为「无到期」永不预刷新。 */
-    tokenExpiryMs(account) {
-      const meta = (account && account.meta) || {};
+    tokenExpiryMs(account, secrets) {
+      const meta = metaOf(account, secrets);
       return Number(meta.accessExpiresAt) || 0;
     },
 
@@ -191,9 +224,11 @@ function makeMinimaxCode(deps) {
       if (!token) return { authError: true, message: "该账号没有凭据" };
       const userId = await userIdOf(account, secrets, c);
       if (!userId) return { error: "取不到账号身份（realUserID），暂时无法查询余额" };
-      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      const { deviceId, uuid } = identityOf(account, secrets);
       const r = await creditsMod.query({ token, userId, deviceId, uuid, cfg: c, httpJson });
       if (!r.ok) return r.authError ? { authError: true, message: r.message } : { error: r.message };
+      // 套餐信息只入 meta（默认账号没有 Token Plan，不在界面展示）
+      if (r.hasTokenPlan || r.planName) saveMeta(account, secrets, { hasTokenPlan: !!r.hasTokenPlan, planName: r.planName || "" });
       return { credits: r.credits, expiresAt: 0 };
     },
 
@@ -204,7 +239,7 @@ function makeMinimaxCode(deps) {
       if (!token) return { ok: false, authError: true, message: "该账号没有凭据" };
       const userId = await userIdOf(account, secrets, c);
       if (!userId) return { ok: false, message: "取不到账号身份（realUserID），暂时无法查询签到" };
-      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      const { deviceId, uuid } = identityOf(account, secrets);
       return checkinMod.status({ token, userId, deviceId, uuid, cfg: c, httpJson });
     },
 
@@ -215,7 +250,7 @@ function makeMinimaxCode(deps) {
       if (!token) return { ok: false, authError: true, message: "该账号没有凭据" };
       const userId = await userIdOf(account, secrets, c);
       if (!userId) return { ok: false, message: "取不到账号身份（realUserID），暂时无法签到" };
-      const { deviceId, uuid } = identityMod.deviceIdentity(account);
+      const { deviceId, uuid } = identityOf(account, secrets);
       return checkinMod.claim({ token, userId, deviceId, uuid, cfg: c, httpJson });
     },
   };

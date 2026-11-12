@@ -336,4 +336,12 @@ OpenAI body ──zcodeAnthropic.toAnthropic(model, body, { defaultMaxTokens })�
    `token_plan_credit` 返回 `remaining_credits: 0` 且带 `api_key`（`sk-cp-...`，该 key 直连模型 API 回
    401 `token is required`，不能当 Anthropic api-key 用）；`coding_plan/remains` 返回
    `2062 no active token plan subscription`。
+6. **评审修复（2026-11-12 终审后）——meta 的事实源固定为 `secrets.meta`**：`credits.refreshAccount()`
+   传给适配器的是数据库原始行，`account.meta` 是 **JSON 字符串**；原先按对象展开写回会把整份 meta
+   变成索引键（`{"0":"{",...}`），deviceId / uuid / 到期全丢。现统一走 `metaOf()`（secrets.meta 优先），
+   写回用对象合并，并在 `refreshAccount` 端到端自测里锁住「刷新后 deviceId/uuid/到期仍在」。
+7. **续期成功立即回写 `meta.accessExpiresAt`**：不回写会让预刷新窗口每轮都命中（10 分钟内），
+   一轮轮花掉一次性 refresh token；现与 Qoder 渠道同口径就地更新内存与落库，自测锁「连续两次检查只续期一次」。
+8. **网络失败不拉黑 refresh token**：只有上游真的消费/作废（`invalid_grant`）才记入「已花」集合；
+   网络/5xx 失败保留可用，自测锁「恢复后同一枚可重试、上游只收到一次」。
 

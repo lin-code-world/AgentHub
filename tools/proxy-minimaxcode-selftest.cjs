@@ -260,10 +260,10 @@ async function testLogin() {
     await waitFor(() => done, 20000);
     ok(done && done.ok, "轮询到 confirmed 后 onDone ok");
 
-    const accs = store.listAccounts("minimaxcode");
+    const accs = store.listAccounts("minimaxcode").filter((a) => a.uid === "577097653167349763");
     eq(accs.length, 1, "入池一条账号");
     const acc = accs[0];
-    const secrets = store.accountSecrets(store.accountRows("minimaxcode")[0]);
+    const secrets = store.accountSecrets(store.accountRows("minimaxcode").find((r) => r.uid === "577097653167349763"));
     eq(acc.uid, "577097653167349763", "uid = realUserID");
     ok(/mmoat_login/.test(secrets.token), "token 落库");
     ok(/mmort_login/.test(secrets.refreshToken || ""), "refreshToken 落库");
@@ -279,7 +279,7 @@ async function testLogin() {
     await discovery.beginOAuth("minimaxcode", (r) => { done2 = r; });
     await waitFor(() => done2, 20000);
     ok(done2 && done2.ok, "二次登录成功");
-    eq(store.listAccounts("minimaxcode").length, 1, "同 uid 不重复入池");
+    eq(store.listAccounts("minimaxcode").filter((a) => a.uid === "577097653167349763").length, 1, "同 uid 不重复入池");
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -616,6 +616,133 @@ async function testCheckin() {
   }
 }
 
+// ===== 元数据完整性：走真实余额链路不破坏 meta（原始行的 meta 是字符串） =====
+async function testMetaIntegrity() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const creditsMod = require("../electron/backend/proxy/credits.cjs");
+  let calls = { userInfo: 0, membership: 0 };
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    if (String(req.url).startsWith("/v1/api/user/info")) {
+      calls.userInfo += 1;
+      res.end(JSON.stringify({ data: { userInfo: { realUserID: "uid-e2e", name: "e2e" } } }));
+      return;
+    }
+    calls.membership += 1;
+    res.end(JSON.stringify({ op_credit_summary: { total_remaining_amount: "400" }, base_resp: { status_code: 0 } }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const hf = path.join(rules.rulesDir(), "headers.json");
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+  all.minimaxcode = {
+    ...(all.minimaxcode || {}),
+    agentBase: `http://127.0.0.1:${server.address().port}`,
+    userInfoPath: "/v1/api/user/info",
+    membershipPath: "/matrix/api/v1/commerce/get_membership_info",
+  };
+  fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+  rules.reload("headers.json");
+  try {
+    const meta = { realUserID: "uid-e2e", deviceId: "11111111", uuid: "11111111-1111-4111-8111-111111111111", accessExpiresAt: Date.now() + 3600 * 1000, loginEpoch: "e2e" };
+    const id = store.addAccount({ channel: "minimaxcode", uid: `uid-e2e-${Date.now()}`, name: "e2e", token: "mmoat_e2e", refreshToken: "mmort_e2e", expiresAt: Date.now() + 3600 * 1000, meta });
+    const r = await creditsMod.refreshAccount(id);
+    eq(r.credits, 400, "真实余额链路拿到积分");
+    const view = store.listAccounts("minimaxcode").find((a) => a.id === id);
+    eq([view.meta.deviceId, view.meta.uuid, view.meta.accessExpiresAt], ["11111111", meta.uuid, meta.accessExpiresAt], "余额刷新不破坏 meta（deviceId/uuid/到期）");
+    ok(!Object.keys(view.meta).some((k) => /^\d+$/.test(k)), "meta 没被字符串展开成索引键");
+    eq(calls.userInfo, 0, "meta 命中时不再打 user/info");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+// ===== 预刷新窗口：续期写回到期后，连续两次检查只续期一次 =====
+async function testRefreshWindow() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const creditsMod = require("../electron/backend/proxy/credits.cjs");
+  let hits = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      hits += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: "mmoat_win", refresh_token: "mmort_win", expires_in: 43200 }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const cfg = {
+    accountBase: `http://127.0.0.1:${server.address().port}`,
+    agentBase: "http://127.0.0.1:1",
+    clientId: "mcode-public",
+    scope: "agent.default",
+    audience: "agent-backend",
+  };
+  const hf = path.join(rules.rulesDir(), "headers.json");
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+  all.minimaxcode = { ...(all.minimaxcode || {}), ...cfg };
+  fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+  rules.reload("headers.json");
+  try {
+    // 视图形态（meta 是对象），到期已进入 10 分钟窗口内
+    const acc = { id: "acc-win", channel: "minimaxcode", uid: "uid-win", meta: { realUserID: "uid-win", accessExpiresAt: Date.now() + 60 * 1000 } };
+    const secrets = { token: "mmoat_old", refreshToken: "mmort_old_window", meta: { ...acc.meta } };
+    const first = await creditsMod.ensureFreshSecrets(acc, secrets);
+    eq(hits, 1, "第一次进入窗口触发一次续期");
+    ok(/mmoat_win/.test(first.token), "返回新令牌");
+    ok(Number(acc.meta.accessExpiresAt) > Date.now() + 3600 * 1000, "续期把新到期写回账号 meta");
+    const second = await creditsMod.ensureFreshSecrets(acc, first);
+    eq(hits, 1, "第二次不再续期（窗口已按新到期判定）");
+    ok(/mmoat_win/.test(second.token), "第二次直接用新令牌");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+// ===== 网络失败不算「已花」：同一枚 refresh token 恢复后仍可用 =====
+async function testRefreshNotBlacklistedOnNetworkError() {
+  const http = require("node:http");
+  const fs = require("node:fs");
+  const rules = require("../electron/backend/proxy/rules.cjs");
+  const ad = adapters.get("minimaxcode");
+  let hits = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      hits += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ access_token: "mmoat_net", refresh_token: "mmort_net", expires_in: 43200 }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const hf = path.join(rules.rulesDir(), "headers.json");
+  const writeBase = (base) => {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(hf, "utf8")); } catch { /* 新建 */ }
+    all.minimaxcode = { ...(all.minimaxcode || {}), accountBase: base };
+    fs.writeFileSync(hf, JSON.stringify(all, null, 2), "utf8");
+    rules.reload("headers.json");
+  };
+  try {
+    writeBase("http://127.0.0.1:1");
+    const failed = await ad.refreshToken({ id: "acc-net", meta: {} }, { refreshToken: "mmort_net_once" });
+    ok(!failed.ok && failed.authError === false, "网络失败不判 authError");
+    writeBase(`http://127.0.0.1:${server.address().port}`);
+    const retried = await ad.refreshToken({ id: "acc-net", meta: {} }, { refreshToken: "mmort_net_once" });
+    ok(retried.ok && retried.token === "mmoat_net", "同一枚 token 在恢复后可重试");
+    eq(hits, 1, "上游只真正收到一次");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 (async () => {
   testRegistry();
   testSign();
@@ -627,6 +754,9 @@ async function testCheckin() {
   await testRefresh();
   await testCredits();
   await testCheckin();
+  await testMetaIntegrity();
+  await testRefreshWindow();
+  await testRefreshNotBlacklistedOnNetworkError();
   console.log(`\n${pass} 通过 / ${fail} 失败`);
   if (fail) process.exitCode = 1;
   else console.log("全部通过");
