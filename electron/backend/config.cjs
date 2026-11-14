@@ -37,7 +37,11 @@ function isPortable() {
 // 两种前缀并存是刻意的：统一成"通用信封"只会退化成把密钥一起搬走（等于没有加密）。
 // 无 safeStorage 且无 key 时保持明文降级（自测环境依赖此行为）；生产形态由网关入口强制 key
 let safeStorage = null;
-try { safeStorage = require("electron").safeStorage; } catch { /* 自测环境无 electron */ }
+try {
+  safeStorage = require("electron").safeStorage;
+} catch {
+  /* 自测环境无 electron */
+}
 const ENC_PREFIX = "enc:v1:";
 const AES_PREFIX = "enc:v2:";
 
@@ -114,58 +118,58 @@ function defaultConfig() {
       // 唤回时重新加载界面；关=关窗即退出应用。实测 hide 不省内存（渲染进程仍占 ~298 MB），
       // 只有 destroy 才会让它整只消失，故开着时一律销毁而不是隐藏。
       minimizeToTray: true,
-      autoStart: false,     // 开机自启（便携版无效）
+      autoStart: false, // 开机自启（便携版无效）
     },
     // ===== 反代网关（方案 settings 全量入框架整体设置；端口改动需重启监听，其余热生效） =====
     proxy: {
-      port: 9527,               // 监听端口（默认 9527）
-      bind: "127.0.0.1",        // 绑定地址：127.0.0.1 仅本机 / 0.0.0.0 局域网开放
-      routeStrategy: "smart",   // smart=智能路由（健康度×余额打分）/ fixed=指定渠道优先
-      fixedChannel: "trae",     // fixed 策略下的优先渠道
-      routeOrder: "score",      // 渠道成本感知排序：score=按打分（现状）/ cost-first=按成本档升序
-                                // （免费→低成本→普通，组内仍按打分）；Key 可单独覆盖
-      rateLimitPerMin: 120,     // 单 Key 令牌桶限速（次/分钟，Key 可单独覆盖）
-      concurrency: 8,           // 单渠道在途并发上限（满则跳备选渠道，不做全局 429，issue #106）
-      creditsRefreshMin: 30,    // 额度自动刷新周期（分钟）
-      usageRetentionDays: 90,   // 数据保留期（天，1~3650）：请求流水 / 余额历史 / 操作日志共用，
-                                // 启动 GC 与用量统计页、日志页的「清理」共用（默认 90 = 此前流水 gc() 里写死的那个数）
-      expiringSoonDays: 1,      // 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）：
-                                // 号池到期徽标与逐包明细的 expiringSoon 共用这一个值
-                                // （默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数）
-      modelOverrides: {},       // 模型 → 渠道顺序表（数组，索引即优先位次；旧版单字符串按长度 1 兼容读取），
-                                // 仅作用于智能路由：排过的按顺序优先，没排到的软兜底排后面，位次相同回落 score/cost-first
-      humanizeJitter: true,     // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
-      disabledModels: [],       // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
+      port: 9527, // 监听端口（默认 9527）
+      bind: "127.0.0.1", // 绑定地址：127.0.0.1 仅本机 / 0.0.0.0 局域网开放
+      routeStrategy: "smart", // smart=智能路由（健康度×余额打分）/ fixed=指定渠道优先
+      fixedChannel: "trae", // fixed 策略下的优先渠道
+      routeOrder: "score", // 渠道成本感知排序：score=按打分（现状）/ cost-first=按成本档升序
+      // （免费→低成本→普通，组内仍按打分）；Key 可单独覆盖
+      rateLimitPerMin: 120, // 单 Key 令牌桶限速（次/分钟，Key 可单独覆盖）
+      concurrency: 8, // 单渠道在途并发上限（满则跳备选渠道，不做全局 429，issue #106）
+      creditsRefreshMin: 30, // 额度自动刷新周期（分钟）
+      usageRetentionDays: 90, // 数据保留期（天，1~3650）：请求流水 / 余额历史 / 操作日志共用，
+      // 启动 GC 与用量统计页、日志页的「清理」共用（默认 90 = 此前流水 gc() 里写死的那个数）
+      expiringSoonDays: 1, // 积分包「即将到期」预警阈值（天，0~3650，0=关闭预警）：
+      // 号池到期徽标与逐包明细的 expiringSoon 共用这一个值
+      // （默认 1 = 该阈值此前在 pool.cjs 里硬编码的那个数）
+      modelOverrides: {}, // 模型 → 渠道顺序表（数组，索引即优先位次；旧版单字符串按长度 1 兼容读取），
+      // 仅作用于智能路由：排过的按顺序优先，没排到的软兜底排后面，位次相同回落 score/cost-first
+      humanizeJitter: true, // 拟人抖动：每次上游请求前随机停 40~220ms（防风控识别为反代）
+      disabledModels: [], // 禁用的模型（请求直接 400 model_disabled，且不出现在 /v1/models）
       modelExcludedChannels: {}, // 模型 → 不参与该模型路由的渠道列表（模型级渠道排除）：缺省 = 不排除
-      modelFallback: {},        // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）
-      modelReverseAliases: {},  // 反向模型映射：统一请求名 → { [channelId]: 渠道实际模型名 }
-      modelCustom: {},          // 模型自定义参数覆盖：modelId → { contextLength?, maxOutputTokens?, reasoningEffort? }
+      modelFallback: {}, // 模型 → 回退模型（旧版 per-model 配置，优先于全局回退）
+      modelReverseAliases: {}, // 反向模型映射：统一请求名 → { [channelId]: 渠道实际模型名 }
+      modelCustom: {}, // 模型自定义参数覆盖：modelId → { contextLength?, maxOutputTokens?, reasoningEffort? }
       modelCustomByChannel: {}, // 按渠道的模型自定义参数：modelId → { channelId → { contextLength?, maxOutputTokens?, reasoningEffort? } }
       autoFallbackEnabled: true, // 不可用时自动切换模型（统一设置，默认开）
-      fallbackModel: "",        // 全局统一回退模型（模型未知/号池耗尽时自动切换）
-      channelFailover: true,    // 跨渠道故障转移：渠道耗尽/降级时请求内自动跳其他渠道（默认开）；
-                                // 只作用于渠道间跳转，「不可用时自动切换模型」的回退链不受此开关影响
-      channelFailoverMax: 3,    // 单请求最多尝试渠道数（含主渠道；范围 1~10、超出按 10；上游尝试预算随上限放大：每模型 max(6, 本值+1) 次，failover 关闭恒 6）
-      channelCooldownMs: 120000,     // 渠道降级基础时长（毫秒），失败翻倍（防半开震荡）
-      channelCooldownCapMs: 900000,  // 渠道降级指数退避封顶（15 分钟）
-      checkinAutoRules: {},     // 按渠道自动签到：{ [渠道 id]: { enabled, time:"HH:mm", jitterMin } }，
-                                // 号池页各渠道工具栏各自设置（时间/抖动独立；默认全关）
-      channelEnabled: {},       // 渠道启闭（「上游启闭」弹窗）：{ [渠道 id]: true|false }，缺省 = 启用。
-                                // 关闭的渠道在反代网关全部页面隐藏，路由/调用/调度也不再使用，重新打开立即恢复
+      fallbackModel: "", // 全局统一回退模型（模型未知/号池耗尽时自动切换）
+      channelFailover: true, // 跨渠道故障转移：渠道耗尽/降级时请求内自动跳其他渠道（默认开）；
+      // 只作用于渠道间跳转，「不可用时自动切换模型」的回退链不受此开关影响
+      channelFailoverMax: 3, // 单请求最多尝试渠道数（含主渠道；范围 1~10、超出按 10；上游尝试预算随上限放大：每模型 max(6, 本值+1) 次，failover 关闭恒 6）
+      channelCooldownMs: 120000, // 渠道降级基础时长（毫秒），失败翻倍（防半开震荡）
+      channelCooldownCapMs: 900000, // 渠道降级指数退避封顶（15 分钟）
+      checkinAutoRules: {}, // 按渠道自动签到：{ [渠道 id]: { enabled, time:"HH:mm", jitterMin } }，
+      // 号池页各渠道工具栏各自设置（时间/抖动独立；默认全关）
+      channelEnabled: {}, // 渠道启闭（「上游启闭」弹窗）：{ [渠道 id]: true|false }，缺省 = 启用。
+      // 关闭的渠道在反代网关全部页面隐藏，路由/调用/调度也不再使用，重新打开立即恢复
       // ===== 上游超时旋钮（毫秒；对应四段超时的可配置化，0/缺省 = 用内置默认） =====
-      firstByteBaseMs: 30000,      // 首字节基础预算（30s，按输入规模追加、封顶 firstByteMaxMs）
-      firstByteMaxMs: 180000,      // 首字节预算封顶（超长 prompt 的 prefill 可能上百秒）
-      streamIdleMs: 300000,        // 流式相邻数据空闲超时（300s，收到新数据即重置）
-      httpJsonTimeoutMs: 60000,    // 非流式 JSON 请求（额度查询 / token 刷新）总超时（60s）
-      retrySameAccountCount: 1,    // 瞬时错误同账号原地重发次数（0~5，对齐 retryCount）
+      firstByteBaseMs: 30000, // 首字节基础预算（30s，按输入规模追加、封顶 firstByteMaxMs）
+      firstByteMaxMs: 180000, // 首字节预算封顶（超长 prompt 的 prefill 可能上百秒）
+      streamIdleMs: 300000, // 流式相邻数据空闲超时（300s，收到新数据即重置）
+      httpJsonTimeoutMs: 60000, // 非流式 JSON 请求（额度查询 / token 刷新）总超时（60s）
+      retrySameAccountCount: 1, // 瞬时错误同账号原地重发次数（0~5，对齐 retryCount）
       retrySameAccountIntervalMs: 1000, // 同账号原地重发退避间隔（毫秒，200~10000）
-      rateRetryDelayMs: 1000,      // 无明示重置时间的 429 同号退避基数（毫秒，实际延迟带 ±15% 抖动；
-                                   // 1000~15000。上游窗口更长时调大比「冷却换号」划算）
-      dedupeSameBody: true,        // 同 body 请求去重排队：客户端快速重试时，后来的请求等前一个结束再发
-                                   // （防风控识别为反代：同一账号连发同一份内容是最典型的机器特征；
-                                   // 关掉后并发重试会全部并行打到上游，也更容易把上游拦截窗口续期）
-      dedupeWaitMs: 45000,         // 去重排队等待上限（毫秒，1000~300000）：到点无条件放行，
-                                   // 宁可多一个并发，也不让用户被一个卡住的前序请求挂住
+      rateRetryDelayMs: 1000, // 无明示重置时间的 429 同号退避基数（毫秒，实际延迟带 ±15% 抖动；
+      // 1000~15000。上游窗口更长时调大比「冷却换号」划算）
+      dedupeSameBody: true, // 同 body 请求去重排队：客户端快速重试时，后来的请求等前一个结束再发
+      // （防风控识别为反代：同一账号连发同一份内容是最典型的机器特征；
+      // 关掉后并发重试会全部并行打到上游，也更容易把上游拦截窗口续期）
+      dedupeWaitMs: 45000, // 去重排队等待上限（毫秒，1000~300000）：到点无条件放行，
+      // 宁可多一个并发，也不让用户被一个卡住的前序请求挂住
     },
     // 局域网管理访问：浏览器登录管理页的令牌（落盘密文；明文只经桌面 IPC admin_access_info 交给设置页）。
     // 首次启动由 main.cjs 调 ensureAdminToken() 自动生成 24 字节随机串，不允许清空。
@@ -198,7 +202,7 @@ function mergeConfig(def, cfg) {
 // ===== 按渠道自动签到规则（proxy.checkinAutoRules）：号池页每个渠道一套时间/抖动 =====
 
 /** 规则可覆盖的渠道清单（旧全局配置迁移时铺满用；与 proxy/store.cjs 的 CHANNELS 对齐，新增渠道记得补） */
-const CHECKIN_RULE_CHANNELS = ["trae", "workbuddy", "workbuddy_ai", "raccoon", "modelscope", "lobster", "zcode", "qoder", "qoder_intl", "autoclaw", "autoclaw_intl"];
+const CHECKIN_RULE_CHANNELS = ["trae", "workbuddy", "workbuddy_ai", "raccoon", "modelscope", "lobster", "zcode", "qoder", "qoder_intl", "autoclaw", "autoclaw_intl", "dumate"];
 
 /** HH:mm 归一化：格式或数值越界（h>23 / m>59）一律回落 09:00（配置可能被手改，下游 tick 不必再判合法性） */
 function normalizeHm(v) {
@@ -244,7 +248,12 @@ function loadConfig() {
     try {
       disk = JSON.parse(fs.readFileSync(p, "utf8"));
     } catch {
-      try { fs.rmSync(p + ".bak", { force: true }); fs.renameSync(p, p + ".bak"); } catch { /* 留档失败忽略 */ }
+      try {
+        fs.rmSync(p + ".bak", { force: true });
+        fs.renameSync(p, p + ".bak");
+      } catch {
+        /* 留档失败忽略 */
+      }
       disk = {};
     }
   }
@@ -387,7 +396,9 @@ function saveConfigFromUI(cfg) {
     mergeOutOfBandProxy(disk, next);
     // admin 令牌只经 admin_reset_token 重置（不能被设置页整份提交的旧快照覆盖回去）：以磁盘为准
     if (disk && disk.admin) next.admin = disk.admin;
-  } catch { /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */ }
+  } catch {
+    /* 读盘失败时退回原行为（宁可保存成功，也不要让设置页整体保存失败） */
+  }
   // 保存即视为已升级配置（托盘常驻强制只对 configVersion < 2 的旧配置生效）
   next.configVersion = 2;
   return saveConfig(next);
@@ -461,7 +472,11 @@ function resetAdminToken() {
   cfg.admin = { ...(cfg.admin || {}), token: encryptSecret(token) };
   saveConfig(cfg);
   for (const fn of [...adminTokenListeners]) {
-    try { fn(); } catch { /* 钩子失败不拦令牌更新（会话没清干净由重新登录兜底） */ }
+    try {
+      fn();
+    } catch {
+      /* 钩子失败不拦令牌更新（会话没清干净由重新登录兜底） */
+    }
   }
   return { ok: true, token, message: "令牌已重置，旧令牌立即失效，浏览器需重新登录" };
 }
@@ -472,13 +487,32 @@ function applyAutoStart(cfg) {
   try {
     if (!electronApp.isPackaged) return;
     electronApp.setLoginItemSettings({ openAtLogin: !!(cfg.schedule && cfg.schedule.autoStart) });
-  } catch { /* 注册失败不拦保存 */ }
+  } catch {
+    /* 注册失败不拦保存 */
+  }
 }
 
 module.exports = {
-  dataDir, configPath, loadConfig, saveConfig, defaultConfig, ENC_PREFIX,
-  isPortable, encryptSecret, decryptSecret, isEncrypted, applyAutoStart,
-  normalizeHm, normalizeJitter, wasLastLoadLegacy,
-  saveConfigFromUI, mergeOutOfBandProxy, OUT_OF_BAND_PROXY_FIELDS, validateProxyPort,
-  ensureAdminToken, adminAccessInfo, resetAdminToken, onAdminTokenChanged,
+  dataDir,
+  configPath,
+  loadConfig,
+  saveConfig,
+  defaultConfig,
+  ENC_PREFIX,
+  isPortable,
+  encryptSecret,
+  decryptSecret,
+  isEncrypted,
+  applyAutoStart,
+  normalizeHm,
+  normalizeJitter,
+  wasLastLoadLegacy,
+  saveConfigFromUI,
+  mergeOutOfBandProxy,
+  OUT_OF_BAND_PROXY_FIELDS,
+  validateProxyPort,
+  ensureAdminToken,
+  adminAccessInfo,
+  resetAdminToken,
+  onAdminTokenChanged,
 };

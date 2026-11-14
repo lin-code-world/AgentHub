@@ -4711,6 +4711,15 @@ const { makeCodeArts } = require("./codearts/adapter.cjs");
 const codeartsDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs, store };
 ADAPTERS.codearts = makeCodeArts(codeartsDeps);
 
+// ===== DuMate（百度千帆搭子）=====
+// 无状态 OpenAI 兼容云端网关（dumate-svc.baidu.com）。鉴权是「cookies 换临时通行证」：
+// 账号 token 加密列存整包登录 cookies（JSON），chat 时自动换证、过期强刷重试一次。
+// 凭据只能由 tools/dumate-export 导出后「从文件导入」（账号 + 设备 ID 天然配对），
+// 无 OAuth / 无本机扫描（discovery.cjs 两道后端闸同口径拒绝）。
+const { makeDumate } = require("./dumate/adapter.cjs");
+const dumateDeps = { fetchStream, pumpSse, httpJson, rules, util, firstByteBudgetMs };
+ADAPTERS.dumate = makeDumate(dumateDeps);
+
 // 启动期契约校验：全员必需方法缺失在 require 阶段即抛错（fail-fast），
 // 人为删掉某个适配器的 chat() 后应用启动即崩在明面上，而不是运行期才 404/TypeError
 for (const [channel, ad] of Object.entries(ADAPTERS)) assertAdapterContract(channel, ad);

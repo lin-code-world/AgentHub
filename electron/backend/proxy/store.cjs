@@ -220,6 +220,11 @@ const CHANNELS = [
   // 余额与签到另需 yy + x-signature 双签名（常量取自客户端 bundle，公开非机密）。
   // 只做国内站；套餐口径未实测，不标 costTier（错标 free 会把付费渠道排前面）。
   { id: "minimaxcode", display: "MiniMax Code", domain: "agent.minimax.cn" },
+  // DuMate（百度千帆搭子）：无状态 OpenAI 兼容上游（dumate-svc.baidu.com，云端网关），
+  // 鉴权 = 登录 cookies 换临时通行证（~16h，网关自动换取）。凭据由 tools/dumate-export
+  // 在登录过客户端的机器上导出（解密 auth.json 的登录 cookies + 设备 ID），导入后
+  // **无需本机安装客户端**即可调用；客户端重新登录会使旧导出失效（需重导）。
+  { id: "dumate", display: "DuMate（百度搭子）", domain: "dumate-svc.baidu.com" },
 ];
 
 // 内置渠道 id 的只读名单：凡是「这一行是不是提供商」的判定都走它，而不是看 kind 列——

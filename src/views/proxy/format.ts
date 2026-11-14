@@ -219,6 +219,7 @@ export const CHANNEL_NAMES: Record<string, string> = {
   codearts: "CodeArts（华为云）",
   loomy: "Loomy（讯飞）",
   minimaxcode: "MiniMax Code",
+  dumate: "DuMate（百度搭子）",
 };
 export const channelName = (id: string) => CHANNEL_NAMES[id] || id || "-";
 

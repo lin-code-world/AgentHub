@@ -189,7 +189,7 @@ let smsTimer: ReturnType<typeof setTimeout> | undefined;
 // Qoder 双区：多账号「每日签到」必须各用自己那台机器的设备身份，而 OAuth 登录**拿不到设备身份**，
 // 登进来的账号签不了到；故下线 OAuth 页签，改由 tools/qoder-export 导出后「从文件导入」绑定身份
 // （后端同样拒绝，见 discovery.isOAuthAllowed）。
-const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw", "qoder", "qoder_intl"];
+const NO_OAUTH_CHANNELS: ProxyChannelId[] = ["catpaw", "qoder", "qoder_intl", "dumate"];
 // 仅手机验证码登录的渠道：AutoClaw 国内版与 Loomy —— 两家上游都没有网页授权码那套，
 // 官方客户端唯一的自助入口就是手机号 + 验证码，故把 OAuth 页签换成「手机验证码」
 const SMS_ONLY_CHANNELS: ProxyChannelId[] = ["autoclaw", "loomy"];
@@ -235,6 +235,9 @@ function addTabAllowed(key: AddMethod, channel: ProxyChannelId = activeChannel.v
   // Qoder 双区：只保留「从 JSON 文件」——账号必须由 qoder-export 导出（带设备身份 + 模型目录）
   // 才能签到/对话，其余添加方式一律不显示
   if ((channel === "qoder" || channel === "qoder_intl") && key !== "file") return false;
+  // DuMate：同 Qoder 口径，只保留「从 JSON 文件」——凭据（登录 cookies + 设备 ID）只能由
+  // dumate-export 在登录过客户端的机器上导出；无 OAuth、无本机扫描（后端闸同口径拒绝）
+  if (channel === "dumate" && key !== "file") return false;
   if (key === "oauth" && NO_OAUTH_CHANNELS.includes(channel)) return false;
   // 手机验证码页签只给 AutoClaw 国内版；它自身也没有 OAuth 页签可放
   if (key === "sms") return SMS_ONLY_CHANNELS.includes(channel);
@@ -267,6 +270,8 @@ function defaultAddMethod(channel: ProxyChannelId): AddMethod {
 
 /** 当前添加渠道是不是 Qoder 双区：决定「从文件导入」页要不要显示「下载导出工具」按钮 */
 const isQoderAdd = computed(() => isQoderChannel(addChannel.value));
+/** DuMate 同口径：凭据只能由 dumate-export 导出，「从文件导入」页显示同款下载按钮 */
+const isDumateAdd = computed(() => addChannel.value === "dumate");
 
 // deny 的原因统一展示服务端下发的 reason（见 methodGate）：前端不自维护形态口径的禁用/引导文案
 
@@ -724,6 +729,7 @@ function checkinRowTitle(acc: ProxyAccount): string {
   if (acc.channel === "raccoon") return "登录送积分（幂等，锁定当日积分 7 天）";
   if (acc.channel === "modelscope") return "执行每日任务：会话触碰（登录 200 + 绑云 50）+ 收藏/喜欢至 20 次（+40 魔粒）。点赞是公开星标动作";
   if (acc.channel === "lobster") return "每日签到领 100 积分（常驻活动，需客户端版本 ≥ 2026.9.4）";
+  if (acc.channel === "dumate") return "领取每日登录奖励积分（每天一次，由接口直接领取，无需客户端在线）";
   if (isQoderChannel(acc.channel)) return "领取当前可领的活动 Credits（每日 100，10:00 UTC+8 刷新）；需完成任务的活动会跳过";
   return "对该账号执行每日签到";
 }
@@ -1361,7 +1367,11 @@ function reauthAccount(acc: ProxyAccount) {
   if (NO_OAUTH_CHANNELS.includes(acc.channel)) {
     const isQoder = acc.channel === "qoder" || acc.channel === "qoder_intl";
     addMethod.value = defaultAddMethod(acc.channel);
-    if (isQoder) {
+    if (acc.channel === "dumate") {
+      // DuMate 默认落在「从文件导入」页：提示必须写进该页的 fileMsg，写到 scanMsg 用户看不到
+      fileMsg.value = "DuMate 凭据过期时：请用 tools/dumate-export 在登录过该账号的那台电脑上重新导出，再经「从文件导入」覆盖（客户端重新登录后旧导出即失效）";
+      fileErr.value = false;
+    } else if (isQoder) {
       // Qoder 默认落在「从文件导入」页：提示必须写进该页的 fileMsg，写到 scanMsg 用户看不到
       fileMsg.value = "Qoder 凭证过期时：请用 tools/qoder-export 在该账号原先登录的那台机器上重新导出，再经「从文件导入」覆盖绑定（重导会刷新凭据与设备身份）";
       fileErr.value = false;
@@ -1559,6 +1569,43 @@ async function downloadQoderTool() {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       toast("已开始下载 qoder-export.exe", "info");
+    }
+  } catch (e) {
+    toast(String((e as Error).message || e), "err");
+  } finally {
+    toolBusy.value = false;
+  }
+}
+
+/** DuMate 导出工具下载：与 qoder-export 同一套「桌面另存为 / 浏览器 base64」分工 */
+async function downloadDumateTool() {
+  if (toolBusy.value) return;
+  toolBusy.value = true;
+  try {
+    if (api.isElectron()) {
+      const r = await api.proxyDumateExportToolSave();
+      if (r.canceled) return; // 用户取消，不留痕迹
+      if (!r.ok) {
+        toast(r.message || "保存失败", "err");
+        return;
+      }
+      toast(`已保存 dumate-export.exe 到 ${r.path}`, "info");
+    } else {
+      const r = await api.proxyDumateExportToolData();
+      if (!r.ok || !r.base64) {
+        toast(r.message || "下载失败", "err");
+        return;
+      }
+      const bytes = Uint8Array.from(atob(r.base64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = r.name || "dumate-export.exe";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast("已开始下载 dumate-export.exe", "info");
     }
   } catch (e) {
     toast(String((e as Error).message || e), "err");
@@ -2324,9 +2371,9 @@ onUnmounted(() => {
               </div>
               <input ref="fileInput" type="file" accept=".json,application/json" style="display: none" @change="onFilePicked" />
               <div v-if="fileMsg" class="add-msg" :class="{ err: fileErr }">{{ fileMsg }}</div>
-              <!-- Qoder 专用：导出工具下载（在登录过该账号的电脑上跑它，才能拿到带设备身份的导出文件） -->
-              <div v-if="isQoderAdd" style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px">
-                <button class="btn btn-outline btn-sm" :disabled="toolBusy" @click="downloadQoderTool">{{ toolBusy ? "处理中…" : "下载 qoder-export.exe 工具" }}</button>
+              <!-- Qoder / DuMate 专用：导出工具下载（在登录过该账号的电脑上跑它，才能拿到带凭据的导出文件） -->
+              <div v-if="isQoderAdd || isDumateAdd" style="margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px">
+                <button class="btn btn-outline btn-sm" :disabled="toolBusy" @click="isDumateAdd ? downloadDumateTool() : downloadQoderTool()">{{ toolBusy ? "处理中…" : isDumateAdd ? "下载 dumate-export.exe 工具" : "下载 qoder-export.exe 工具" }}</button>
                 <div class="add-pane-desc" style="margin: 0">在<b>登录过该账号</b>的那台电脑上运行它，把导出的 JSON 文件拿回来在这里导入</div>
               </div>
             </div>

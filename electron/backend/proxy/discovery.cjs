@@ -608,7 +608,9 @@ function scanAll() {
 function isScanImportAllowed(channel) {
   // MiniMax Code 同样下线：目标部署机没装客户端，且本机导入会与客户端共用同一枚
   // 一次性 refresh token（互相踢下线）。加号一律走设备码登录。
-  return !["zcode", "minimaxcode"].includes(String(channel || ""));
+  // DuMate 亦无本机扫描实现：凭据是客户端 auth.json 的加密 cookies，由 dumate-export
+  // 解密导出后走「从文件导入」，本机扫描路径没有也不需要。
+  return !["zcode", "minimaxcode", "dumate"].includes(String(channel || ""));
 }
 
 /**
@@ -620,7 +622,9 @@ function isScanImportAllowed(channel) {
  */
 function isOAuthAllowed(channel) {
   const ch = String(channel || "");
-  return ch !== "qoder" && ch !== "qoder_intl";
+  // DuMate 与 Qoder 同口径：上游没有网页授权流程，凭据只能由 dumate-export 导出后
+  // 「从文件导入」（账号 + 设备 ID 配对）。
+  return ch !== "qoder" && ch !== "qoder_intl" && ch !== "dumate";
 }
 
 /** AutoClaw 本机登录态扫描：新版两个官方目录按地区归属；旧版共享来源仍同时产出双区候选。 */

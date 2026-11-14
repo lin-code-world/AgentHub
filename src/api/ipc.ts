@@ -277,6 +277,12 @@ export const proxyQoderExportToolSave = () =>
 /** 浏览器形态：回传 exe 数据（base64）自行下载；base64 + 加密后体积更大，超时放宽 */
 export const proxyQoderExportToolData = () =>
   call<{ ok: boolean; name?: string; base64?: string; bytes?: number; message?: string }>("proxy_qoder_export_tool_data", {}, 120_000);
+/** 保存 DuMate 导出工具 dumate-export.exe 到本机：桌面弹「另存为」等用户操作（超时设 0） */
+export const proxyDumateExportToolSave = () =>
+  call<{ ok: boolean; canceled?: boolean; path?: string; bytes?: number; message?: string }>("proxy_dumate_export_tool", {}, 0);
+/** 浏览器形态：回传 exe 数据（base64）自行下载；base64 + 加密后体积更大，超时放宽 */
+export const proxyDumateExportToolData = () =>
+  call<{ ok: boolean; name?: string; base64?: string; bytes?: number; message?: string }>("proxy_dumate_export_tool_data", {}, 120_000);
 
 // ===== 反代网关：模型 / 统计 / 规则 =====
 export const proxyModels = () => call<ProxyModel[]>("proxy_models");

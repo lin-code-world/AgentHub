@@ -76,6 +76,10 @@
       {
         "from": "tools/qoder-export/qoder-export.exe",
         "to": "qoder-export/qoder-export.exe"
+      },
+      {
+        "from": "tools/dumate-export/dumate-export.exe",
+        "to": "dumate-export/dumate-export.exe"
       }
     ],
     "win": {

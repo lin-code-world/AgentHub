@@ -33,6 +33,8 @@ import codeartsIcon from "../../assets/channels/codearts.png";
 import loomyIcon from "../../assets/channels/loomy.png";
 // MiniMax Code：取自官方桌面客户端 exe 的内嵌图标（与系统里显示的为同一张），随包发布
 import minimaxcodeIcon from "../../assets/channels/minimaxcode.png";
+// DuMate（百度千帆搭子）：取自官方客户端安装目录的图标资源（resources/icons/256x256.png，与系统里显示的一致）
+import dumateIcon from "../../assets/channels/dumate.png";
 
 export const CHANNEL_ICONS: Record<string, string> = {
   trae: traeIcon,
@@ -52,6 +54,7 @@ export const CHANNEL_ICONS: Record<string, string> = {
   codearts: codeartsIcon,
   loomy: loomyIcon,
   minimaxcode: minimaxcodeIcon,
+  dumate: dumateIcon,
 };
 
 /** 无图标渠道的字母角标：优先用服务端回的 display（与卡片上显示的名称一致），

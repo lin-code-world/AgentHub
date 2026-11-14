@@ -535,6 +535,17 @@ const DEFAULTS = {
       deviceMemory: 32,
       cpuCoreNum: 12,
     },
+    // DuMate（百度千帆搭子）：无状态 OpenAI 兼容 + cookies 换临时通行证（~16h）。
+    // 云端只有对话 / 目录 / 换证三个端点；凭据只能由 tools/dumate-export 导出后导入
+    // （凭据 = 客户端 auth.json 解出的登录 cookies + 设备 ID，见 dumate/credentials.cjs 注释块）。
+    // clientVersion 是 UA 里 DumateApp/x.y.z 的兜底值（导出包里带了实测值，缺失时用这段）。
+    dumate: {
+      chatUrl: "https://dumate-svc.baidu.com/gateway/apis/v1/chat/completions",
+      modelsUrl: "https://dumate-svc.baidu.com/gateway/apis/v1/models",
+      tokenUrl: "https://console.bce.baidu.com/api/dumate/app/token/get",
+      requestSource: "qianfan-desk",
+      clientVersion: "1.0.92",
+    },
   },
 };
 

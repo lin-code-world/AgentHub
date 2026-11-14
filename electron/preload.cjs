@@ -74,6 +74,8 @@ const ALLOWED_COMMANDS = new Set([
   "proxy_account_import_text",
   "proxy_qoder_export_tool",
   "proxy_qoder_export_tool_data",
+  "proxy_dumate_export_tool",
+  "proxy_dumate_export_tool_data",
   "proxy_models",
   "proxy_models_sync",
   // 自定义提供商（中转站 / 自建 OpenAI 兼容端点）：命令名必须与 backend/proxy/index.cjs 的
