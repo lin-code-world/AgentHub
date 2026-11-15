@@ -130,6 +130,8 @@ function cleanup() {
   eq(server.classifyUpstream({ status: 413, message: "request entity too large" }, false, "trae"), { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 413 }, "413：prompt_too_long + 不换号（switchable false）+ 可跳渠道");
   eq(server.classifyUpstream({ status: 400, message: "prompt is too long" }, false, "trae"), { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 413 }, "「prompt is too long」文案（先被 413 词表分支命中）：同上");
   eq(server.classifyUpstream({ status: 400, message: "对话内容上下文过长" }, false, "trae"), { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 413 }, "中文过大文案（词表大小写不敏感、原样匹配）：同上");
+  // alibaba-dashscope 原话（loomy 渠道实报 400）：与「内容过长」同族，必须同样判成 prompt_too_long 才能跳渠道
+  eq(server.classifyUpstream({ status: 400, message: "内容太长了，请精简输入或开启新对话" }, false, "loomy"), { kind: "prompt_too_long", switchable: false, channelSwitchable: true, status: 413 }, "DashScope「内容太长」文案：与「内容过长」同判");
   ok(server.classifyUpstream({ status: 429, message: "Too Many Requests" }, false, "trae").channelSwitchable === undefined, "429 限流：不带渠道跳转标记（换号语义不变）");
   ok(server.classifyUpstream({ status: 402, message: "insufficient_quota" }, false, "trae").channelSwitchable === undefined, "402 欠费：不带渠道跳转标记");
   ok(server.classifyUpstream({ status: 400, message: "Custom_raccoonException 不支持关闭思考" }, false, "trae").channelSwitchable === undefined, "普通参数 400：不带渠道跳转标记");

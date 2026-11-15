@@ -339,6 +339,7 @@ const INPUT_TOO_LARGE_MARKERS = [
   "input too large",
   "输入过长",
   "内容过长",
+  "内容太长", // alibaba-dashscope 原话「内容太长了，请精简输入或开启新对话」（loomy 渠道 400 实报）
   "上下文过长",
   "上下文长度",
   "超出模型上限",
