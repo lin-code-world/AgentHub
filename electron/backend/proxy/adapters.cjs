@@ -1137,6 +1137,39 @@ function readDeviceTokenFile() {
   return deviceTokenCache.value;
 }
 
+/** v3/config 里「本账号能用哪些模型」的名单（data.agents 中 name=cli 的 models 数组），
+ *  与官方客户端下拉同一份数据——纯服务端下发，不读本机客户端文件，远程实例同样可用。
+ *  全量 models 是全平台模型字典，账号实际能选的只是其中这个子集；不按名单收窄，
+ *  网关下拉会列出企业自建、已停用、视频生成等客户端根本不给选的模型。
+ *  同名多档（hy4flash-free / hy4flash 都叫「Hy4 flash」）客户端只显示一个：
+ *  保留名单里先出现的，后出现的若是免费档（credits 0）则改用免费档。
+ *  名单缺失/为空返回 null，调用方回退全量目录。 */
+function pickCliWhitelist(v3, models) {
+  const body = v3 && v3.ok && v3.data;
+  const agents = body && body.data && Array.isArray(body.data.agents) ? body.data.agents : null;
+  if (!agents) return null;
+  const cli = agents.find((a) => a && String(a.name || "").toLowerCase() === "cli") || agents.find((a) => a && Array.isArray(a.models) && a.models.length);
+  const order = cli && Array.isArray(cli.models) ? cli.models.map(String).filter(Boolean) : null;
+  if (!order || !order.length) return null;
+  const byId = new Map(models.map((m) => [String(m.id).toLowerCase(), m]));
+  const out = [];
+  const at = new Map(); // 同名模型 → out 下标
+  for (const id of order) {
+    if (id.toLowerCase() === "auto") continue; // 界面上「自动」是独立开关，不在模型下拉里
+    const m = byId.get(id.toLowerCase());
+    if (!m) continue;
+    const nameKey = String(m.name || m.id).toLowerCase();
+    const i = at.get(nameKey);
+    if (i == null) {
+      at.set(nameKey, out.length);
+      out.push(m);
+    } else if (m.rate === 0 && out[i].rate !== 0) {
+      out[i] = m; // 同名多档优先免费档（客户端下拉显示的也是免费那个）
+    }
+  }
+  return out.length ? out : null;
+}
+
 function makeWorkBuddy(channelId) {
   return {
     id: channelId,
@@ -1217,10 +1250,12 @@ function makeWorkBuddy(channelId) {
       ]);
       if (alt.ok && alt.data) ingest(alt.data, false); // 备路先入
       if (v3.ok && v3.data) ingest(v3.data, true); // 主路权威覆盖
-      const models = [...merged.values()];
+      let models = [...merged.values()];
       if (!models.length) {
         return { ok: false, message: `目录拉取失败（v3 HTTP ${v3.status || 0} / console HTTP ${alt.status || 0}）` };
       }
+      // 按账号可用名单收窄（与官方客户端下拉同一份数据）；名单缺失时保持全量，避免上游结构变动把目录拉空
+      models = pickCliWhitelist(v3, models) || models;
       return { ok: true, models };
     },
 

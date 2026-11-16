@@ -164,7 +164,7 @@ async function main() {
 
   console.log("\n[6] index.cjs 接线");
   const src = fs.readFileSync(path.join(__dirname, "../electron/backend/proxy/index.cjs"), "utf8");
-  check("proxy_models 调用 sync", /ipcMain\.handle\("proxy_models"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
+  check("proxy_models 调用 sync", /ipcMain\.handle\(\s*"proxy_models"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
   check("单删账号后同步", /proxy_account_remove"[\s\S]{0,600}modelAutoDisable\.sync\(\)/.test(src));
   check("单删账号后广播配置变更", /proxy_account_remove"[\s\S]{0,700}emitConfigChanged\(\)/.test(src));
   check("批删仅在确实删除后同步", /if \(removed\) \{[\s\S]{0,300}modelAutoDisable\.sync\(\)/.test(src));

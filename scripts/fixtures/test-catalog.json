@@ -12,7 +12,7 @@
   "workbuddy": {
     "models": [
       { "id": "deepseek-v4.1-flash", "name": "DeepSeek-V4.1-Flash" },
-      { "id": "hy3", "name": "HY3" }
+      { "id": "hy4flash-free", "name": "Hy4 flash" }
     ]
   },
   "workbuddy_ai": {
